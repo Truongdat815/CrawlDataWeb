@@ -14,7 +14,7 @@ def safe_print(*args, **kwargs):
         print(message, **kwargs)
 
 from pymongo import MongoClient
-from src.config import MONGODB_URI, MONGODB_DB_NAME, MONGODB_COLLECTION_FICTIONS
+from src.config import MONGODB_URI, MONGODB_DB_NAME, MONGODB_COLLECTION_STORIES
 import json
 
 def view_data():
@@ -24,7 +24,7 @@ def view_data():
         client = MongoClient(MONGODB_URI)
         
         db = client[MONGODB_DB_NAME]
-        collection = db[MONGODB_COLLECTION_FICTIONS]
+        collection = db[MONGODB_COLLECTION_STORIES]
         
         # Đếm số lượng documents
         count = collection.count_documents({})
@@ -64,7 +64,7 @@ def view_detail(fiction_id):
         client = MongoClient(MONGODB_URI)
         
         db = client[MONGODB_DB_NAME]
-        collection = db[MONGODB_COLLECTION_FICTIONS]
+        collection = db[MONGODB_COLLECTION_STORIES]
         
         doc = collection.find_one({"id": fiction_id})
         

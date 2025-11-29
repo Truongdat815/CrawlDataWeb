@@ -14,16 +14,16 @@ from src.scraper_engine import RoyalRoadScraper
 
 def main():
     # URL trang best-rated
-    best_rated_url = "https://www.royalroad.com/fictions/best-rated"
+    best_rated_url = "https://www.royalroad.com/fictions/best-rated?page=500"
     
     # Khởi tạo bot
     bot = RoyalRoadScraper()
     
     try:
         bot.start()
-        # Cào 5 bộ truyện tiếp theo (bắt đầu từ vị trí thứ 6, tức là bỏ qua 5 bộ đầu)
-        # start_from=5 nghĩa là bỏ qua 5 bộ đầu tiên (vị trí 0-4), bắt đầu từ vị trí 5 (bộ thứ 6)
-        bot.scrape_best_rated_fictions(best_rated_url, num_fictions=5, start_from=5)
+        # Cào 5 bộ truyện đầu tiên
+        # start_from=0 nghĩa là bắt đầu từ vị trí 0 (bộ đầu tiên)
+        bot.scrape_best_rated_stories(best_rated_url, num_stories=5, start_from=0)
     except Exception as e:
         safe_print(f"Lỗi chương trình: {e}")
     finally:
