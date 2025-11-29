@@ -92,26 +92,144 @@ class RoyalRoadScraper:
         for i, url in enumerate(fiction_urls, 1):
             safe_print(f"   {i}. {url}")
         
-        # Cào từng bộ truyện tuần tự
-        for index, fiction_url in enumerate(fiction_urls, 1):
-            safe_print(f"\n{'='*60}")
-            safe_print(f"📖 Bắt đầu cào bộ truyện {index}/{len(fiction_urls)}")
-            safe_print(f"{'='*60}")
-            try:
-                self.scrape_fiction(fiction_url)
-                safe_print(f"✅ Hoàn thành bộ truyện {index}/{len(fiction_urls)}")
-            except Exception as e:
-                safe_print(f"❌ Lỗi khi cào bộ truyện {index}: {e}")
-                continue
-            
-            # Delay giữa các bộ truyện
-            if index < len(fiction_urls):
-                safe_print(f"⏳ Nghỉ {config.DELAY_BETWEEN_CHAPTERS * 2} giây trước khi cào bộ tiếp theo...")
-                time.sleep(config.DELAY_BETWEEN_CHAPTERS * 2)
+        # Cào nhiều bộ truyện song song
+        max_fiction_workers = getattr(config, 'MAX_FICTION_WORKERS', 1)
+        
+        if max_fiction_workers > 1 and len(fiction_urls) > 1:
+            # Crawl song song nhiều fictions
+            safe_print(f"🚀 Bắt đầu cào {len(fiction_urls)} bộ truyện với {max_fiction_workers} workers song song...")
+            self._scrape_fictions_parallel(fiction_urls, max_fiction_workers)
+        else:
+            # Crawl tuần tự (fallback)
+            safe_print(f"📖 Bắt đầu cào {len(fiction_urls)} bộ truyện tuần tự...")
+            for index, fiction_url in enumerate(fiction_urls, 1):
+                safe_print(f"\n{'='*60}")
+                safe_print(f"📖 Bắt đầu cào bộ truyện {index}/{len(fiction_urls)}")
+                safe_print(f"{'='*60}")
+                try:
+                    self.scrape_fiction(fiction_url)
+                    safe_print(f"✅ Hoàn thành bộ truyện {index}/{len(fiction_urls)}")
+                except Exception as e:
+                    safe_print(f"❌ Lỗi khi cào bộ truyện {index}: {e}")
+                    continue
+                
+                # Delay giữa các bộ truyện
+                if index < len(fiction_urls):
+                    safe_print(f"⏳ Nghỉ {config.DELAY_BETWEEN_CHAPTERS * 2} giây trước khi cào bộ tiếp theo...")
+                    time.sleep(config.DELAY_BETWEEN_CHAPTERS * 2)
         
         safe_print(f"\n{'='*60}")
         safe_print(f"🎉 Đã hoàn thành cào {len(fiction_urls)} bộ truyện!")
         safe_print(f"{'='*60}")
+
+    def _scrape_fiction_worker(self, fiction_url, index, total):
+        """
+        Worker function để cào MỘT fiction - mỗi worker có browser instance riêng
+        Thread-safe: Mỗi worker có browser instance riêng
+        
+        Args:
+            fiction_url: URL của fiction cần cào
+            index: Thứ tự fiction trong list
+            total: Tổng số fictions
+        """
+        worker_playwright = None
+        worker_browser = None
+        worker_scraper = None
+        
+        try:
+            # Delay để stagger các thread - tránh tất cả thread bắt đầu cùng lúc
+            time.sleep(index * config.DELAY_THREAD_START)
+            
+            safe_print(f"\n{'='*60}")
+            safe_print(f"📖 Worker-{index}: Bắt đầu cào fiction {index + 1}/{total}")
+            safe_print(f"   URL: {fiction_url}")
+            safe_print(f"{'='*60}")
+            
+            # Tạo scraper instance riêng cho worker này
+            worker_scraper = RoyalRoadScraper(max_workers=self.max_workers)
+            
+            # Tạo browser instance riêng
+            worker_playwright = sync_playwright().start()
+            worker_browser = worker_playwright.chromium.launch(headless=config.HEADLESS)
+            worker_context = worker_browser.new_context()
+            worker_page = worker_context.new_page()
+            
+            # Gán page vào scraper
+            worker_scraper.page = worker_page
+            worker_scraper.browser = worker_browser
+            worker_scraper.context = worker_context
+            worker_scraper.playwright = worker_playwright
+            
+            # Kết nối MongoDB (dùng chung connection pool)
+            if self.mongo_collection:
+                worker_scraper.mongo_client = self.mongo_client
+                worker_scraper.mongo_db = self.mongo_db
+                worker_scraper.mongo_collection = self.mongo_collection
+            
+            # Delay trước khi request
+            time.sleep(config.DELAY_BETWEEN_REQUESTS)
+            
+            # Cào fiction
+            worker_scraper.scrape_fiction(fiction_url)
+            
+            safe_print(f"✅ Worker-{index}: Hoàn thành fiction {index + 1}/{total}")
+            
+            return True
+            
+        except Exception as e:
+            safe_print(f"❌ Worker-{index}: Lỗi khi cào fiction {index + 1}: {e}")
+            return False
+        finally:
+            # Đóng browser của worker
+            if worker_browser:
+                try:
+                    worker_browser.close()
+                except:
+                    pass
+            if worker_playwright:
+                try:
+                    worker_playwright.stop()
+                except:
+                    pass
+
+    def _scrape_fictions_parallel(self, fiction_urls, max_workers):
+        """
+        Cào nhiều fictions song song với ThreadPoolExecutor
+        
+        Args:
+            fiction_urls: List URL của các fictions cần cào
+            max_workers: Số lượng workers song song
+        """
+        # Tạo list kết quả
+        results = [None] * len(fiction_urls)
+        
+        # Dictionary để map future -> index
+        future_to_index = {}
+        
+        # Sử dụng ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit TẤT CẢ fictions vào pool
+            for index, fiction_url in enumerate(fiction_urls):
+                future = executor.submit(self._scrape_fiction_worker, fiction_url, index, len(fiction_urls))
+                future_to_index[future] = index
+            
+            # Thu thập kết quả
+            completed = 0
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    result = future.result()
+                    results[index] = result
+                    completed += 1
+                    status = "✅" if result else "⚠️"
+                    safe_print(f"    {status} Hoàn thành fiction {index + 1}/{len(fiction_urls)} (đã xong {completed}/{len(fiction_urls)})")
+                except Exception as e:
+                    safe_print(f"    ❌ Lỗi khi cào fiction {index + 1}: {e}")
+                    results[index] = False
+        
+        # Thống kê
+        success_count = sum(1 for r in results if r)
+        safe_print(f"\n📊 Kết quả: {success_count}/{len(fiction_urls)} fictions thành công")
 
     def _get_fiction_urls_from_best_rated(self, num_fictions=10):
         """
@@ -243,9 +361,39 @@ class RoyalRoadScraper:
         pages = stats_values_locator.nth(5).inner_text()
 
         # Tạo cấu trúc dữ liệu tổng quan sau khi đã lấy hết các biến
+        current_time = utils.get_current_timestamp()
+        
+        # Tạo metadata dict để hash
+        metadata_dict = {
+            "title": title,
+            "author": author,
+            "category": category,
+            "status": status,
+            "tags": sorted(tags) if tags else [],  # Sort để hash nhất quán
+            "description": description,
+            "stats": {
+                "score": {
+                    "overall_score": overall_score,
+                    "style_score": style_score,
+                    "story_score": story_score,
+                    "grammar_score": grammar_score,
+                    "character_score": character_score,
+                },
+                "views": {
+                    "total_views": total_views,
+                    "average_views": average_views,
+                    "followers": followers,
+                    "favorites": favorites,
+                    "ratings": ratings,
+                    "page_views": pages,
+                }
+            }
+        }
+        
         fiction_data = {
             "id": fiction_id,
             "title": title,
+            "fiction_url": fiction_url,  # Thêm URL gốc
             "cover_image_local": local_img_path, # Lưu đường dẫn file trên máy
             "author": author,
             "category": category,
@@ -268,16 +416,23 @@ class RoyalRoadScraper:
                     "ratings": ratings,
                     "page_views": pages,
                 }
-            },       # TODO: Team code phần lấy Stats vào đây
+            },
+            # Hash và timestamps cho sync
+            "metadata_hash": utils.hash_metadata(metadata_dict),
+            "created_at": current_time,
+            "updated_at": current_time,
+            "last_synced_at": None,  # Sẽ được cập nhật bởi sync worker
             "reviews": [],
             "chapters": []     # Chuẩn bị cái mảng rỗng để chứa các chương
         }
 
         # 3. Lấy danh sách link chương từ TẤT CẢ các trang phân trang
         safe_print("... Đang lấy danh sách chương từ tất cả các trang")
-        chapter_urls = self._get_all_chapters_from_pagination(fiction_url)
+        all_chapter_urls = self._get_all_chapters_from_pagination(fiction_url)
         
-        safe_print(f"--> Tổng cộng tìm thấy {len(chapter_urls)} chương từ tất cả các trang.")
+        # Chỉ lấy 1 chapter đầu tiên
+        chapter_urls = all_chapter_urls[:1] if all_chapter_urls else []
+        safe_print(f"--> Tổng cộng tìm thấy {len(all_chapter_urls)} chương, nhưng chỉ cào 1 chapter đầu tiên.")
 
         # # 3.5. Lấy comments cho toàn bộ truyện (story-level)
         # safe_print("... Đang lấy comments cho toàn bộ truyện")
@@ -775,11 +930,31 @@ class RoyalRoadScraper:
             # Lấy comments cho chapter này
             safe_print(f"      ... Đang lấy comments cho chương")
             chapter_comments = self._scrape_comments(url, "chapter")
+            
+            # Tính hash cho content và thêm timestamps
+            content_hash = utils.hash_content(content)
+            current_time = utils.get_current_timestamp()
+            
+            # Extract chapter_id từ URL nếu có
+            chapter_id = None
+            try:
+                # URL format: .../chapter/{chapter_id}/{chapter-slug}
+                url_parts = url.split("/chapter/")
+                if len(url_parts) > 1:
+                    chapter_id = url_parts[1].split("/")[0]
+            except:
+                pass
 
             return {
+                "chapter_id": chapter_id,  # ID từ URL
                 "url": url,
                 "title": title,
                 "content_text": content,
+                "content_hash": content_hash,  # Hash để detect thay đổi
+                "content_length": len(content),  # Độ dài content (word count có thể thêm sau)
+                "created_at": current_time,
+                "updated_at": current_time,
+                "last_synced_at": None,  # Sẽ được cập nhật bởi sync worker
                 "comments": chapter_comments
             }
         except Exception as e:
@@ -844,11 +1019,31 @@ class RoyalRoadScraper:
 
             # Delay sau khi hoàn thành chương
             time.sleep(config.DELAY_BETWEEN_CHAPTERS)
+            
+            # Tính hash cho content và thêm timestamps
+            content_hash = utils.hash_content(content)
+            current_time = utils.get_current_timestamp()
+            
+            # Extract chapter_id từ URL nếu có
+            chapter_id = None
+            try:
+                # URL format: .../chapter/{chapter_id}/{chapter-slug}
+                url_parts = url.split("/chapter/")
+                if len(url_parts) > 1:
+                    chapter_id = url_parts[1].split("/")[0]
+            except:
+                pass
 
             return {
+                "chapter_id": chapter_id,  # ID từ URL
                 "url": url,
                 "title": title,
                 "content_text": content,
+                "content_hash": content_hash,  # Hash để detect thay đổi
+                "content_length": len(content),  # Độ dài content
+                "created_at": current_time,
+                "updated_at": current_time,
+                "last_synced_at": None,  # Sẽ được cập nhật bởi sync worker
                 "comments": chapter_comments
             }
             
@@ -1392,11 +1587,14 @@ class RoyalRoadScraper:
                         {"id": data['id']},
                         {"$set": data}
                     )
-                    safe_print(f"🔄 Đã cập nhật dữ liệu trong MongoDB (ID: {data['id']})")
+                    safe_print(f"\n🔄 Đã cập nhật dữ liệu trong MongoDB (Fiction ID: {data['id']})")
                 else:
                     # Insert document mới
                     result = self.mongo_collection.insert_one(data)
-                    safe_print(f"✅ Đã lưu dữ liệu vào MongoDB (ID: {result.inserted_id})")
+                    safe_print(f"\n✅ Đã lưu dữ liệu vào MongoDB (Fiction ID: {data['id']}, MongoDB ID: {result.inserted_id})")
             except Exception as e:
-                safe_print(f"⚠️ Lỗi khi lưu vào MongoDB: {e}")
+                safe_print(f"\n⚠️ Lỗi khi lưu vào MongoDB: {e}")
                 safe_print("   Dữ liệu vẫn được lưu vào file JSON")
+        else:
+            safe_print("\n⚠️ MongoDB không được kích hoạt hoặc kết nối thất bại")
+            safe_print("   Chỉ lưu vào file JSON")
