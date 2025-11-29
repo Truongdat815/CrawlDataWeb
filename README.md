@@ -37,7 +37,7 @@ python main.py
 
 Script sẽ:
 1. Truy cập trang Writathon: `https://www.royalroad.com/fictions/writathon`
-2. Lấy danh sách 10 bộ truyện đầu tiên
+2. Lấy danh sách các bộ truyện
 3. Cào từng bộ truyện (metadata, chapters, comments)
 4. Lưu kết quả vào folder `data/json/` (file JSON)
 5. Lưu ảnh bìa vào folder `data/images/`
