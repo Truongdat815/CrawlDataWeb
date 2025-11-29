@@ -19,3 +19,23 @@ DELAY_BETWEEN_CHAPTERS = 2 # Giây - Delay giữa các chương
 DELAY_BETWEEN_REQUESTS = 5 # Giây - Delay giữa các request để tránh ban IP
 DELAY_THREAD_START = 0.5 # Giây - Delay để stagger các thread khi bắt đầu
 MAX_WORKERS = 3  # Số thread để cào chapters song song
+
+# --- CẤU HÌNH MONGODB ---
+MONGODB_ENABLED = True
+MONGODB_USERNAME = "ngohoangtruongdat2_db_user"
+MONGODB_PASSWORD = "DatMongo2025!"
+CLUSTER_URL = "project.uoeyhrh.mongodb.net"
+
+MONGODB_DB_NAME = "royalroad_db"
+MONGODB_COLLECTION_FICTIONS = "fictions"
+
+# Connection string đầy đủ với các options chuẩn
+# Dùng password trực tiếp, KHÔNG encode
+MONGODB_URI = (
+    f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
+    f"@{CLUSTER_URL}/?retryWrites=true&w=majority&appName=Project"
+)
+
+# Cho phép override bằng environment variable (ưu tiên)
+if os.getenv("MONGODB_URI"):
+    MONGODB_URI = os.getenv("MONGODB_URI")

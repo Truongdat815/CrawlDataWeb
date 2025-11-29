@@ -7,6 +7,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
 from src import config, utils
 
+# Import MongoDB
+try:
+    from pymongo import MongoClient
+    MONGODB_AVAILABLE = True
+except ImportError:
+    MONGODB_AVAILABLE = False
+
 # Helper function để print an toàn với encoding UTF-8
 def safe_print(*args, **kwargs):
     """Print function an toàn với encoding UTF-8 trên Windows"""
@@ -27,6 +34,21 @@ class RoyalRoadScraper:
         self.page = None
         self.playwright = None
         self.max_workers = max_workers or config.MAX_WORKERS
+        
+        # Khởi tạo MongoDB client nếu được bật
+        self.mongo_client = None
+        self.mongo_db = None
+        self.mongo_collection = None
+        if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
+            try:
+                self.mongo_client = MongoClient(config.MONGODB_URI)
+                self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
+                self.mongo_collection = self.mongo_db[config.MONGODB_COLLECTION_FICTIONS]
+                safe_print("✅ Đã kết nối MongoDB")
+            except Exception as e:
+                safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
+                safe_print("   Tiếp tục lưu vào file JSON...")
+                self.mongo_client = None
 
     def start(self):
         """Khởi động trình duyệt"""
@@ -37,11 +59,14 @@ class RoyalRoadScraper:
         safe_print("✅ Bot đã khởi động!")
 
     def stop(self):
-        """Đóng trình duyệt"""
+        """Đóng trình duyệt và MongoDB connection"""
         if self.browser:
             self.browser.close()
         if self.playwright:
             self.playwright.stop()
+        if self.mongo_client:
+            self.mongo_client.close()
+            safe_print("✅ Đã đóng kết nối MongoDB")
         safe_print("zzz Bot đã tắt.")
 
     def scrape_best_rated_fictions(self, best_rated_url, num_fictions=10):
@@ -1344,9 +1369,34 @@ class RoyalRoadScraper:
             return None
 
     def _save_to_json(self, data):
+        """
+        Lưu dữ liệu vào cả file JSON và MongoDB (nếu được bật)
+        """
+        # 1. Lưu vào file JSON (luôn luôn)
         filename = f"{data['id']}_{utils.clean_text(data['title'])}.json"
         save_path = os.path.join(config.JSON_DIR, filename)
         
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
-        safe_print(f"💾 Đã lưu dữ liệu vào: {save_path}")
+        safe_print(f"💾 Đã lưu dữ liệu vào file: {save_path}")
+        
+        # 2. Lưu vào MongoDB (nếu được bật)
+        if self.mongo_collection:
+            try:
+                # Kiểm tra xem đã có document với ID này chưa
+                existing = self.mongo_collection.find_one({"id": data['id']})
+                
+                if existing:
+                    # Update document đã tồn tại
+                    result = self.mongo_collection.update_one(
+                        {"id": data['id']},
+                        {"$set": data}
+                    )
+                    safe_print(f"🔄 Đã cập nhật dữ liệu trong MongoDB (ID: {data['id']})")
+                else:
+                    # Insert document mới
+                    result = self.mongo_collection.insert_one(data)
+                    safe_print(f"✅ Đã lưu dữ liệu vào MongoDB (ID: {result.inserted_id})")
+            except Exception as e:
+                safe_print(f"⚠️ Lỗi khi lưu vào MongoDB: {e}")
+                safe_print("   Dữ liệu vẫn được lưu vào file JSON")
