@@ -43,7 +43,7 @@ class RoyalRoadScraper:
             try:
                 self.mongo_client = MongoClient(config.MONGODB_URI)
                 self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
-                self.mongo_collection = self.mongo_db[config.MONGODB_COLLECTION_FICTIONS]
+                self.mongo_collection = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
                 safe_print("✅ Đã kết nối MongoDB")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
@@ -174,7 +174,8 @@ class RoyalRoadScraper:
         local_img_path = utils.download_image(img_url_raw, fiction_id)
 
         # Lấy author
-        author = self.page.locator(".fic-title h4 a").first.inner_text()
+        author_id = self.page.locator(".fic-title h4 a").first.get_attribute("href").split("/")[2]
+        author_name = self.page.locator(".fic-title h4 a").first.inner_text()
 
         # Lấy category
         category = self.page.locator(".fiction-info span").first.inner_text()
@@ -246,8 +247,12 @@ class RoyalRoadScraper:
         fiction_data = {
             "id": fiction_id,
             "title": title,
+            "url": fiction_url,
             "cover_image_local": local_img_path, # Lưu đường dẫn file trên máy
-            "author": author,
+            "author": {
+                "author_id": author_id,
+                "author_name": author_name,
+            },
             "category": category,
             "status": status,
             "tags": tags,
