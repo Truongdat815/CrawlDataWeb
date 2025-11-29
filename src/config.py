@@ -37,18 +37,18 @@ MAX_FICTION_WORKERS = 2  # Số fiction crawl song song cùng lúc (có thể t�
 
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
-MONGODB_USERNAME = "ngohoangtruongdat2_db_user"
-MONGODB_PASSWORD = "DatMongo2025!"
-CLUSTER_URL = "project.uoeyhrh.mongodb.net"
+MONGODB_USERNAME = "hoaithao"
+MONGODB_PASSWORD = "Hoaithao5201314"
+CLUSTER_URL = "royalroad.2aq2mp6.mongodb.net"
 
-MONGODB_DB_NAME = "royalroad_db"
-MONGODB_COLLECTION_FICTIONS = "fictions"
+MONGODB_DB_NAME = "RoyalRoadData"
+MONGODB_COLLECTION_STORIES = "stories"
 
 # Connection string đầy đủ với các options chuẩn
 # Dùng password trực tiếp, KHÔNG encode
 MONGODB_URI = (
     f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
-    f"@{CLUSTER_URL}/?retryWrites=true&w=majority&appName=Project"
+    f"@{CLUSTER_URL}/?rappName=RoyalRoad"
 )
 
 # Cho phép override bằng environment variable (ưu tiên)
