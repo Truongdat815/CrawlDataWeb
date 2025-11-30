@@ -44,6 +44,7 @@ class RoyalRoadScraper:
         self.mongo_collection_reviews = None
         self.mongo_collection_users = None
         self.mongo_collection_scores = None
+        self.mongo_collection_chapter_contents = None
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
             try:
                 self.mongo_client = MongoClient(config.MONGODB_URI)
@@ -54,7 +55,8 @@ class RoyalRoadScraper:
                 self.mongo_collection_reviews = self.mongo_db["reviews"]
                 self.mongo_collection_users = self.mongo_db["users"]
                 self.mongo_collection_scores = self.mongo_db["scores"]
-                safe_print("✅ Đã kết nối MongoDB với 6 collections")
+                self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
+                safe_print("✅ Đã kết nối MongoDB với 7 collections")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -269,6 +271,20 @@ class RoyalRoadScraper:
         # Lấy pages/words (Index 5 - Giá trị cuối cùng)
         pages = stats_values_locator.nth(5).inner_text()
 
+        # Lấy total chapters từ UI (span.label.label-default.pull-right trong div.portlet-title > div.actions)
+        total_chapters = ""
+        try:
+            # Tìm span có class "label label-default pull-right" trong div.actions
+            chapters_label = self.page.locator(".portlet-title .actions span.label.label-default.pull-right").first
+            if chapters_label.count() > 0:
+                chapters_text = chapters_label.inner_text().strip()
+                # Parse số từ text (ví dụ: "33 Chapters" -> "33")
+                numbers = re.findall(r'\d+', chapters_text)
+                if numbers:
+                    total_chapters = numbers[0]
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy total chapters: {e}")
+
         # Tạo cấu trúc dữ liệu tổng quan theo schema
         # Schema: story id, story name, story url, cover image, category, status, tags, description, 
         # total views, average views, followers, favorites, ratings, page views
@@ -292,44 +308,80 @@ class RoyalRoadScraper:
             "style_score": style_score,  # Schema: style score
             "story_score": story_score,  # Schema: story score
             "grammar_score": grammar_score,  # Schema: grammar score
-            "character_score": character_score,  # Schema: character score
-            "reviews": [],  # Sẽ được điền sau
-            "chapters": []     # Chuẩn bị cái mảng rỗng để chứa các chương
+            "character_score": character_score  # Schema: character score
         }
         
-        # Lưu score vào collection scores (từ story)
-        score_id = f"{story_id}_score"
-        self._save_score_to_mongo(score_id, overall_score, style_score, story_score, grammar_score, character_score)
+        # Thêm total_chapters nếu có
+        if total_chapters:
+            story_data["total_chapters"] = total_chapters
+        
+        # Lưu scores từ story thành 5 documents riêng trong Score collection (mỗi loại 1 document)
+        # Story không có score_id FK (theo schema)
+        if story_id:
+            # Tạo score_id cho story scores (dùng story_id làm score_id vì mỗi story có 1 bộ scores)
+            story_score_id = story_id
+            if overall_score:
+                self._save_single_score_to_mongo(story_score_id, "story", "overall_score", overall_score)
+            if style_score:
+                self._save_single_score_to_mongo(story_score_id, "story", "style_score", style_score)
+            if story_score:
+                self._save_single_score_to_mongo(story_score_id, "story", "story_score", story_score)
+            if grammar_score:
+                self._save_single_score_to_mongo(story_score_id, "story", "grammar_score", grammar_score)
+            if character_score:
+                self._save_single_score_to_mongo(story_score_id, "story", "character_score", character_score)
         
         # Lưu story ngay khi cào xong metadata (chưa có chapters và reviews)
         self._save_story_to_mongo(story_data)
 
         # 3. Lấy danh sách link chương từ TẤT CẢ các trang phân trang
         safe_print("... Đang lấy danh sách chương từ tất cả các trang")
-        chapter_urls = self._get_all_chapters_from_pagination(story_url)
+        chapter_info_list = self._get_all_chapters_from_pagination(story_url)
         
-        safe_print(f"--> Tổng cộng tìm thấy {len(chapter_urls)} chương từ tất cả các trang.")
+        safe_print(f"--> Tổng cộng tìm thấy {len(chapter_info_list)} chương từ tất cả các trang.")
 
-        # 3.5. Lấy reviews cho toàn bộ truyện
+        # 3.5. Lấy reviews cho toàn bộ truyện (đã được lưu vào collection reviews riêng)
         safe_print("... Đang lấy reviews cho toàn bộ truyện")
         reviews = self._scrape_reviews(story_url, story_id)
-        story_data["reviews"] = reviews
         safe_print(f"✅ Đã lấy được {len(reviews)} reviews")
 
         # 4. Cào các chương song song với ThreadPoolExecutor (GIỮ ĐÚNG THỨ TỰ)
-        safe_print(f"🚀 Bắt đầu cào {len(chapter_urls)} chương với {self.max_workers} thread...")
+        # Lọc ra các chapters chưa được cào (để tránh cào trùng)
+        chapters_to_scrape = []
+        for index, chapter_info in enumerate(chapter_info_list):
+            chap_url = chapter_info["url"]
+            # Lấy chapter_id từ URL
+            chapter_id = ""
+            try:
+                url_parts = chap_url.split("/chapter/")
+                if len(url_parts) > 1:
+                    chapter_id = url_parts[1].split("/")[0]
+            except:
+                pass
+            
+            # Kiểm tra chapter đã có chưa
+            if chapter_id and self._is_chapter_scraped(chapter_id):
+                safe_print(f"    ⏭️  Bỏ qua chapter {index + 1} (đã có trong DB): {chapter_id}")
+            else:
+                chapters_to_scrape.append((index, chapter_info))
+        
+        safe_print(f"🚀 Bắt đầu cào {len(chapters_to_scrape)}/{len(chapter_info_list)} chương (đã bỏ qua {len(chapter_info_list) - len(chapters_to_scrape)} chương đã có) với {self.max_workers} thread...")
         
         # Tạo list kết quả cố định theo index - mỗi index = 1 chương
-        chapter_results = [None] * len(chapter_urls)
+        chapter_results = [None] * len(chapter_info_list)
         
         # Dictionary để map future -> index để biết chương nào
         future_to_index = {}
         
         # Sử dụng ThreadPoolExecutor - NÓ TỰ ĐỘNG PHÂN PHỐI công việc!
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit TẤT CẢ chapters vào pool - mỗi chương chỉ submit 1 LẦN
-            for index, chap_url in enumerate(chapter_urls):
-                future = executor.submit(self._scrape_single_chapter_worker, chap_url, index, story_id)
+            # Submit chỉ các chapters chưa được cào
+            for index, chapter_info in chapters_to_scrape:
+                # order = index + 1 (số thứ tự bắt đầu từ 1)
+                order = index + 1
+                chap_url = chapter_info["url"]
+                published_time_from_table = chapter_info.get("published_time", "")
+                future = executor.submit(self._scrape_single_chapter_worker, chap_url, index, story_id, order, published_time_from_table)
                 future_to_index[future] = index
             
             # Thu thập kết quả - các thread có thể hoàn thành bất kỳ lúc nào
@@ -342,35 +394,26 @@ class RoyalRoadScraper:
                     chapter_results[index] = chapter_data
                     completed += 1
                     status = "✅" if chapter_data else "⚠️"
-                    safe_print(f"    {status} Hoàn thành chương {index + 1}/{len(chapter_urls)} (đã xong {completed}/{len(chapter_urls)})")
+                    safe_print(f"    {status} Hoàn thành chương {index + 1}/{len(chapter_info_list)} (đã xong {completed}/{len(chapter_info_list)})")
                 except Exception as e:
                     safe_print(f"    ❌ Lỗi khi cào chương {index + 1}: {e}")
                     chapter_results[index] = None
 
-        # SAU KHI TẤT CẢ XONG: Thêm vào story_data THEO ĐÚNG THỨ TỰ
-        safe_print(f"📝 Sắp xếp kết quả theo đúng thứ tự...")
-        for index in range(len(chapter_results)):
-            chapter_data = chapter_results[index]
-            if chapter_data:
-                story_data["chapters"].append(chapter_data)
-            else:
-                safe_print(f"    ⚠️ Bỏ qua chương {index + 1} (lỗi hoặc không có dữ liệu)")
+        # SAU KHI TẤT CẢ XONG: Đếm số chapters đã cào thành công
+        safe_print(f"📝 Đang kiểm tra kết quả...")
+        successful_chapters = sum(1 for ch in chapter_results if ch is not None)
+        safe_print(f"✅ Đã hoàn thành {successful_chapters}/{len(chapter_info_list)} chương (theo đúng thứ tự)")
 
-        safe_print(f"✅ Đã hoàn thành {len(story_data['chapters'])}/{len(chapter_urls)} chương (theo đúng thứ tự)")
-
-        # 5. Cập nhật story trong MongoDB với đầy đủ chapters và reviews
+        # 5. Cập nhật story trong MongoDB (chapters và reviews đã được lưu vào collections riêng)
         self._save_story_to_mongo(story_data)
-        
-        # 6. Lưu kết quả ra JSON (backup)
-        self._save_to_json(story_data)
 
     def _get_all_chapters_from_pagination(self, story_url):
         """
         Lấy tất cả chapters từ tất cả các trang phân trang
         Pagination sử dụng JavaScript (AJAX), không đổi URL
-        Trả về danh sách URL của tất cả chapters
+        Trả về danh sách dict với url và published_time của tất cả chapters
         """
-        all_chapter_urls = []
+        all_chapter_info = []
         
         try:
             # Trang đầu tiên: Lấy từ trang story chính
@@ -380,7 +423,7 @@ class RoyalRoadScraper:
             
             # Lấy chapters từ trang story chính
             page_chapters = self._get_chapters_from_current_page()
-            all_chapter_urls.extend(page_chapters)
+            all_chapter_info.extend(page_chapters)
             safe_print(f"    ✅ Trang 1: Lấy được {len(page_chapters)} chapters")
             
             # Tìm số trang tối đa cho chapters từ pagination trên trang story chính
@@ -389,7 +432,7 @@ class RoyalRoadScraper:
             # Nếu chỉ có 1 trang, return luôn
             if max_page <= 1:
                 safe_print(f"    📚 Chỉ có 1 trang chapters")
-                return all_chapter_urls
+                return all_chapter_info
             
             safe_print(f"    📚 Tìm thấy {max_page} trang chapters (trang 1 đã lấy, còn {max_page - 1} trang nữa)")
             
@@ -408,7 +451,7 @@ class RoyalRoadScraper:
                 
                 # Lấy chapters từ trang hiện tại
                 page_chapters = self._get_chapters_from_current_page()
-                all_chapter_urls.extend(page_chapters)
+                all_chapter_info.extend(page_chapters)
                 
                 safe_print(f"    ✅ Trang {page_num}: Lấy được {len(page_chapters)} chapters")
                 
@@ -416,7 +459,7 @@ class RoyalRoadScraper:
                 if page_num < max_page:
                     time.sleep(1)
             
-            return all_chapter_urls
+            return all_chapter_info
             
         except Exception as e:
             safe_print(f"    ⚠️ Lỗi khi lấy chapters từ pagination: {e}")
@@ -663,8 +706,8 @@ class RoyalRoadScraper:
             return False
 
     def _get_chapters_from_current_page(self):
-        """Lấy danh sách chapters từ trang hiện tại"""
-        chapter_urls = []
+        """Lấy danh sách chapters từ trang hiện tại, trả về list dict với url và published_time"""
+        chapter_info_list = []
         
         try:
             # Lấy tất cả các rows trong table chapters
@@ -672,6 +715,7 @@ class RoyalRoadScraper:
             
             for row in chapter_rows:
                 try:
+                    # Lấy URL từ link
                     link_el = row.locator("td").first.locator("a")
                     if link_el.count() > 0:
                         url = link_el.get_attribute("href")
@@ -684,13 +728,25 @@ class RoyalRoadScraper:
                             else:
                                 full_url = config.BASE_URL + "/" + url
                             
-                            # Tránh duplicate
-                            if full_url not in chapter_urls:
-                                chapter_urls.append(full_url)
+                            # Lấy published_time từ thẻ time trong row (theo ảnh: time có attribute datetime)
+                            published_time = ""
+                            try:
+                                time_elem = row.locator("time[datetime]").first
+                                if time_elem.count() > 0:
+                                    published_time = time_elem.get_attribute("datetime") or ""
+                            except:
+                                pass
+                            
+                            # Tránh duplicate dựa trên URL
+                            if not any(ch["url"] == full_url for ch in chapter_info_list):
+                                chapter_info_list.append({
+                                    "url": full_url,
+                                    "published_time": published_time
+                                })
                 except:
                     continue
             
-            return chapter_urls
+            return chapter_info_list
             
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lấy chapters từ trang hiện tại: {e}")
@@ -825,24 +881,36 @@ class RoyalRoadScraper:
             except:
                 chapter_id = ""
             
-            # Lấy comments cho chapter này
+            # Kiểm tra chapter đã được cào chưa - nếu có thì skip
+            if chapter_id and self._is_chapter_scraped(chapter_id):
+                safe_print(f"      ⏭️  Bỏ qua chapter {chapter_id} (đã có trong DB)")
+                # Vẫn cần kiểm tra và cào comments nếu chưa có
+                self._scrape_comments(url, "chapter", chapter_id)
+                return None
+            
+            # Lấy comments cho chapter này (comments đã được lưu riêng vào collection comments với chapter_id FK)
             safe_print(f"      ... Đang lấy comments cho chương")
-            chapter_comments = self._scrape_comments(url, "chapter", chapter_id)
+            self._scrape_comments(url, "chapter", chapter_id)
+
+            # Lưu content vào collection chapter_contents riêng (chỉ lưu nếu chưa có)
+            if content and chapter_id:
+                # content_id = chapter_id (vì mỗi chapter có 1 content)
+                content_id = chapter_id
+                if not self._is_chapter_content_scraped(content_id):
+                    self._save_chapter_content_to_mongo(content_id, content, chapter_id)
 
             return {
                 "id": chapter_id,  # Schema: chapter id
                 "name": title,  # Schema: chapter name
                 "url": url,  # Schema: chapter url
-                "content": content,  # Schema: content
                 "published_time": published_time,  # Schema: published time
-                "story_id": "",  # Sẽ được điền sau nếu cần
-                "comments": chapter_comments
+                "story_id": ""  # Sẽ được điền sau nếu cần
             }
         except Exception as e:
             safe_print(f"⚠️ Lỗi cào chương {url}: {e}")
             return None
 
-    def _scrape_single_chapter_worker(self, url, index, story_id):
+    def _scrape_single_chapter_worker(self, url, index, story_id, order, published_time_from_table):
         """
         Worker function để cào MỘT chương - mỗi worker có browser instance riêng
         Thread-safe: Mỗi worker có browser instance riêng
@@ -851,6 +919,8 @@ class RoyalRoadScraper:
             url: URL của chương cần cào (DUY NHẤT - không trùng lặp)
             index: Thứ tự chương trong list (DUY NHẤT - không trùng lặp)
             story_id: ID của story (FK)
+            order: Số thứ tự của chapter (từ 1, dựa trên thứ tự trên UI)
+            published_time_from_table: published_time lấy từ table row (thẻ time với attribute datetime)
         """
         worker_playwright = None
         worker_browser = None
@@ -879,14 +949,15 @@ class RoyalRoadScraper:
 
             title = worker_page.locator("h1").first.inner_text()
             
-            # Lấy published_time
-            published_time = ""
-            try:
-                time_elem = worker_page.locator("time, .timestamp, [class*='time'], [class*='date'], [datetime]").first
-                if time_elem.count() > 0:
-                    published_time = time_elem.get_attribute("datetime") or time_elem.inner_text().strip()
-            except:
-                pass
+            # Sử dụng published_time từ table row (ưu tiên), nếu không có thì lấy từ trang chapter
+            published_time = published_time_from_table
+            if not published_time:
+                try:
+                    time_elem = worker_page.locator("time[datetime]").first
+                    if time_elem.count() > 0:
+                        published_time = time_elem.get_attribute("datetime") or ""
+                except:
+                    pass
             
             # Lấy content với định dạng đúng
             content = ""
@@ -913,21 +984,38 @@ class RoyalRoadScraper:
             except:
                 chapter_id = ""
             
-            # Lấy comments cho chapter này (cần chapter_id để thêm vào mỗi comment)
+            # Kiểm tra chapter đã được cào chưa - nếu có thì skip
+            if chapter_id and self._is_chapter_scraped(chapter_id):
+                safe_print(f"      ⏭️  Thread-{index}: Bỏ qua chapter {chapter_id} (đã có trong DB)")
+                # Vẫn cần kiểm tra và cào comments nếu chưa có
+                # (có thể chapter đã có nhưng comments chưa đầy đủ)
+                self._scrape_comments_worker(worker_page, url, "chapter", chapter_id)
+                return None
+            
+            # Lấy comments cho chapter này (comments đã được lưu riêng vào collection comments với chapter_id FK)
             safe_print(f"      💬 Thread-{index}: Đang lấy comments cho chương")
-            chapter_comments = self._scrape_comments_worker(worker_page, url, "chapter", chapter_id)
+            self._scrape_comments_worker(worker_page, url, "chapter", chapter_id)
 
             # Delay sau khi hoàn thành chương
             time.sleep(config.DELAY_BETWEEN_CHAPTERS)
 
+            # Lưu content vào collection chapter_contents riêng (trước khi lưu chapter)
+            # Chỉ lưu nếu chưa có
+            if content and chapter_id:
+                # content_id = chapter_id (vì mỗi chapter có 1 content)
+                content_id = chapter_id
+                if not self._is_chapter_content_scraped(content_id):
+                    self._save_chapter_content_to_mongo(content_id, content, chapter_id)
+                else:
+                    safe_print(f"      ⏭️  Thread-{index}: Bỏ qua content chapter {chapter_id} (đã có trong DB)")
+            
             chapter_data = {
                 "id": chapter_id,  # Schema: chapter id
                 "name": title,  # Schema: chapter name
                 "url": url,  # Schema: chapter url
-                "content": content,  # Schema: content
-                "published_time": published_time,  # Schema: published time
-                "story_id": story_id,  # Schema: story id (FK)
-                "comments": chapter_comments
+                "published_time": published_time,  # Schema: published time (từ table row)
+                "order": order,  # Schema: order (số thứ tự dựa trên thứ tự trên UI)
+                "story_id": story_id  # Schema: story id (FK)
             }
             
             # Lưu chapter ngay vào MongoDB (sau khi đã cào xong chapter và comments)
@@ -1309,10 +1397,16 @@ class RoyalRoadScraper:
             safe_print(f"        ⚠️ Lỗi khi lấy comments từ trang: {e}")
             return []
 
-    def _scrape_single_comment_recursive(self, comment_elem, chapter_id="", parent_id=None):
+    def _scrape_single_comment_recursive(self, comment_elem, chapter_id="", parent_id=None, parent_user_id=None):
         """
         Hàm đệ quy để lấy một comment và tất cả replies của nó, trả về danh sách phẳng (flat)
-        Schema: comment id, comment text, time, chapter id (FK), parent id (recursive FK), user id (FK)
+        Schema: comment id, comment text, time, chapter id (FK), parent id (FK), user id (FK), reply_to_user_id, is_root
+        
+        Args:
+            comment_elem: Element của comment
+            chapter_id: ID của chapter
+            parent_id: ID của parent comment (comment_id mà nó reply, None nếu là comment gốc)
+            parent_user_id: User ID của parent comment (dùng để tạo reply_to_user_id)
         """
         result_list = []
         
@@ -1326,6 +1420,21 @@ class RoyalRoadScraper:
             comment_id = media_elem.get_attribute("id") or ""
             if comment_id.startswith("comment-container-"):
                 comment_id = comment_id.replace("comment-container-", "")
+            
+            # Kiểm tra comment đã được cào chưa - nếu có thì skip
+            if comment_id and self._is_comment_scraped(comment_id):
+                # Vẫn cần lấy replies nếu có
+                try:
+                    subcomments_list = comment_elem.locator("ul.subcomments").first
+                    if subcomments_list.count() > 0:
+                        reply_comments = subcomments_list.locator("div.comment").all()
+                        for reply_elem in reply_comments:
+                            reply_list = self._scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=comment_id, parent_user_id=None)
+                            if reply_list:
+                                result_list.extend(reply_list)
+                except:
+                    pass
+                return result_list  # Skip comment này nhưng vẫn cào replies
             
             # Lấy user_id từ profile URL
             user_id = ""
@@ -1427,14 +1536,22 @@ class RoyalRoadScraper:
             except:
                 pass
             
+            # Lấy reply_to_user_id: dùng parent_user_id được truyền vào (user_id của parent comment)
+            reply_to_user_id = parent_user_id if parent_user_id else None
+            
+            # Xác định is_root: true nếu không có parent_id (là comment gốc), false nếu có parent_id (là reply)
+            is_root = (parent_id is None or parent_id == "")
+            
             # Tạo cấu trúc comment theo schema (flat structure)
             comment_data = {
                 "comment_id": comment_id,  # Schema: comment id
                 "comment_text": comment_text,  # Schema: comment text
                 "time": timestamp,  # Schema: time
                 "chapter_id": chapter_id,  # Schema: chapter id (FK)
-                "parent_id": parent_id,  # Schema: parent id (recursive FK, None nếu là comment gốc)
-                "user_id": user_id  # Schema: user id (FK)
+                "parent_id": parent_id if parent_id else None,  # Schema: parent id (comment id mà nó reply, None nếu là comment gốc)
+                "user_id": user_id,  # Schema: user id (FK)
+                "is_root": is_root,  # Schema: is root (true nếu là comment gốc, false nếu là reply)
+                "reply_to_user_id": reply_to_user_id if reply_to_user_id else None  # Schema: reply to user id (FK, None nếu là comment gốc)
             }
             
             # Lưu user nếu có user_id và username
@@ -1455,8 +1572,8 @@ class RoyalRoadScraper:
                     reply_comments = subcomments_list.locator("div.comment").all()
                     
                     for reply_elem in reply_comments:
-                        # Gọi đệ quy với parent_id = comment_id của comment hiện tại
-                        reply_list = self._scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=comment_id)
+                        # Gọi đệ quy với parent_id = comment_id và parent_user_id = user_id của comment hiện tại
+                        reply_list = self._scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=comment_id, parent_user_id=user_id)
                         if reply_list:
                             result_list.extend(reply_list)
             except Exception as e:
@@ -1530,6 +1647,16 @@ class RoyalRoadScraper:
             # Parse từng review và lưu ngay
             for review_elem in review_elements:
                 try:
+                    # Kiểm tra review_id trước khi parse để tránh cào trùng
+                    review_id_attr = review_elem.get_attribute("id") or ""
+                    review_id = ""
+                    if review_id_attr.startswith("review-"):
+                        review_id = review_id_attr.replace("review-", "")
+                    
+                    # Nếu review đã có thì skip
+                    if review_id and self._is_review_scraped(review_id):
+                        continue
+                    
                     review_data = self._parse_single_review(review_elem, story_id)
                     if review_data:
                         reviews.append(review_data)
@@ -1552,12 +1679,13 @@ class RoyalRoadScraper:
         Schema: review id, title, time, content, user id (FK), chapter id (FK), story id (FK), score id (FK)
         """
         try:
-            # Lấy review ID
+            # Lấy review ID từ web (từ id="review-{id}")
             review_id = ""
             try:
-                review_id = review_elem.get_attribute("id") or review_elem.get_attribute("data-id") or ""
-                if review_id.startswith("review-"):
-                    review_id = review_id.replace("review-", "")
+                # Lấy từ id attribute với format "review-{id}"
+                review_id_attr = review_elem.get_attribute("id") or ""
+                if review_id_attr.startswith("review-"):
+                    review_id = review_id_attr.replace("review-", "")
             except:
                 pass
             
@@ -1601,16 +1729,21 @@ class RoyalRoadScraper:
             except:
                 pass
             
-            # Lấy content
+            # Lấy content từ .review-inner và giữ nguyên format như UI
             content = ""
             try:
-                content_elem = review_elem.locator(".review-content, .review-text, [class*='content'], [class*='text']").first
-                if content_elem.count() > 0:
-                    content = content_elem.inner_text().strip()
-            except:
+                # Tìm .review-inner (theo ảnh)
+                review_inner = review_elem.locator(".review-inner").first
+                if review_inner.count() > 0:
+                    # Lấy HTML để giữ định dạng
+                    html_content = review_inner.inner_html()
+                    # Chuyển HTML sang text với định dạng đúng (giữ nguyên xuống dòng như UI)
+                    content = self._convert_html_to_formatted_text(html_content)
+            except Exception as e:
+                safe_print(f"        ⚠️ Lỗi khi lấy review content: {e}")
                 pass
             
-            # Lấy scores để tạo score_id (tạo unique ID từ scores)
+            # Lấy scores từ aria-label (ví dụ: aria-label="4 stars")
             scores = {
                 "overall_score": "",
                 "style_score": "",
@@ -1620,30 +1753,49 @@ class RoyalRoadScraper:
             }
             
             try:
-                # Tìm các score elements
-                score_elements = review_elem.locator(".score, .rating, [class*='score'], [class*='rating']").all()
+                # Tìm tất cả các element có aria-label chứa "stars" hoặc "score"
+                score_elements = review_elem.locator("[aria-label*='stars'], [aria-label*='star'], [aria-label*='Score']").all()
+                
                 for score_elem in score_elements:
                     try:
-                        score_text = score_elem.inner_text().strip()
-                        score_label = score_elem.get_attribute("data-label") or ""
-                        # Có thể parse từ text hoặc từ data attributes
-                        if "overall" in score_label.lower() or "overall" in score_text.lower():
-                            scores["overall_score"] = score_text
-                        elif "style" in score_label.lower() or "style" in score_text.lower():
-                            scores["style_score"] = score_text
-                        elif "story" in score_label.lower() or "story" in score_text.lower():
-                            scores["story_score"] = score_text
-                        elif "grammar" in score_label.lower() or "grammar" in score_text.lower():
-                            scores["grammar_score"] = score_text
-                        elif "character" in score_label.lower() or "character" in score_text.lower():
-                            scores["character_score"] = score_text
+                        aria_label = score_elem.get_attribute("aria-label") or ""
+                        if not aria_label:
+                            continue
+                        
+                        # Lấy số từ aria-label (ví dụ: "4 stars" → "4")
+                        # Tìm số trong aria-label
+                        numbers = re.findall(r'\d+\.?\d*', aria_label)
+                        score_value = numbers[0] if numbers else ""
+                        
+                        # Xác định loại score dựa vào aria-label
+                        aria_lower = aria_label.lower()
+                        if "overall" in aria_lower or "overall score" in aria_lower:
+                            scores["overall_score"] = score_value
+                        elif "style" in aria_lower or "style score" in aria_lower:
+                            scores["style_score"] = score_value
+                        elif "story" in aria_lower or "story score" in aria_lower:
+                            scores["story_score"] = score_value
+                        elif "grammar" in aria_lower or "grammar score" in aria_lower:
+                            scores["grammar_score"] = score_value
+                        elif "character" in aria_lower or "character score" in aria_lower:
+                            scores["character_score"] = score_value
                     except:
                         continue
-            except:
+            except Exception as e:
+                safe_print(f"        ⚠️ Lỗi khi lấy scores từ aria-label: {e}")
                 pass
             
-            # Tạo score_id từ scores (hash hoặc unique identifier)
-            score_id = f"{review_id}_score" if review_id else ""
+            # Tạo score_id chung cho review (dùng review_id để reference)
+            score_id = review_id if review_id else ""
+            
+            # Kiểm tra review-swap: tìm thẻ i có data-title="Review Swap"
+            review_swap = False
+            try:
+                swap_icon = review_elem.locator("i[data-title='Review Swap']").first
+                if swap_icon.count() > 0:
+                    review_swap = True
+            except:
+                pass
             
             # Tạo review data theo schema
             review_data = {
@@ -1654,19 +1806,26 @@ class RoyalRoadScraper:
                 "user_id": user_id,  # Schema: user id (FK)
                 "chapter_id": chapter_id,  # Schema: chapter id (FK)
                 "story_id": story_id,  # Schema: story id (FK)
-                "score_id": score_id  # Schema: score id (FK)
+                "score_id": score_id  # Schema: score id (FK) - reference đến collection scores
             }
             
-            # Lưu score vào collection scores (từ review)
-            if score_id and any(scores.values()):
-                self._save_score_to_mongo(
-                    score_id,
-                    scores.get("overall_score", ""),
-                    scores.get("style_score", ""),
-                    scores.get("story_score", ""),
-                    scores.get("grammar_score", ""),
-                    scores.get("character_score", "")
-                )
+            # Thêm review-swap nếu có
+            if review_swap:
+                review_data["review-swap"] = True
+            
+            # Lưu từng loại score vào collection scores (từ review) - mỗi loại thành 1 document riêng với cùng score_id
+            if score_id:
+                # Lưu 5 documents riêng cho 5 loại score, cùng score_id nhưng khác score_type
+                if scores.get("overall_score"):
+                    self._save_single_score_to_mongo(score_id, "review", "overall_score", scores.get("overall_score"))
+                if scores.get("style_score"):
+                    self._save_single_score_to_mongo(score_id, "review", "style_score", scores.get("style_score"))
+                if scores.get("story_score"):
+                    self._save_single_score_to_mongo(score_id, "review", "story_score", scores.get("story_score"))
+                if scores.get("grammar_score"):
+                    self._save_single_score_to_mongo(score_id, "review", "grammar_score", scores.get("grammar_score"))
+                if scores.get("character_score"):
+                    self._save_single_score_to_mongo(score_id, "review", "character_score", scores.get("character_score"))
             
             # Lưu user nếu có user_id
             if user_id:
@@ -1685,6 +1844,46 @@ class RoyalRoadScraper:
             safe_print(f"        ⚠️ Lỗi khi parse review: {e}")
             return None
 
+    def _is_chapter_scraped(self, chapter_id):
+        """Kiểm tra chapter đã được cào chưa"""
+        if not chapter_id or not self.mongo_collection_chapters:
+            return False
+        try:
+            existing = self.mongo_collection_chapters.find_one({"id": chapter_id})
+            return existing is not None
+        except:
+            return False
+    
+    def _is_review_scraped(self, review_id):
+        """Kiểm tra review đã được cào chưa"""
+        if not review_id or not self.mongo_collection_reviews:
+            return False
+        try:
+            existing = self.mongo_collection_reviews.find_one({"review_id": review_id})
+            return existing is not None
+        except:
+            return False
+    
+    def _is_comment_scraped(self, comment_id):
+        """Kiểm tra comment đã được cào chưa"""
+        if not comment_id or not self.mongo_collection_comments:
+            return False
+        try:
+            existing = self.mongo_collection_comments.find_one({"comment_id": comment_id})
+            return existing is not None
+        except:
+            return False
+    
+    def _is_chapter_content_scraped(self, content_id):
+        """Kiểm tra chapter content đã được cào chưa"""
+        if not content_id or not self.mongo_collection_chapter_contents:
+            return False
+        try:
+            existing = self.mongo_collection_chapter_contents.find_one({"content_id": content_id})
+            return existing is not None
+        except:
+            return False
+    
     def _save_comment_to_mongo(self, comment_data):
         """Lưu comment vào MongoDB ngay khi cào xong"""
         if not comment_data or not self.mongo_collection_comments:
@@ -1701,6 +1900,29 @@ class RoyalRoadScraper:
                 self.mongo_collection_comments.insert_one(comment_data)
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu comment vào MongoDB: {e}")
+    
+    def _save_chapter_content_to_mongo(self, content_id, content, chapter_id):
+        """Lưu chapter content vào MongoDB collection chapter_contents"""
+        if not content_id or not content or not chapter_id or not self.mongo_collection_chapter_contents:
+            return
+        
+        try:
+            content_data = {
+                "content_id": content_id,  # Schema: content id (dùng chapter_id)
+                "content": content,  # Schema: content
+                "chapter_id": chapter_id  # Schema: chapter id (FK)
+            }
+            
+            existing = self.mongo_collection_chapter_contents.find_one({"content_id": content_id})
+            if existing:
+                self.mongo_collection_chapter_contents.update_one(
+                    {"content_id": content_id},
+                    {"$set": content_data}
+                )
+            else:
+                self.mongo_collection_chapter_contents.insert_one(content_data)
+        except Exception as e:
+            safe_print(f"      ⚠️ Lỗi khi lưu chapter content vào MongoDB: {e}")
     
     def _save_chapter_to_mongo(self, chapter_data):
         """Lưu chapter vào MongoDB ngay khi cào xong chapter và comments"""
@@ -1761,25 +1983,41 @@ class RoyalRoadScraper:
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu user vào MongoDB: {e}")
     
-    def _save_score_to_mongo(self, score_id, overall_score, style_score, story_score, grammar_score, character_score):
-        """Lưu score vào MongoDB"""
-        if not score_id or not self.mongo_collection_scores:
+    def _save_single_score_to_mongo(self, score_id, source_type, score_type, score_value):
+        """
+        Lưu một loại score vào MongoDB (mỗi loại thành 1 document riêng)
+        
+        Args:
+            score_id: ID chung để reference (story_id hoặc review_id)
+            source_type: "story" hoặc "review" - để biết score này thuộc về story hay review
+            score_type: overall_score, style_score, story_score, grammar_score, character_score
+            score_value: Giá trị score
+        """
+        if not score_id or not source_type or not score_type or not score_value or not self.mongo_collection_scores:
             return
         
         try:
+            # Tạo unique document id: score_id + score_type
+            document_id = f"{score_id}_{score_type}"
+            
             score_data = {
-                "score_id": score_id,  # Schema: score id
-                "overall_score": overall_score,  # Schema: overall score
-                "style_score": style_score,  # Schema: style score
-                "story_score": story_score,  # Schema: story score
-                "grammar_score": grammar_score,  # Schema: grammar score
-                "character_score": character_score  # Schema: character score
+                "score_id": score_id,  # Schema: score id (story_id hoặc review_id) - để reference
+                "source_type": source_type,  # "story" hoặc "review"
+                "score_type": score_type,  # overall_score, style_score, story_score, grammar_score, character_score
+                "score_value": score_value  # Giá trị score
             }
             
-            existing = self.mongo_collection_scores.find_one({"score_id": score_id})
+            # Thêm FK dựa vào source_type
+            if source_type == "story":
+                score_data["story_id"] = score_id  # FK to stories
+            elif source_type == "review":
+                score_data["review_id"] = score_id  # FK to reviews
+            
+            # Sử dụng document_id để check existing (unique per score_id + score_type)
+            existing = self.mongo_collection_scores.find_one({"score_id": score_id, "score_type": score_type})
             if existing:
                 self.mongo_collection_scores.update_one(
-                    {"score_id": score_id},
+                    {"score_id": score_id, "score_type": score_type},
                     {"$set": score_data}
                 )
             else:
@@ -1804,13 +2042,3 @@ class RoyalRoadScraper:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
     
-    def _save_to_json(self, data):
-        """
-        Lưu dữ liệu vào file JSON (MongoDB đã được lưu từng phần riêng)
-        """
-        filename = f"{data['id']}_{utils.clean_text(data.get('name', data.get('title', 'unknown')))}.json"
-        save_path = os.path.join(config.JSON_DIR, filename)
-        
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        safe_print(f"💾 Đã lưu dữ liệu vào file: {save_path}")
