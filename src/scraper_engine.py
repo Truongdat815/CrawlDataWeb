@@ -38,13 +38,24 @@ class RoyalRoadScraper:
         # Khởi tạo MongoDB client nếu được bật
         self.mongo_client = None
         self.mongo_db = None
-        self.mongo_collection = None
+        # Khởi tạo các collections riêng biệt
+        self.mongo_collections = {}
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
             try:
                 self.mongo_client = MongoClient(config.MONGODB_URI)
                 self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
+                # Khởi tạo tất cả các collections
+                self.mongo_collections = {
+                    "stories": self.mongo_db[config.MONGODB_COLLECTION_STORIES],
+                    "chapters": self.mongo_db[config.MONGODB_COLLECTION_CHAPTERS],
+                    "comments": self.mongo_db[config.MONGODB_COLLECTION_COMMENTS],
+                    "reviews": self.mongo_db[config.MONGODB_COLLECTION_REVIEWS],
+                    "scores": self.mongo_db[config.MONGODB_COLLECTION_SCORES],
+                    "users": self.mongo_db[config.MONGODB_COLLECTION_USERS],
+                }
+                # Giữ lại collection cũ để tương thích
                 self.mongo_collection = self.mongo_db[config.MONGODB_COLLECTION_FICTIONS]
-                safe_print("✅ Đã kết nối MongoDB")
+                safe_print("✅ Đã kết nối MongoDB với các collections: stories, chapters, comments, reviews, scores, users")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -1594,6 +1605,7 @@ class RoyalRoadScraper:
     def _save_to_json(self, data):
         """
         Lưu dữ liệu vào cả file JSON và MongoDB (nếu được bật)
+        Tách dữ liệu thành nhiều collections: stories, chapters, comments, reviews, scores, users
         """
         # 1. Lưu vào file JSON (luôn luôn)
         filename = f"{data['id']}_{utils.clean_text(data.get('name', data.get('title', 'unknown')))}.json"
@@ -1603,23 +1615,201 @@ class RoyalRoadScraper:
             json.dump(data, f, ensure_ascii=False, indent=4)
         safe_print(f"💾 Đã lưu dữ liệu vào file: {save_path}")
         
-        # 2. Lưu vào MongoDB (nếu được bật)
-        if self.mongo_collection:
+        # 2. Lưu vào MongoDB - tách thành nhiều collections
+        if self.mongo_collections:
             try:
-                # Kiểm tra xem đã có document với ID này chưa
-                existing = self.mongo_collection.find_one({"id": data['id']})
+                story_id = data['id']
                 
-                if existing:
-                    # Update document đã tồn tại
-                    result = self.mongo_collection.update_one(
-                        {"id": data['id']},
-                        {"$set": data}
-                    )
-                    safe_print(f"🔄 Đã cập nhật dữ liệu trong MongoDB (ID: {data['id']})")
+                # 2.1. Lưu STORY vào collection "stories"
+                story_data = {
+                    "id": story_id,
+                    "name": data.get("name", ""),
+                    "url": data.get("url", ""),
+                    "cover_image": data.get("cover_image", ""),
+                    "author": data.get("author", ""),
+                    "category": data.get("category", ""),
+                    "status": data.get("status", ""),
+                    "tags": data.get("tags", []),
+                    "description": data.get("description", ""),
+                    "stats": {
+                        "views": data.get("stats", {}).get("views", {})
+                    }
+                }
+                
+                stories_col = self.mongo_collections["stories"]
+                existing_story = stories_col.find_one({"id": story_id})
+                if existing_story:
+                    stories_col.update_one({"id": story_id}, {"$set": story_data})
+                    safe_print(f"🔄 Đã cập nhật story trong MongoDB (ID: {story_id})")
                 else:
-                    # Insert document mới
-                    result = self.mongo_collection.insert_one(data)
-                    safe_print(f"✅ Đã lưu dữ liệu vào MongoDB (ID: {result.inserted_id})")
+                    stories_col.insert_one(story_data)
+                    safe_print(f"✅ Đã lưu story vào MongoDB (ID: {story_id})")
+                
+                # 2.2. Lưu SCORES vào collection "scores"
+                if "stats" in data and "score" in data["stats"]:
+                    score_data = {
+                        "story_id": story_id,
+                        "overall_score": data["stats"]["score"].get("overall_score", ""),
+                        "style_score": data["stats"]["score"].get("style_score", ""),
+                        "story_score": data["stats"]["score"].get("story_score", ""),
+                        "grammar_score": data["stats"]["score"].get("grammar_score", ""),
+                        "character_score": data["stats"]["score"].get("character_score", "")
+                    }
+                    
+                    scores_col = self.mongo_collections["scores"]
+                    existing_score = scores_col.find_one({"story_id": story_id})
+                    if existing_score:
+                        scores_col.update_one({"story_id": story_id}, {"$set": score_data})
+                    else:
+                        scores_col.insert_one(score_data)
+                    safe_print(f"✅ Đã lưu scores vào MongoDB (story_id: {story_id})")
+                
+                # 2.3. Lưu CHAPTERS vào collection "chapters"
+                chapters_col = self.mongo_collections["chapters"]
+                chapters = data.get("chapters", [])
+                chapters_saved = 0
+                for chapter in chapters:
+                    chapter_data = {
+                        "id": chapter.get("id", ""),
+                        "story_id": story_id,
+                        "name": chapter.get("name", ""),
+                        "url": chapter.get("url", ""),
+                        "content": chapter.get("content", "")
+                    }
+                    
+                    chapter_id = chapter_data["id"]
+                    if chapter_id:
+                        existing_chapter = chapters_col.find_one({"id": chapter_id, "story_id": story_id})
+                        if existing_chapter:
+                            chapters_col.update_one(
+                                {"id": chapter_id, "story_id": story_id},
+                                {"$set": chapter_data}
+                            )
+                        else:
+                            chapters_col.insert_one(chapter_data)
+                        chapters_saved += 1
+                        
+                        # 2.4. Lưu COMMENTS của chapter vào collection "comments"
+                        chapter_comments = chapter.get("comments", [])
+                        if chapter_comments:
+                            self._save_comments_to_mongo(chapter_comments, story_id, chapter_id, "chapter")
+                
+                safe_print(f"✅ Đã lưu {chapters_saved} chapters vào MongoDB (story_id: {story_id})")
+                
+                # 2.5. Lưu REVIEWS vào collection "reviews"
+                reviews_col = self.mongo_collections["reviews"]
+                reviews = data.get("reviews", [])
+                reviews_saved = 0
+                for review in reviews:
+                    review_data = {
+                        "review_id": review.get("review_id", ""),
+                        "story_id": story_id,
+                        "title": review.get("title", ""),
+                        "username": review.get("username", ""),
+                        "at_chapter": review.get("at_chapter", ""),
+                        "time": review.get("time", ""),
+                        "content": review.get("content", ""),
+                        "score": review.get("score", {})
+                    }
+                    
+                    review_id = review_data["review_id"]
+                    if review_id:
+                        existing_review = reviews_col.find_one({"review_id": review_id, "story_id": story_id})
+                        if existing_review:
+                            reviews_col.update_one(
+                                {"review_id": review_id, "story_id": story_id},
+                                {"$set": review_data}
+                            )
+                        else:
+                            reviews_col.insert_one(review_data)
+                        reviews_saved += 1
+                        
+                        # Lưu user từ review
+                        username = review_data.get("username", "")
+                        if username:
+                            self._save_user_to_mongo(username)
+                
+                safe_print(f"✅ Đã lưu {reviews_saved} reviews vào MongoDB (story_id: {story_id})")
+                
+                # 2.6. Lưu vào collection cũ để tương thích (nếu cần)
+                if self.mongo_collection:
+                    existing = self.mongo_collection.find_one({"id": story_id})
+                    if existing:
+                        self.mongo_collection.update_one({"id": story_id}, {"$set": data})
+                    else:
+                        self.mongo_collection.insert_one(data)
+                
+                safe_print(f"🎉 Đã hoàn thành lưu tất cả dữ liệu vào MongoDB!")
+                
             except Exception as e:
                 safe_print(f"⚠️ Lỗi khi lưu vào MongoDB: {e}")
                 safe_print("   Dữ liệu vẫn được lưu vào file JSON")
+                import traceback
+                safe_print(traceback.format_exc())
+    
+    def _save_comments_to_mongo(self, comments, story_id, parent_id, parent_type="chapter"):
+        """
+        Lưu comments vào MongoDB (đệ quy để lưu cả replies)
+        parent_type: "chapter" hoặc "story"
+        """
+        if not self.mongo_collections:
+            return
+        
+        comments_col = self.mongo_collections["comments"]
+        
+        for comment in comments:
+            comment_data = {
+                "comment_id": comment.get("comment_id", ""),
+                "story_id": story_id,
+                "parent_id": parent_id,
+                "parent_type": parent_type,
+                "username": comment.get("username", ""),
+                "comment_text": comment.get("comment_text", ""),
+                "time": comment.get("time", "")
+            }
+            
+            comment_id = comment_data["comment_id"]
+            if comment_id:
+                # Kiểm tra xem đã có comment này chưa (thêm parent_type để chắc chắn)
+                existing = comments_col.find_one({
+                    "comment_id": comment_id,
+                    "story_id": story_id,
+                    "parent_id": parent_id,
+                    "parent_type": parent_type
+                })
+                
+                if existing:
+                    comments_col.update_one(
+                        {"comment_id": comment_id, "story_id": story_id, "parent_id": parent_id, "parent_type": parent_type},
+                        {"$set": comment_data}
+                    )
+                else:
+                    comments_col.insert_one(comment_data)
+                
+                # Lưu user từ comment
+                username = comment_data.get("username", "")
+                if username:
+                    self._save_user_to_mongo(username)
+                
+                # Lưu replies (đệ quy)
+                replies = comment.get("replies", [])
+                if replies:
+                    self._save_comments_to_mongo(replies, story_id, comment_id, "comment")
+    
+    def _save_user_to_mongo(self, username):
+        """
+        Lưu user vào collection "users" (chỉ lưu username, có thể mở rộng sau)
+        """
+        if not self.mongo_collections or not username or username == "[Unknown]":
+            return
+        
+        users_col = self.mongo_collections["users"]
+        
+        # Kiểm tra xem user đã tồn tại chưa
+        existing_user = users_col.find_one({"username": username})
+        if not existing_user:
+            user_data = {
+                "username": username,
+                "created_at": time.time()  # Timestamp khi tạo
+            }
+            users_col.insert_one(user_data)

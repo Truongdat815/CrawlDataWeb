@@ -27,6 +27,14 @@ MONGODB_PASSWORD = "DatMongo2025!"
 CLUSTER_URL = "project.uoeyhrh.mongodb.net"
 
 MONGODB_DB_NAME = "royalroad_db"
+# Collection names - tách riêng như bạn của bạn
+MONGODB_COLLECTION_STORIES = "stories"
+MONGODB_COLLECTION_CHAPTERS = "chapters"
+MONGODB_COLLECTION_COMMENTS = "comments"
+MONGODB_COLLECTION_REVIEWS = "reviews"
+MONGODB_COLLECTION_SCORES = "scores"
+MONGODB_COLLECTION_USERS = "users"
+# Giữ lại collection cũ để tương thích (có thể xóa sau)
 MONGODB_COLLECTION_FICTIONS = "fictions"
 
 # Connection string đầy đủ với các options chuẩn
