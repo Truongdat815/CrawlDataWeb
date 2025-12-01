@@ -714,23 +714,37 @@ class WattpadScraper:
         try:
             safe_print(f"   📖 Đang trích xuất chapter content...")
             
+            # CSS selectors - Dựa vào cấu trúc HTML thực tế của Wattpad
+            # ✅ Content container: div.panel-reading
+            # ✅ Paragraph tags: div.panel-reading p
             CONTENT_CONTAINER_SELECTOR = 'div.panel-reading'
             PARAGRAPH_SELECTOR = 'div.panel-reading p'
             
             # 1. Chờ khối nội dung tải xong
             try:
                 self.page.wait_for_selector(CONTENT_CONTAINER_SELECTOR, timeout=30000)
-                safe_print(f"   ✅ Content container loaded")
+                safe_print(f"   ✅ Content container loaded (div.panel-reading)")
             except Exception as e:
                 safe_print(f"   ⚠️  Content container not found: {e}")
                 return None
             
-            # 2. Lấy TẤT CẢ các đoạn văn (paragraphs)
+            # 2. Lấy TẤT CẢ các đoạn văn (paragraphs) từ <p> tags
+            # Sử dụng inner_text() để lấy text từ mỗi <p> riêng biệt
+            # Điều này đảm bảo bỏ qua nested elements (buttons, divs) bên trong <p> tags
             try:
-                paragraphs = self.page.locator(PARAGRAPH_SELECTOR).all_inner_texts()
-                safe_print(f"   ✅ Trích xuất {len(paragraphs)} paragraphs")
+                p_locators = self.page.locator(PARAGRAPH_SELECTOR).all()
+                paragraphs = []
                 
-                # 3. Nối các đoạn lại thành một khối văn bản duy nhất
+                for p_locator in p_locators:
+                    # inner_text() lấy tất cả text từ <p> tag (bao gồm nested elements)
+                    # Nhưng nó loại bỏ HTML tags và trả về clean text
+                    p_text = p_locator.inner_text()
+                    if p_text and p_text.strip():  # Chỉ lấy nếu không rỗng
+                        paragraphs.append(p_text.strip())
+                
+                safe_print(f"   ✅ Trích xuất {len(paragraphs)} paragraphs từ <p> tags")
+                
+                # 3. Nối các đoạn lại thành một khối văn bản duy nhất bằng double newlines
                 full_content = "\n\n".join(paragraphs)
                 safe_print(f"   ✅ Full content: {len(full_content)} characters")
                 

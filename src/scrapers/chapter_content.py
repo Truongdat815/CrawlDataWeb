@@ -13,7 +13,7 @@ from src.schemas.chapter_content_schema import CHAPTER_CONTENT_SCHEMA
 class ChapterContentScraper(BaseScraper):
     """Scraper for chapter content/body (Wattpad schema)"""
     
-    # CSS selectors for extracting content
+    # CSS selectors for extracting content - Updated based on actual Wattpad HTML structure
     CONTENT_CONTAINER_SELECTOR = 'div.panel-reading'
     PARAGRAPH_SELECTOR = 'div.panel-reading p'
     
@@ -69,16 +69,28 @@ class ChapterContentScraper(BaseScraper):
             full_content = ""
             
             # 1. Chờ khối nội dung tải xong
+            # CSS selector: div.panel-reading (content container dựa trên HTML thực tế)
             try:
                 await page.wait_for_selector(self.CONTENT_CONTAINER_SELECTOR, timeout=30000)
-                safe_print(f"   ✅ Content container loaded")
+                safe_print(f"   ✅ Content container loaded (div.panel-reading)")
             except Exception as e:
                 safe_print(f"   ⚠️  Content container not found: {e}")
                 return None
             
-            # 2. Lấy TẤT CẢ các đoạn văn (paragraphs)
+            # 2. Lấy TẤT CẢ các đoạn văn (paragraphs) từ bên trong container
+            # Extract paragraph text chỉ từ <p> tags, bỏ qua nested elements (buttons, divs)
             try:
-                paragraphs = await page.locator(self.PARAGRAPH_SELECTOR).all_inner_texts()
+                # Sử dụng Playwright để lấy text từ mỗi <p> tag riêng biệt
+                # Điều này đảm bảo chúng ta chỉ lấy text trực tiếp, không lấy text từ buttons/divs
+                p_locators = await page.locator(self.PARAGRAPH_SELECTOR).all()
+                paragraphs = []
+                
+                for p_locator in p_locators:
+                    # Lấy text content từ <p> tag
+                    p_text = await p_locator.inner_text()
+                    if p_text and p_text.strip():  # Chỉ lấy nếu không rỗng
+                        paragraphs.append(p_text.strip())
+                
                 safe_print(f"   ✅ Trích xuất {len(paragraphs)} paragraphs")
                 
                 # 3. Nối các đoạn lại thành một khối văn bản duy nhất
