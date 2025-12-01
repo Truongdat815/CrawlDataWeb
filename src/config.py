@@ -24,6 +24,20 @@ RETRY_BACKOFF = 2  # Multiplier cho exponential backoff (1s, 2s, 4s, 8s...)
 MAX_REQUESTS_PER_MINUTE = 60  # Rate limit: max 60 requests/phút
 REQUEST_TIMEOUT = 30  # Timeout cho mỗi request (giây)
 
+# ========== HTTP & PROXY CONFIGURATION ==========
+# Connection pooling headers và proxy để tránh bị block
+# User-Agent và headers mặc định cho mọi HTTP requests
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
+# Optional proxy configuration (None để không dùng proxy)
+# Ví dụ: "http://user:pass@proxy.example.com:3128"
+HTTP_PROXY = None
+HTTPS_PROXY = None
+
 # ========== CẤU HÌNH TỐC ĐỘ ==========
 # ⚠️ Lưu ý: Giảm delays có thể tăng tốc nhưng cũng tăng rủi ro bị ban IP
 # ✅ Khuyến nghị: Bắt đầu với giá trị mặc định, test và giảm dần nếu không bị ban

@@ -120,6 +120,22 @@ class WattpadScraper:
         # Rate limiter
         self.rate_limiter = RateLimiter()
         
+        # Reusable HTTP session for connection pooling + default headers
+        self.http = requests.Session()
+        self.http.headers.update({
+            "User-Agent": config.DEFAULT_USER_AGENT,
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+        })
+        # Configure proxies if set in config
+        if config.HTTP_PROXY or config.HTTPS_PROXY:
+            proxies = {}
+            if config.HTTP_PROXY:
+                proxies["http"] = config.HTTP_PROXY
+            if config.HTTPS_PROXY:
+                proxies["https"] = config.HTTPS_PROXY
+            self.http.proxies.update(proxies)
+            safe_print(f"🌐 Proxy configured: {config.HTTPS_PROXY or config.HTTP_PROXY}")
+        
         # Khởi tạo MongoDB client nếu được bật
         self.mongo_client = None
         self.mongo_db = None
@@ -242,7 +258,7 @@ class WattpadScraper:
         
         # Retry with backoff
         def make_request():
-            response = requests.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
+            response = self.http.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
         
@@ -284,7 +300,7 @@ class WattpadScraper:
                     params["after"] = pagination_cursor
                 
                 def make_request():
-                    response = requests.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
+                    response = self.http.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
                     response.raise_for_status()
                     return response.json()
                 
@@ -330,7 +346,7 @@ class WattpadScraper:
         self.rate_limiter.wait_if_needed()
         
         def make_request():
-            response = requests.get(url, timeout=config.REQUEST_TIMEOUT)
+            response = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
         
@@ -432,7 +448,7 @@ class WattpadScraper:
         self.rate_limiter.wait_if_needed()
         
         def make_request():
-            response = requests.get(page_url, timeout=config.REQUEST_TIMEOUT)
+            response = self.http.get(page_url, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.content
         
@@ -553,7 +569,7 @@ class WattpadScraper:
         self.rate_limiter.wait_if_needed()
         
         def make_request():
-            response = requests.get(story_url, timeout=config.REQUEST_TIMEOUT)
+            response = self.http.get(story_url, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.content
         
