@@ -100,18 +100,16 @@ class CommentScraper(BaseScraper):
     @staticmethod
     def extract_comments_from_html(page_html, chapter_id):
         """
-        Extract comments từ HTML DOM của chapter page (chapter_end comments)
+        Extract comments từ HTML DOM của chapter page
         
         HTML structure:
-        <div class="commentCardContentContainer__F9gGk gap8__gx3K6">
-            <div class="authorProfileRow__GMsIH">
-                <h3 aria-hidden="true" class="title-action">username</h3>
-            </div>
-            <div class="commentCardContent__Vc9vg">
-                <pre class="text-body-sm">comment text</pre>
-            </div>
-            <div class="commentCardMeta__Xy9U9">
-                <p class="postedDate__xcq5D">1 tháng trước</p>
+        <div class="comment-card-container">
+            <div class="commentCardContainer__P0qWo">
+                <div class="commentCardContentContainer__F9gGk">
+                    <h3 class="title-action">username</h3>
+                    <pre class="text-body-sm">comment text</pre>
+                    <p class="postedDate__xcq5D">1 ngày trước</p>
+                </div>
             </div>
         </div>
         
@@ -127,8 +125,19 @@ class CommentScraper(BaseScraper):
         try:
             soup = BeautifulSoup(page_html, 'html.parser')
             
-            # Find all comment containers
-            comment_containers = soup.find_all('div', class_='commentCardContentContainer__F9gGk')
+            # Find all comment containers - updated selector
+            comment_containers = soup.find_all('div', class_='comment-card-container')
+            safe_print(f"      🔍 Debug: Tìm thấy {len(comment_containers)} comment containers (class: comment-card-container)")
+            
+            # If no comments found, try alternative selector
+            if not comment_containers:
+                comment_containers = soup.find_all('div', class_='commentCardContainer__P0qWo')
+                safe_print(f"      🔍 Debug: Fallback - Tìm thấy {len(comment_containers)} comment containers (class: commentCardContainer__P0qWo)")
+            
+            # If still no comments, try the old selector
+            if not comment_containers:
+                comment_containers = soup.find_all('div', class_='commentCardContentContainer__F9gGk')
+                safe_print(f"      🔍 Debug: Fallback 2 - Tìm thấy {len(comment_containers)} comment containers (class: commentCardContentContainer__F9gGk)")
             
             for container in comment_containers:
                 # Check limit
@@ -157,7 +166,8 @@ class CommentScraper(BaseScraper):
                         "commentId": str(uuid.uuid4()),  # Generate unique ID since HTML doesn't have it
                         "parentId": None,
                         "react": 0,  # Like count not visible in basic HTML
-                        "userId": username,
+                        "userId": str(uuid.uuid4()),  # Generate UUID for user ID (không có từ HTML)
+                        "userName": username,  # Username từ HTML
                         "chapterId": str(chapter_id),
                         "createdAt": posted_date,
                         "commentText": comment_text,
@@ -183,12 +193,14 @@ class CommentScraper(BaseScraper):
             safe_print(f"      ⚠️ Lỗi extract comments từ HTML: {e}")
             return []
     
-    def save_comment_to_mongo(self, comment_data):
+    def save_comment_to_mongo(self, comment_data, user_name=None):
         """
-        Lưu comment vào MongoDB
+        Lưu comment vào MongoDB (lưu userId là UUID)
+        Đồng thời lưu user info vào collection users
         
         Args:
             comment_data: dict chứa thông tin comment (Wattpad schema)
+            user_name: Tên user (để lưu vào users collection) - lấy từ userName field
         """
         if not comment_data or not self.collection_exists("comments"):
             return
@@ -206,6 +218,28 @@ class CommentScraper(BaseScraper):
                     {"$set": comment_data}
                 )
             else:
-                collection.insert_one(comment_data)
+                collection.insert_one(comment_data)  # Lưu cả userId (UUID) và userName
+            
+            # Save user info dựa vào userName (để tìm user đã tồn tại hay chưa)
+            if not user_name:
+                user_name = comment_data.get("userName")
+            
+            if user_name and user_name != "Anonymous" and self.collection_exists("users"):
+                try:
+                    users_collection = self.get_collection("users")
+                    if users_collection is not None:
+                        # Check if user already exists (dùng userName để tìm, vì userId là UUID)
+                        existing_user = users_collection.find_one({"userName": user_name})
+                        if not existing_user:
+                            user_data = {
+                                "userId": comment_data.get("userId"),  # UUID from comment
+                                "userName": user_name,
+                                "avatar": None,
+                                "isFollowing": False
+                            }
+                            users_collection.insert_one(user_data)
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi khi lưu user: {e}")
+        
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu comment vào MongoDB: {e}")

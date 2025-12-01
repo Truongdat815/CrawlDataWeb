@@ -2,5 +2,5 @@
 # Format: https://www.wattpad.com/[page_url]
 # Each line = one page to scrape
 
-https://www.wattpad.com/stories/romance
+https://www.wattpad.com/stories/fantasy
 

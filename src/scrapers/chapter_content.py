@@ -34,6 +34,8 @@ class ChapterContentScraper(BaseScraper):
             dict formatted theo Wattpad chapter content schema, or None if invalid
         """
         try:
+            from datetime import datetime
+            
             # Generate contentId từ chapterId
             content_id = f"{chapter_id}_content"
             
@@ -41,6 +43,7 @@ class ChapterContentScraper(BaseScraper):
                 "contentId": content_id,
                 "chapterId": str(chapter_id),
                 "content": chapter_text or "",
+                "createdAt": datetime.utcnow().isoformat() + "Z",  # ISO format with Z suffix
             }
             
             # ✅ Validate before return

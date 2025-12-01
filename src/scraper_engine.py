@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import re
+import uuid
 import requests
 import time
 from collections import deque
@@ -26,6 +27,9 @@ from src.scrapers import (
     StoryScraper, ChapterScraper, CommentScraper, 
     UserScraper, ChapterContentScraper, safe_print
 )
+
+# Import duplicate checker
+from src.utils.duplicate_checker import DuplicateChecker
 
 
 class RateLimiter:
@@ -306,6 +310,76 @@ class WattpadScraper:
             safe_print(f"⚠️ Lỗi khi fetch story {story_id}: {e}")
             return None
 
+    def fetch_comments_from_api_v5(self, chapter_id):
+        """
+        Lấy comments từ Wattpad API v5 (endpoint mới)
+        
+        Args:
+            chapter_id: Chapter/Part ID
+        
+        Returns:
+            List of comments (limited by MAX_COMMENTS_PER_CHAPTER)
+        """
+        # URL: /v5/comments/namespaces/parts/resources/{chapterId}/comments
+        url = f"{config.BASE_URL}/v5/comments/namespaces/parts/resources/{chapter_id}/comments"
+        
+        all_comments = []
+        
+        try:
+            # Apply rate limiting
+            self.rate_limiter.wait_if_needed()
+            
+            def make_request():
+                response = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
+                response.raise_for_status()
+                return response.json()
+            
+            data = retry_request(make_request)
+            if not data or "comments" not in data:
+                return []
+            
+            comments_data = data["comments"]
+            
+            # Map API response to our schema
+            from src.scrapers.comment import CommentScraper
+            
+            for api_comment in comments_data:
+                # Check limit
+                if config.MAX_COMMENTS_PER_CHAPTER and len(all_comments) >= config.MAX_COMMENTS_PER_CHAPTER:
+                    break
+                
+                try:
+                    # Map v5 API response
+                    mapped_comment = {
+                        "commentId": api_comment.get("commentId", {}).get("resourceId", str(uuid.uuid4())),
+                        "parentId": None,
+                        "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0),
+                        "userId": str(uuid.uuid4()),  # Generate UUID for userId
+                        "userName": api_comment.get("user", {}).get("name", "Anonymous"),
+                        "chapterId": str(chapter_id),
+                        "createdAt": api_comment.get("created"),
+                        "commentText": api_comment.get("text", ""),
+                        "paragraphIndex": None,
+                        "type": "chapter_end" if api_comment.get("resource", {}).get("namespace") == "parts" else "inline"
+                    }
+                    
+                    # Validate
+                    from src.utils.validation import validate_against_schema
+                    from src.schemas.comment_schema import COMMENT_SCHEMA
+                    validated = validate_against_schema(mapped_comment, COMMENT_SCHEMA, strict=False)
+                    if validated:
+                        all_comments.append(validated)
+                
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi map comment: {e}")
+                    continue
+            
+            return all_comments
+        
+        except Exception as e:
+            safe_print(f"      ⚠️ Lỗi fetch comments API v5: {e}")
+            return []
+
     def fetch_comments_from_api(self, story_id, part_id):
         """
         Lấy comments từ Wattpad API
@@ -511,23 +585,53 @@ class WattpadScraper:
         4. Comments từ HTML window.prefetched
         
         Args:
-            story_id: Story ID to scrape
+            story_id: Story ID hoặc full URL to scrape
             fetch_chapters: Whether to fetch chapter list
             fetch_comments: Whether to fetch comments
-            story_url: Story URL (để fetch HTML prefetched data)
+            story_url: Story URL (optional, will be extracted from story_id if URL is provided)
         
         Returns:
             Complete story data dict
         """
+        import re
+        
+        # Handle nếu story_id là URL
+        if isinstance(story_id, str) and story_id.startswith('http'):
+            # Extract ID từ URL: https://www.wattpad.com/STORYID-title
+            story_url = story_id
+            match = re.search(r'wattpad\.com/(\d+)', story_id)
+            if match:
+                story_id = match.group(1)
+            else:
+                safe_print(f"❌ Không thể extract story ID từ URL: {story_id}")
+                return None
+        
         safe_print(f"\n{'='*60}")
         safe_print(f"📖 Bắt đầu cào story ID: {story_id}")
         safe_print(f"{'='*60}")
+        
+        # ✅ CHECK: Story đã được cào hay chưa
+        dup_checker = DuplicateChecker()
+        story_status = dup_checker.check_story(story_id)
+        if story_status:
+            dup_checker.close()
+            return story_status  # Return existing data instead of None
+        dup_checker.close()
         
         # 1. Fetch story metadata từ API
         story_data = self.fetch_story_from_api(story_id)
         if not story_data:
             safe_print(f"❌ Không thể lấy metadata cho story {story_id}")
             return None
+        
+        # Lấy story URL từ API response nếu không được provide
+        if not story_url and story_data.get("url"):
+            story_url = story_data["url"]
+            if not story_url.startswith("http"):
+                story_url = config.BASE_URL + story_url
+        
+        if story_url:
+            safe_print(f"   URL: {story_url}")
         
         # Try to fetch from HTML prefetched data (tags, categories, chapters)
         extra_info = None
@@ -642,6 +746,13 @@ class WattpadScraper:
                     try:
                         safe_print(f"\n   📖 [{idx}/{max_to_fetch}] Cào chapter: {chapter.get('chapterName')}")
                         
+                        # ✅ CHECK: Chapter đã được cào hay chưa
+                        dup_checker = DuplicateChecker()
+                        if dup_checker.check_chapter(chapter_id, chapter.get('chapterName')):
+                            dup_checker.close()
+                            continue  # Skip to next chapter
+                        dup_checker.close()
+                        
                         # Step 3a: Navigate tới chapter URL
                         self.rate_limiter.wait_if_needed()
                         self.page.goto(chapter_url, wait_until="load", timeout=config.REQUEST_TIMEOUT * 1000)
@@ -677,9 +788,14 @@ class WattpadScraper:
                         chapter_content = ChapterContentScraper.extract_and_map_chapter_content(page_html, chapter_id)
                         
                         if chapter_content and chapter_content.get("content"):
-                            chapter["content"] = chapter_content.get("content")
+                            # ✅ LƯUÍ: Không lưu content trong chapter object
+                            # Content sẽ được lưu riêng vào chapter_content collection
                             content_len = len(chapter_content.get('content', ''))
                             safe_print(f"      ✅ Content: {content_len} bytes")
+                            
+                            # Save chapter_content to MongoDB (collection riêng)
+                            if self.chapter_content_scraper is not None and self.mongo_db is not None:
+                                self.chapter_content_scraper.save_chapter_content_to_mongo(chapter_content)
                         else:
                             safe_print(f"      ⚠️ Không extract được content")
                         
@@ -688,22 +804,60 @@ class WattpadScraper:
                         if fetch_comments:
                             safe_print(f"      💬 Đang lấy comments...")
                             
-                            # Try HTML extraction first (most reliable)
-                            chapter_comments = CommentScraper.extract_comments_from_html(page_html, chapter_id)
+                            # Click "Hiển thị thêm" buttons để load thêm comments
+                            if self.page:
+                                try:
+                                    # Loop to click all "Show more" buttons
+                                    for attempt in range(10):  # Try up to 10 times to load more
+                                        # Find "Hiển thị thêm" button in show-more-btn div
+                                        # <div class="show-more-btn"><button>Hiển thị thêm</button></div>
+                                        show_more_btn = None
+                                        
+                                        try:
+                                            # Selector: div.show-more-btn button
+                                            show_more_btn = self.page.query_selector('div.show-more-btn button')
+                                        except:
+                                            pass
+                                        
+                                        if not show_more_btn:
+                                            break  # No more buttons
+                                        
+                                        try:
+                                            show_more_btn.click()
+                                            safe_print(f"      ✅ Clicked 'Hiển thị thêm' button (attempt {attempt + 1})")
+                                            time.sleep(0.8)  # Wait for comments to load
+                                        except Exception as e:
+                                            safe_print(f"      ⚠️ Lỗi click button: {e}")
+                                            break
+                                    
+                                    # Also scroll down to load lazy-loaded comments
+                                    for i in range(4):
+                                        self.page.evaluate('window.scrollBy(0, 400)')
+                                        time.sleep(0.3)
+                                except Exception as e:
+                                    safe_print(f"      ⚠️ Lỗi khi load more comments: {e}")
                             
-                            # If no HTML comments, try prefetched data
+                            # Get updated HTML after clicking show more
+                            page_html = self.page.content() if self.page else page_html
+                            
+                            # Try API v5 first (fastest - new endpoint)
+                            chapter_comments = None
+                            try:
+                                chapter_comments = self.fetch_comments_from_api_v5(chapter_id)
+                            except Exception as e:
+                                safe_print(f"      ⚠️ Lỗi API v5: {e}")
+                            
+                            # If no API comments, try prefetched data
                             if not chapter_comments and chapter_prefetched_data:
                                 chapter_comments = CommentScraper.extract_comment_info_from_prefetched(chapter_prefetched_data, chapter_id)
                             
-                            # Last resort: Try API
+                            # Last resort: Try HTML extraction
                             if not chapter_comments:
-                                try:
-                                    chapter_comments = self.fetch_comments_from_api(story_id, chapter_id)
-                                except Exception as e:
-                                    safe_print(f"      ⚠️ Bỏ qua comments API: {e}")
+                                chapter_comments = CommentScraper.extract_comments_from_html(page_html, chapter_id)
                             
                             if chapter_comments:
-                                chapter["comments"] = chapter_comments
+                                # ✅ LƯUÍ: Không lưu comments trong chapter object
+                                # Comments sẽ được lưu riêng vào comments collection
                                 safe_print(f"      ✅ Comments: {len(chapter_comments)} comments")
                         
                         # Step 3e: Save chapter to MongoDB (NGAY SAU KHI HOÀN THÀNH)
@@ -713,7 +867,8 @@ class WattpadScraper:
                         # Step 3f: Save comments to MongoDB (nếu có)
                         if fetch_comments and chapter_comments and self.comment_scraper is not None and self.mongo_db is not None:
                             for comment in chapter_comments:
-                                self.comment_scraper.save_comment_to_mongo(comment)
+                                user_name = comment.get("userName")  # Extract userName from comment (display name)
+                                self.comment_scraper.save_comment_to_mongo(comment, user_name=user_name)
                         
                     except Exception as e:
                         safe_print(f"      ⚠️ Lỗi: {e}")

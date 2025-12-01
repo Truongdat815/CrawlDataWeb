@@ -7,10 +7,11 @@ COMMENT_SCHEMA = {
     "commentId": "id",                    # Unique comment ID
     "parentId": "parentId",               # Parent comment ID (if reply)
     "react": "voteCount",                 # Reaction count
-    "userId": "author.name",              # User who commented
+    "userId": "author.id",                # User ID (UUID nếu không có từ web)
+    "userName": "author.name",            # Username/display name
     "chapterId": None,                    # Chapter being commented on
     "createdAt": "createdAt",             # Creation timestamp
     "commentText": "body",                # Comment content
-    "paragraphIndex": "paragraphIndex",   # Inline comment position
-    "type": "inline",                     # "inline" or "chapter_end"
+    "paragraphIndex": "paragraphIndex",   # Inline comment position (for inline comments)
+    "type": "inline",                     # "inline" or "chapter_end" (location of comment)
 }
