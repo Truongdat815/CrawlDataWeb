@@ -245,14 +245,14 @@ class WattpadScraper:
     def fetch_comments_from_api(self, story_id, part_id):
         """
         Lấy comments từ Wattpad API
-        Với rate limiting và retry logic
+        Với rate limiting, retry logic, và limit comments
         
         Args:
             story_id: Story ID
             part_id: Chapter/Part ID
         
         Returns:
-            List of comments
+            List of comments (limited by MAX_COMMENTS_PER_CHAPTER)
         """
         url = f"{config.BASE_URL}/api/v3/stories/{story_id}/parts/{part_id}/comments"
         
@@ -261,6 +261,11 @@ class WattpadScraper:
         
         try:
             while True:
+                # Check limit
+                if config.MAX_COMMENTS_PER_CHAPTER and len(all_comments) >= config.MAX_COMMENTS_PER_CHAPTER:
+                    safe_print(f"   ⏸️ Đã reach limit {config.MAX_COMMENTS_PER_CHAPTER} comments")
+                    break
+                
                 # Apply rate limiting
                 self.rate_limiter.wait_if_needed()
                 
@@ -278,9 +283,19 @@ class WattpadScraper:
                     break
                 
                 if "comments" in data:
-                    all_comments.extend(data["comments"])
+                    comments_to_add = data["comments"]
+                    
+                    # Trim if would exceed limit
+                    if config.MAX_COMMENTS_PER_CHAPTER:
+                        remaining = config.MAX_COMMENTS_PER_CHAPTER - len(all_comments)
+                        comments_to_add = comments_to_add[:remaining]
+                    
+                    all_comments.extend(comments_to_add)
                 
-                # Check for next page
+                # Check for next page and limit
+                if config.MAX_COMMENTS_PER_CHAPTER and len(all_comments) >= config.MAX_COMMENTS_PER_CHAPTER:
+                    break
+                
                 if "pagination" in data and "after" in data["pagination"]:
                     pagination_cursor = data["pagination"]["after"]
                 else:
@@ -448,7 +463,7 @@ class WattpadScraper:
             story_id: Story ID
         
         Returns:
-            List of chapter data
+            List of chapter data (limited by MAX_CHAPTERS_PER_STORY)
         """
         chapters = []
         
@@ -456,6 +471,11 @@ class WattpadScraper:
             # Chapters thường nằm trong "part.{story_id}.metadata"
             for key, value in prefetched_data.items():
                 if key.startswith("part.") and "metadata" in key:
+                    # Check limit
+                    if config.MAX_CHAPTERS_PER_STORY and len(chapters) >= config.MAX_CHAPTERS_PER_STORY:
+                        safe_print(f"   ⏸️ Đã reach limit {config.MAX_CHAPTERS_PER_STORY} chapters")
+                        break
+                    
                     if "data" in value:
                         chapter_data = value["data"]
                         
