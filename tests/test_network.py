@@ -6,7 +6,13 @@ Kiểm tra DNS, HTTP, HTTPS, kết nối thực tế
 import socket
 import requests
 import time
+import sys
+import os
 from urllib.parse import urlparse
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.scrapers.base import safe_print
 from src import config
 

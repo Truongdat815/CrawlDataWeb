@@ -3,6 +3,10 @@ File test kết nối MongoDB
 Sử dụng cấu hình từ src/config.py
 """
 import sys
+import os
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Helper function để print an toàn với encoding UTF-8
 def safe_print(*args, **kwargs):

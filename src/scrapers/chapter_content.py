@@ -110,6 +110,114 @@ class ChapterContentScraper(BaseScraper):
             safe_print(f"⚠️  Lỗi khi trích xuất chapter content: {e}")
             return None
     
+    @staticmethod
+    def extract_text_from_html(page_html):
+        """
+        Trích xuất text content từ HTML page (parsing)
+        
+        Args:
+            page_html: HTML content string
+        
+        Returns:
+            Extracted text content
+        """
+        try:
+            from bs4 import BeautifulSoup
+            import re
+            
+            soup = BeautifulSoup(page_html, 'html.parser')
+            
+            # Tìm content container
+            # Thử nhiều selectors khác nhau
+            content_div = None
+            
+            # 1. Try div.panel-reading (older version)
+            content_div = soup.find('div', class_='panel-reading')
+            
+            # 2. Try article tag (newer version)
+            if not content_div:
+                content_div = soup.find('article')
+            
+            # 3. Try div với class chứa 'content'
+            if not content_div:
+                content_divs = soup.find_all('div')
+                for div in content_divs:
+                    classes = div.get('class') or []
+                    if classes:
+                        for cls in classes:
+                            if isinstance(cls, str) and 'content' in cls.lower():
+                                content_div = div
+                                break
+                    if content_div:
+                        break
+            
+            if not content_div:
+                safe_print(f"⚠️  Không tìm được content container")
+                return ""
+            
+            # Extract paragraphs từ container
+            paragraphs = []
+            for p in content_div.find_all('p'):
+                # Lấy text từ <p> tag, bỏ qua nested elements (buttons, spans)
+                p_text = p.get_text(strip=True)
+                if p_text and len(p_text.strip()) > 0:
+                    paragraphs.append(p_text)
+            
+            # Join paragraphs
+            full_text = "\n\n".join(paragraphs)
+            return full_text
+        except Exception as e:
+            safe_print(f"⚠️  Lỗi khi parse HTML: {e}")
+            return ""
+    
+    @staticmethod
+    def extract_text_from_html_with_parse(page_html):
+        """
+        Trích xuất chapter content từ HTML page (parse + convert to text)
+        
+        Args:
+            page_html: HTML content của chapter page
+        
+        Returns:
+            Extracted chapter text
+        """
+        try:
+            if not page_html:
+                return ""
+            
+            text_content = ChapterContentScraper.extract_text_from_html(page_html)
+            return text_content
+        except Exception as e:
+            safe_print(f"⚠️  Lỗi khi extract text từ HTML: {e}")
+            return ""
+    
+    @staticmethod
+    def extract_and_map_chapter_content(page_html, chapter_id):
+        """
+        Extract chapter content từ HTML page và map vào schema
+        
+        Args:
+            page_html: HTML content của chapter page
+            chapter_id: Chapter ID
+        
+        Returns:
+            dict chứa chapter content data (mapped + validated) hoặc None
+        """
+        try:
+            # Extract text từ HTML
+            chapter_text = ChapterContentScraper.extract_text_from_html_with_parse(page_html)
+            
+            if not chapter_text:
+                safe_print(f"⚠️  Không extract được text từ HTML")
+                return None
+            
+            # Map vào schema
+            processed_content = ChapterContentScraper.map_html_to_chapter_content(chapter_text, chapter_id)
+            return processed_content
+        except Exception as e:
+            safe_print(f"⚠️  Lỗi khi extract chapter content: {e}")
+            return None
+    
     def extract_chapter_content_from_html(self, page_html, chapter_id):
         """
         Trích xuất nội dung chapter từ HTML string (fallback if async not available)

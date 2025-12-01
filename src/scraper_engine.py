@@ -370,6 +370,107 @@ class WattpadScraper:
             safe_print(f"⚠️ Lỗi khi lấy comments: {e}")
             return []
 
+    def extract_chapter_urls_from_html(self, page_html, story_id, max_chapters=None):
+        """
+        Extract chapter URLs from HTML page (table of contents)
+        Looks for links that are actual chapter pages, not stories
+        
+        Args:
+            page_html: HTML content of story page
+            story_id: Story ID (for building URLs)
+            max_chapters: Max chapters to extract (from config if None)
+        
+        Returns:
+            List of chapter URLs
+        """
+        if max_chapters is None:
+            max_chapters = config.MAX_CHAPTERS_PER_STORY
+        
+        try:
+            soup = BeautifulSoup(page_html, 'html.parser')
+            chapter_urls = []
+            
+            # Find chapter links - looking for links in table of contents
+            # Usually they are in a list or table of chapters
+            for link in soup.find_all('a', href=True):
+                href_raw = link.get('href')
+                if not href_raw:
+                    continue
+                
+                href = str(href_raw) if href_raw else ''
+                if not href:
+                    continue
+                
+                # Chapter URLs typically have pattern: /123456-chapter-name
+                # NOT /story/123 (that's a story ID)
+                # Look for patterns like:
+                # - /123456-chapter-name (part number followed by dash and name)
+                # - /story/123/part/456 (story part format)
+                
+                if re.search(r'/\d+-', href) or re.search(r'/part/\d+', href) or re.search(r'/story/\d+/\d+', href):
+                    # Make sure it's full URL
+                    if not href.startswith('http'):
+                        href = config.BASE_URL + href
+                    
+                    # Extract chapter ID to avoid duplicates
+                    # Match either /123456 or /part/123456
+                    chapter_id_match = re.search(r'/(\d+)(?:-|/|$)', href)
+                    if chapter_id_match:
+                        chapter_id = chapter_id_match.group(1)
+                        # Skip if chapter ID is likely a story ID (too small range typically)
+                        if chapter_id == story_id:
+                            continue
+                        
+                        # Check if already added
+                        if not any(chapter_id in url for url in chapter_urls):
+                            chapter_urls.append(href)
+                            
+                            # Check limit
+                            if max_chapters and len(chapter_urls) >= max_chapters:
+                                break
+            
+            safe_print(f"   ✅ Extract {len(chapter_urls)} chapter URLs từ HTML")
+            return chapter_urls
+        except Exception as e:
+            safe_print(f"   ⚠️ Lỗi khi extract chapter URLs: {e}")
+            return []
+
+    def fetch_chapters_from_api(self, story_id):
+        """
+        Lấy danh sách tất cả chapters từ Wattpad API
+        
+        LƯU Ý: Wattpad API /parts endpoint yêu cầu authorization header
+        Fallback: Sử dụng prefetched data hoặc HTML parsing
+        
+        Args:
+            story_id: Story ID
+        
+        Returns:
+            List of chapter data (limited by MAX_CHAPTERS_PER_STORY)
+        """
+        # Hiện tại endpoint /parts không work public
+        # Sẽ fallback tới prefetched data trong scrape_story()
+        
+        url = f"{config.BASE_URL}/api/v3/stories/{story_id}/parts"
+        
+        try:
+            # Apply rate limiting
+            self.rate_limiter.wait_if_needed()
+            
+            def make_request():
+                response = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
+                response.raise_for_status()
+                return response.json()
+            
+            data = retry_request(make_request)
+            if data and "parts" in data:
+                return data["parts"]
+            else:
+                return []
+        except Exception as e:
+            safe_print(f"⚠️ API /parts không khả dụng: {e}")
+            return []
+
     def fetch_categories(self):
         """
         Lấy danh sách categories từ Wattpad API
@@ -467,32 +568,151 @@ class WattpadScraper:
             return None
         
         # 4. Optionally fetch chapters
-        if fetch_chapters and prefetched_data:
+        if fetch_chapters:
             safe_print(f"   📚 Đang lấy danh sách chapters...")
-            chapters = ChapterScraper.extract_chapters_from_prefetched(prefetched_data, story_id)
-            if chapters:
-                processed_story["chapters"] = chapters
-        
-        # 5. Optionally fetch comments (bỏ qua nếu lỗi, không dừng scraper)
-        if fetch_comments and prefetched_data:
-            # First try to extract comments from prefetched data
-            safe_print(f"   💬 Đang lấy comments...")
-            chapter_id = story_data.get("lastPublishedPart", {}).get("id")
-            if chapter_id:
-                comments_from_prefetch = CommentScraper.extract_comment_info_from_prefetched(prefetched_data, chapter_id)
-                if comments_from_prefetch:
-                    processed_story["comments"] = comments_from_prefetch
+            chapters = []
+            chapter_urls = []
             
-            # Fallback: Try API if prefetched didn't work
-            if not processed_story.get("comments") and story_data.get("lastPublishedPart"):
-                part_id = story_data["lastPublishedPart"].get("id")
-                if part_id:
+            # Step 1: Extract chapter URLs from story overview page
+            if self.page:
+                try:
+                    # Navigate to story overview page to get table of contents
+                    story_overview_url = f"{config.BASE_URL}/story/{story_id}"
+                    safe_print(f"   🔍 Đang extract danh sách chapters từ story overview...")
+                    
+                    self.rate_limiter.wait_if_needed()
+                    self.page.goto(story_overview_url, wait_until="load", timeout=config.REQUEST_TIMEOUT * 1000)
+                    self.page.wait_for_timeout(2000)
+                    
+                    page_html = self.page.content()
+                    chapter_urls = self.extract_chapter_urls_from_html(page_html, story_id, config.MAX_CHAPTERS_PER_STORY)
+                    
+                    if chapter_urls:
+                        safe_print(f"   ✅ Tìm được {len(chapter_urls)} chapters từ HTML")
+                        for i, url in enumerate(chapter_urls, 1):
+                            safe_print(f"      [{i}] {url}")
+                    
+                except Exception as e:
+                    safe_print(f"   ⚠️ Lỗi khi extract từ story page: {e}")
+            
+            # Step 2: If no URLs found, fallback to API or prefetched
+            if not chapter_urls:
+                chapters = self.fetch_chapters_from_api(story_id)
+                if not chapters and prefetched_data:
+                    chapters = ChapterScraper.extract_chapters_from_prefetched(prefetched_data, story_id)
+            else:
+                # Build basic chapter objects từ URLs
+                for url in chapter_urls:
+                    # Extract chapter ID - should be at start after domain
+                    # URL format: https://www.wattpad.com/1234567-chapter-name
+                    chapter_id_match = re.search(r'/(\d+)(?:-|/|$)', url)
+                    if chapter_id_match:
+                        chapter_id = chapter_id_match.group(1)
+                        chapter_obj = {
+                            "chapterId": chapter_id,
+                            "storyId": story_id,
+                            "chapterUrl": url,
+                            "chapterName": f"Chapter {len(chapters) + 1}",
+                        }
+                        chapters.append(chapter_obj)
+            
+            if chapters:
+                # Step 3: Scrape từng chapter - FOR EACH CHAPTER: content + comments + metadata
+                safe_print(f"   📖 Bắt đầu cào {min(len(chapters), config.MAX_CHAPTERS_PER_STORY or len(chapters))} chapters...")
+                
+                max_to_fetch = config.MAX_CHAPTERS_PER_STORY or len(chapters)
+                for idx, chapter in enumerate(chapters, 1):
+                    if idx > max_to_fetch:
+                        break
+                    
+                    chapter_id = chapter.get("chapterId")
+                    if not chapter_id:
+                        continue
+                    
+                    # Build chapter URL if not available
+                    chapter_url = chapter.get("chapterUrl")
+                    if not chapter_url:
+                        chapter_url = f"{config.BASE_URL}/{chapter_id}"
+                    
+                    # Skip content extraction if no page available
+                    if not self.page or not self.chapter_content_scraper:
+                        safe_print(f"\n   📖 [{idx}/{max_to_fetch}] Chapter: {chapter.get('chapterName')} (không có Playwright page)")
+                        continue
+                    
                     try:
-                        comments_from_api = self.fetch_comments_from_api(story_id, part_id)
-                        if comments_from_api:
-                            processed_story["comments"] = comments_from_api
+                        safe_print(f"\n   📖 [{idx}/{max_to_fetch}] Cào chapter: {chapter.get('chapterName')}")
+                        
+                        # Step 3a: Navigate tới chapter URL
+                        self.rate_limiter.wait_if_needed()
+                        self.page.goto(chapter_url, wait_until="load", timeout=config.REQUEST_TIMEOUT * 1000)
+                        self.page.wait_for_timeout(2000)
+                        
+                        # Step 3b: Fetch window.prefetched data của chapter này
+                        chapter_prefetched_data = self.page.evaluate("() => window.prefetched")
+                        
+                        if chapter_prefetched_data:
+                            # Extract metadata từ prefetched
+                            for key, value in chapter_prefetched_data.items():
+                                if key.startswith("part.") and "metadata" in key:
+                                    if "data" in value:
+                                        chapter_meta = value["data"]
+                                        chapter["chapterName"] = chapter_meta.get("title", chapter.get("chapterName"))
+                                        chapter["views"] = chapter_meta.get("readCount", 0)
+                                        chapter["voted"] = chapter_meta.get("voteCount", 0)
+                                        chapter["order"] = chapter_meta.get("order", idx - 1)
+                                        chapter["commentCount"] = chapter_meta.get("commentCount", 0)
+                                        chapter["wordCount"] = chapter_meta.get("wordCount", 0)
+                                        chapter["rating"] = chapter_meta.get("rating", 0)
+                                        chapter["publishedTime"] = chapter_meta.get("createDate")
+                                        chapter["lastUpdated"] = chapter_meta.get("modifyDate")
+                                        safe_print(f"      ✅ Metadata: {chapter['chapterName']}")
+                                        break
+                        else:
+                            # Nếu không có prefetched data, dùng placeholder name
+                            chapter["chapterName"] = f"Chapter {idx}: {chapter.get('chapterName', 'Unknown')}"
+                            chapter["order"] = idx - 1
+                        
+                        # Step 3c: Extract chapter content từ HTML
+                        page_html = self.page.content()
+                        chapter_content = ChapterContentScraper.extract_and_map_chapter_content(page_html, chapter_id)
+                        
+                        if chapter_content and chapter_content.get("content"):
+                            chapter["content"] = chapter_content.get("content")
+                            content_len = len(chapter_content.get('content', ''))
+                            safe_print(f"      ✅ Content: {content_len} bytes")
+                        else:
+                            safe_print(f"      ⚠️ Không extract được content")
+                        
+                        # Step 3d: Extract comments cho CHAPTER NÀY (không phải chapter cuối cùng)
+                        chapter_comments = None
+                        if fetch_comments:
+                            safe_print(f"      💬 Đang lấy comments...")
+                            
+                            # Try HTML extraction first (most reliable)
+                            chapter_comments = CommentScraper.extract_comments_from_html(page_html, chapter_id)
+                            
+                            # If no HTML comments, try prefetched data
+                            if not chapter_comments and chapter_prefetched_data:
+                                chapter_comments = CommentScraper.extract_comment_info_from_prefetched(chapter_prefetched_data, chapter_id)
+                            
+                            # Last resort: Try API
+                            if not chapter_comments:
+                                try:
+                                    chapter_comments = self.fetch_comments_from_api(story_id, chapter_id)
+                                except Exception as e:
+                                    safe_print(f"      ⚠️ Bỏ qua comments API: {e}")
+                            
+                            if chapter_comments:
+                                chapter["comments"] = chapter_comments
+                                safe_print(f"      ✅ Comments: {len(chapter_comments)} comments")
+                        
                     except Exception as e:
-                        safe_print(f"   ⚠️ Bỏ qua comments: {e}")
+                        safe_print(f"      ⚠️ Lỗi: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                processed_story["chapters"] = chapters
+                safe_print(f"\n   ✅ Hoàn thành cào {len(chapters)} chapters")
         
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")
         return processed_story

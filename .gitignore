@@ -1,4 +1,30 @@
+# Config files
 config.py
-*.md
+
+# Documentation
+docs/*.md
+
+# Python artifacts
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Test data
+tests/test_data/
+
+# Data outputs (production)
+data/json/*.json
+data/images/
+
+# Debug outputs
+debug/
+debug/*.html
+debug/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

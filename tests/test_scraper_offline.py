@@ -5,7 +5,12 @@ Dùng để test parsing, MongoDB logic mà không cần internet
 
 import json
 import os
+import sys
 from unittest.mock import Mock, patch, MagicMock
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.scraper_engine import WattpadScraper
 from src.scrapers import StoryScraper, ChapterScraper, CommentScraper, UserScraper
 from src.scrapers.base import safe_print
