@@ -1,5 +1,15 @@
 """
-Comment scraper module - handles chapter/story comments.
+Comment scraper module - handles chapter/story comments for Wattpad.
+Schema:
+- commentId: unique comment ID
+- parentId: ID of parent comment (if reply, else null)
+- react: reaction/sentiment data
+- userId: user who commented
+- chapterId: chapter being commented on
+- createdAt: creation timestamp
+- commentText: comment content
+- paragraphIndex: nullable, for inline comments
+- type: "inline" or "chapter_end"
 """
 
 from src.scrapers.base import BaseScraper, safe_print
@@ -7,7 +17,7 @@ from src import config
 
 
 class CommentScraper(BaseScraper):
-    """Scraper for comments on chapters and stories"""
+    """Scraper for comments on chapters and stories (Wattpad schema)"""
     
     def __init__(self, page=None, mongo_db=None):
         super().__init__(page, mongo_db, config)
@@ -18,18 +28,18 @@ class CommentScraper(BaseScraper):
         Lưu comment vào MongoDB
         
         Args:
-            comment_data: dict chứa thông tin comment
+            comment_data: dict chứa thông tin comment (Wattpad schema)
         """
         if not comment_data or not self.collection_exists("comments"):
             return
         
         try:
             collection = self.get_collection("comments")
-            existing = collection.find_one({"comment_id": comment_data.get("comment_id")})
+            existing = collection.find_one({"commentId": comment_data.get("commentId")})
             
             if existing:
                 collection.update_one(
-                    {"comment_id": comment_data.get("comment_id")},
+                    {"commentId": comment_data.get("commentId")},
                     {"$set": comment_data}
                 )
             else:

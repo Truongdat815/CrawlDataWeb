@@ -16,7 +16,7 @@ except ImportError:
 
 # Import scrapers
 from src.scrapers import (
-    StoryScraper, ChapterScraper, ReviewScraper, CommentScraper, 
+    StoryScraper, ChapterScraper, CommentScraper, 
     UserScraper, safe_print
 )
 
@@ -35,7 +35,6 @@ class RoyalRoadScraper:
         # Initialize scrapers (will be set in start())
         self.story_scraper = None
         self.chapter_scraper = None
-        self.review_scraper = None
         self.comment_scraper = None
         self.user_scraper = None
         
@@ -43,7 +42,6 @@ class RoyalRoadScraper:
         self.mongo_collection_stories = None
         self.mongo_collection_chapters = None
         self.mongo_collection_comments = None
-        self.mongo_collection_reviews = None
         self.mongo_collection_users = None
         
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
@@ -54,9 +52,8 @@ class RoyalRoadScraper:
                 self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
                 self.mongo_collection_chapters = self.mongo_db["chapters"]
                 self.mongo_collection_comments = self.mongo_db["comments"]
-                self.mongo_collection_reviews = self.mongo_db["reviews"]
                 self.mongo_collection_users = self.mongo_db["users"]
-                safe_print("✅ Đã kết nối MongoDB với 5 collections")
+                safe_print("✅ Đã kết nối MongoDB với 4 collections (Wattpad schema)")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -72,11 +69,10 @@ class RoyalRoadScraper:
         # Khởi tạo scrapers
         self.story_scraper = StoryScraper(self.page, self.mongo_db)
         self.chapter_scraper = ChapterScraper(self.page, self.mongo_db)
-        self.review_scraper = ReviewScraper(self.page, self.mongo_db)
         self.comment_scraper = CommentScraper(self.page, self.mongo_db)
         self.user_scraper = UserScraper(self.page, self.mongo_db)
         
-        safe_print("✅ Bot đã khởi động!")
+        safe_print("✅ Bot đã khởi động! (Wattpad crawler)")
 
     def stop(self):
         """Đóng trình duyệt và MongoDB connection"""
