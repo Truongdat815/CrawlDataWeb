@@ -14,7 +14,7 @@ class StoryScraper(BaseScraper):
         super().__init__(page, mongo_db, config)
         self.init_collections({"stories": config.MONGODB_COLLECTION_STORIES})
     
-    def scrape_story_metadata(self, story_data):
+    def scrape_story_metadata(self, story_data, extra_info=None):
         """
         Xử lý metadata của 1 bộ truyện từ API Wattpad
         Mapping fields từ API response sang Wattpad schema:
@@ -29,9 +29,13 @@ class StoryScraper(BaseScraper):
         - status: từ completed (true/false)
         - userId: từ user.name
         - time: từ createDate
-        - tags: để trống (cần query thêm)
-        - category: null (cần query categories API)
+        - tags: từ extra_info (HTML prefetched)
+        - category: từ extra_info (HTML prefetched)
         - freeChapter: true (mặc định Wattpad)
+        
+        Args:
+            story_data: API response từ /api/v3/stories/{id}
+            extra_info: dict từ HTML window.prefetched (tags, categories, language)
         
         Returns:
             story_data dict với đầy đủ thông tin story
@@ -43,17 +47,30 @@ class StoryScraper(BaseScraper):
                 "storyName": story_data.get("title"),
                 "storyUrl": story_data.get("url"),
                 "coverImg": story_data.get("cover"),
-                "category": None,  # Cần query từ categories API
+                "category": None,
                 "status": "completed" if story_data.get("completed") else "ongoing",
-                "tags": [],  # Cần query thêm từ API
+                "tags": [],
                 "description": story_data.get("description", ""),
                 "totalChapters": story_data.get("numParts", 0),
                 "totalViews": story_data.get("readCount", 0),
                 "voted": story_data.get("voteCount", 0),
+                "mature": story_data.get("mature", False),
                 "freeChapter": not story_data.get("isPaywalled", False),
                 "time": story_data.get("createDate"),
                 "userId": story_data.get("user", {}).get("name")
             }
+            
+            # Add extra info từ HTML prefetched (nếu có)
+            if extra_info:
+                if "tags" in extra_info:
+                    processed_story["tags"] = extra_info.get("tags", [])
+                if "categories" in extra_info:
+                    # Lấy category ID đầu tiên (nếu có)
+                    cats = extra_info.get("categories", [])
+                    if cats and len(cats) > 0:
+                        processed_story["category"] = cats[0]
+            
+            return processed_story
             
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi xử lý metadata story: {e}")

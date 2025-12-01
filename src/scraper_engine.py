@@ -1,9 +1,11 @@
 import json
 import os
 import sys
+import re
 import requests
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from bs4 import BeautifulSoup
 from src import config, utils
 
 # Import MongoDB
@@ -209,14 +211,19 @@ class WattpadScraper:
             safe_print(f"⚠️ Lỗi khi lấy categories: {e}")
             return {}
 
-    def scrape_story(self, story_id, fetch_chapters=True, fetch_comments=True):
+    def scrape_story(self, story_id, fetch_chapters=True, fetch_comments=True, story_url=None):
         """
-        Cào toàn bộ thông tin bộ truyện (metadata + chapters + comments)
+        Cào toàn bộ thông tin bộ truyện:
+        1. Metadata từ API /api/v3/stories/{id}
+        2. Tags + Categories từ HTML window.prefetched
+        3. Chapters từ HTML window.prefetched
+        4. Comments từ HTML window.prefetched
         
         Args:
             story_id: Story ID to scrape
             fetch_chapters: Whether to fetch chapter list
             fetch_comments: Whether to fetch comments
+            story_url: Story URL (để fetch HTML prefetched data)
         
         Returns:
             Complete story data dict
@@ -225,46 +232,187 @@ class WattpadScraper:
         safe_print(f"📖 Bắt đầu cào story ID: {story_id}")
         safe_print(f"{'='*60}")
         
-        # 1. Fetch story metadata
+        # 1. Fetch story metadata từ API
         story_data = self.fetch_story_from_api(story_id)
         if not story_data:
             safe_print(f"❌ Không thể lấy metadata cho story {story_id}")
             return None
         
-        # 2. Process with scraper
-        processed_story = self.story_scraper.scrape_story_metadata(story_data)
+        # 2. Fetch HTML prefetched data (nếu có URL)
+        extra_info = None
+        if story_url:
+            safe_print(f"   🌐 Đang fetch HTML prefetched data...")
+            prefetched_data = self.fetch_html_prefetched_data(story_url)
+            if prefetched_data:
+                extra_info = self.extract_story_info_from_prefetched(prefetched_data)
+        
+        # 3. Process story metadata (kèm tags + categories)
+        processed_story = self.story_scraper.scrape_story_metadata(story_data, extra_info)
         
         if not processed_story:
             safe_print(f"❌ Lỗi khi xử lý story metadata")
             return None
         
-        # 3. Optionally fetch chapters
-        if fetch_chapters:
+        # 4. Optionally fetch chapters
+        if fetch_chapters and prefetched_data:
             safe_print(f"   📚 Đang lấy danh sách chapters...")
-            # TODO: Implement chapter list fetching when API endpoint is known
-            pass
+            chapters = self.extract_chapters_from_prefetched(prefetched_data, story_id)
+            if chapters:
+                processed_story["chapters"] = chapters
         
-        # 4. Optionally fetch comments
+        # 5. Optionally fetch comments
         if fetch_comments and story_data.get("lastPublishedPart"):
             part_id = story_data["lastPublishedPart"].get("id")
             if part_id:
                 safe_print(f"   💬 Đang lấy comments...")
                 comments = self.fetch_comments_from_api(story_id, part_id)
-                for comment in comments:
-                    self.comment_scraper.save_comment_to_mongo({
-                        "commentId": comment["commentId"]["resourceId"],
-                        "parentId": None,  # TODO: Extract from API if available
-                        "react": comment.get("sentiments", {}),
-                        "userId": comment["user"]["name"],
-                        "chapterId": comment["resource"]["resourceId"],
-                        "createdAt": comment["created"],
-                        "commentText": comment["text"],
-                        "paragraphIndex": None,
-                        "type": "chapter_end"
-                    })
+                if comments:
+                    processed_story["comments"] = comments
         
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")
         return processed_story
+
+    # ==================== HTML SCRAPING METHODS ====================
+    
+    def fetch_html_prefetched_data(self, story_url):
+        """
+        Lấy dữ liệu từ window.prefetched trong HTML page
+        (Chứa chapters, tags, categories, comments)
+        
+        Args:
+            story_url: Full URL to story chapter
+        
+        Returns:
+            dict with prefetched data or None
+        """
+        try:
+            response = requests.get(story_url, timeout=config.TIMEOUT)
+            response.raise_for_status()
+            
+            # Parse HTML
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find window.prefetched script tag
+            scripts = soup.find_all('script', type='application/json')
+            
+            for script in scripts:
+                if 'prefetched' in script.string or 'window.prefetched' in script.string:
+                    try:
+                        # Extract JSON from script content
+                        # Format: window.prefetched = {...}
+                        json_str = script.string
+                        
+                        # Remove "window.prefetched = " prefix if present
+                        if 'window.prefetched' in json_str:
+                            json_str = json_str.split('=', 1)[1].strip()
+                            if json_str.endswith(';'):
+                                json_str = json_str[:-1]
+                        
+                        prefetched_data = json.loads(json_str)
+                        safe_print(f"✅ Đã lấy prefetched data từ HTML")
+                        return prefetched_data
+                    except json.JSONDecodeError:
+                        continue
+            
+            safe_print(f"⚠️ Không tìm thấy window.prefetched trong HTML")
+            return None
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi fetch HTML: {e}")
+            return None
+
+    def extract_chapters_from_prefetched(self, prefetched_data, story_id):
+        """
+        Trích xuất chapters từ prefetched data
+        
+        Args:
+            prefetched_data: window.prefetched object
+            story_id: Story ID
+        
+        Returns:
+            List of chapter data
+        """
+        chapters = []
+        
+        try:
+            # Chapters thường nằm trong "part.{story_id}.metadata"
+            for key, value in prefetched_data.items():
+                if key.startswith("part.") and "metadata" in key:
+                    if "data" in value:
+                        chapter_data = value["data"]
+                        
+                        # Map chapter fields
+                        processed_chapter = {
+                            "chapterId": chapter_data.get("id"),
+                            "storyId": story_id,
+                            "chapterName": chapter_data.get("title"),
+                            "voted": chapter_data.get("voteCount", 0),
+                            "views": chapter_data.get("readCount", 0),
+                            "order": chapter_data.get("order", 0),
+                            "publishedTime": chapter_data.get("createDate"),
+                            "lastUpdated": chapter_data.get("modifyDate"),
+                            "chapterUrl": chapter_data.get("url"),
+                            "wordCount": chapter_data.get("wordCount", 0),
+                            "rating": chapter_data.get("rating", 0),
+                            "commentCount": chapter_data.get("commentCount", 0)
+                        }
+                        chapters.append(processed_chapter)
+                        safe_print(f"   ✅ Chapter: {chapter_data.get('title')}")
+            
+            safe_print(f"✅ Đã trích xuất {len(chapters)} chapters")
+            return chapters
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi trích xuất chapters: {e}")
+            return []
+
+    def extract_story_info_from_prefetched(self, prefetched_data):
+        """
+        Trích xuất thông tin story từ prefetched data
+        (tags, categories, language, author info)
+        
+        Args:
+            prefetched_data: window.prefetched object
+        
+        Returns:
+            dict with story info
+        """
+        try:
+            story_info = {
+                "tags": [],
+                "categories": [],
+                "language": None,
+                "author": None
+            }
+            
+            # Tìm story group data
+            for key, value in prefetched_data.items():
+                if "story." in key and "metadata" in key:
+                    if "data" in value and "group" in value["data"]:
+                        group = value["data"]["group"]
+                        
+                        # Extract tags
+                        if "tags" in group:
+                            story_info["tags"] = group["tags"]
+                        
+                        # Extract categories
+                        if "categories" in group:
+                            story_info["categories"] = group["categories"]
+                        
+                        # Extract language
+                        if "language" in group:
+                            story_info["language"] = group["language"]
+                        
+                        # Extract author
+                        if "user" in group:
+                            story_info["author"] = group["user"]
+                        
+                        safe_print(f"✅ Tags: {len(story_info['tags'])}")
+                        safe_print(f"✅ Categories: {story_info['categories']}")
+                        return story_info
+            
+            return story_info
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi trích xuất story info: {e}")
+            return None
 
     # ==================== UTILITY METHODS ====================
 
