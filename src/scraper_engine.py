@@ -14,18 +14,11 @@ try:
 except ImportError:
     MONGODB_AVAILABLE = False
 
-# Helper function để print an toàn với encoding UTF-8
-def safe_print(*args, **kwargs):
-    """Print function an toàn với encoding UTF-8 trên Windows"""
-    try:
-        # Thử print bình thường
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        # Nếu lỗi encoding, encode lại thành ASCII-safe
-        message = ' '.join(str(arg) for arg in args)
-        # Thay thế emoji và ký tự đặc biệt
-        message = message.encode('ascii', 'replace').decode('ascii')
-        print(message, **kwargs)
+# Import scrapers
+from src.scrapers import (
+    StoryScraper, ChapterScraper, ReviewScraper, CommentScraper, 
+    UserScraper, safe_print
+)
 
 class RoyalRoadScraper:
     def __init__(self, max_workers=None):
@@ -38,34 +31,51 @@ class RoyalRoadScraper:
         # Khởi tạo MongoDB client nếu được bật
         self.mongo_client = None
         self.mongo_db = None
+        
+        # Initialize scrapers (will be set in start())
+        self.story_scraper = None
+        self.chapter_scraper = None
+        self.review_scraper = None
+        self.comment_scraper = None
+        self.user_scraper = None
+        
+        # Legacy collections (backward compatibility)
         self.mongo_collection_stories = None
         self.mongo_collection_chapters = None
         self.mongo_collection_comments = None
         self.mongo_collection_reviews = None
         self.mongo_collection_users = None
-        self.mongo_collection_scores = None
+        
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
             try:
                 self.mongo_client = MongoClient(config.MONGODB_URI)
                 self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
+                # Keep for backward compatibility
                 self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
                 self.mongo_collection_chapters = self.mongo_db["chapters"]
                 self.mongo_collection_comments = self.mongo_db["comments"]
                 self.mongo_collection_reviews = self.mongo_db["reviews"]
                 self.mongo_collection_users = self.mongo_db["users"]
-                self.mongo_collection_scores = self.mongo_db["scores"]
-                safe_print("✅ Đã kết nối MongoDB với 6 collections")
+                safe_print("✅ Đã kết nối MongoDB với 5 collections")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
                 self.mongo_client = None
 
     def start(self):
-        """Khởi động trình duyệt"""
+        """Khởi động trình duyệt và scrapers"""
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=config.HEADLESS)
         self.context = self.browser.new_context()
         self.page = self.context.new_page()
+        
+        # Khởi tạo scrapers
+        self.story_scraper = StoryScraper(self.page, self.mongo_db)
+        self.chapter_scraper = ChapterScraper(self.page, self.mongo_db)
+        self.review_scraper = ReviewScraper(self.page, self.mongo_db)
+        self.comment_scraper = CommentScraper(self.page, self.mongo_db)
+        self.user_scraper = UserScraper(self.page, self.mongo_db)
+        
         safe_print("✅ Bot đã khởi động!")
 
     def stop(self):
@@ -230,19 +240,16 @@ class RoyalRoadScraper:
         # Container chính: .stats-content ul.list-unstyled
         base_locator = ".stats-content ul.list-unstyled li:nth-child({}) span"
 
-        # 1. Overall Score (Nằm ở vị trí con thứ 2)
-        overall_score = self.page.locator(base_locator.format(2)).inner_text()
-
-        # 2. Style Score (Vị trí con thứ 4)
+        # Style Score (Vị trí con thứ 4)
         style_score = self.page.locator(base_locator.format(4)).inner_text()
 
-        # 3. Story Score (Vị trí con thứ 6)
+        # Story Score (Vị trí con thứ 6)
         story_score = self.page.locator(base_locator.format(6)).inner_text()
 
-        # 4. Grammar Score (Vị trí con thứ 8)
+        # Grammar Score (Vị trí con thứ 8)
         grammar_score = self.page.locator(base_locator.format(8)).inner_text()
 
-        # 5. Character Score (Vị trí con thứ 10)
+        # Character Score (Vị trí con thứ 10)
         character_score = self.page.locator(base_locator.format(10)).inner_text()
 
         # 1. Định vị tất cả các thẻ <li> chứa GIÁ TRỊ số liệu
@@ -272,7 +279,7 @@ class RoyalRoadScraper:
         # Tạo cấu trúc dữ liệu tổng quan theo schema
         # Schema: story id, story name, story url, cover image, category, status, tags, description, 
         # total views, average views, followers, favorites, ratings, page views
-        # Score: overall_score, style_score, story_score, grammar_score, character_score
+        # Score: style_score, story_score, grammar_score, character_score
         story_data = {
             "id": story_id,  # Schema: story id
             "name": title,  # Schema: story name
@@ -288,7 +295,6 @@ class RoyalRoadScraper:
             "favorites": favorites,  # Schema: favorites
             "ratings": ratings,  # Schema: ratings
             "page_views": pages,  # Schema: page views
-            "overall_score": overall_score,  # Schema: overall score
             "style_score": style_score,  # Schema: style score
             "story_score": story_score,  # Schema: story score
             "grammar_score": grammar_score,  # Schema: grammar score
@@ -296,10 +302,6 @@ class RoyalRoadScraper:
             "reviews": [],  # Sẽ được điền sau
             "chapters": []     # Chuẩn bị cái mảng rỗng để chứa các chương
         }
-        
-        # Lưu score vào collection scores (từ story)
-        score_id = f"{story_id}_score"
-        self._save_score_to_mongo(score_id, overall_score, style_score, story_score, grammar_score, character_score)
         
         # Lưu story ngay khi cào xong metadata (chưa có chapters và reviews)
         self._save_story_to_mongo(story_data)
@@ -1612,7 +1614,6 @@ class RoyalRoadScraper:
             
             # Lấy scores để tạo score_id (tạo unique ID từ scores)
             scores = {
-                "overall_score": "",
                 "style_score": "",
                 "story_score": "",
                 "grammar_score": "",
@@ -1627,9 +1628,7 @@ class RoyalRoadScraper:
                         score_text = score_elem.inner_text().strip()
                         score_label = score_elem.get_attribute("data-label") or ""
                         # Có thể parse từ text hoặc từ data attributes
-                        if "overall" in score_label.lower() or "overall" in score_text.lower():
-                            scores["overall_score"] = score_text
-                        elif "style" in score_label.lower() or "style" in score_text.lower():
+                        if "style" in score_label.lower() or "style" in score_text.lower():
                             scores["style_score"] = score_text
                         elif "story" in score_label.lower() or "story" in score_text.lower():
                             scores["story_score"] = score_text
@@ -1661,7 +1660,6 @@ class RoyalRoadScraper:
             if score_id and any(scores.values()):
                 self._save_score_to_mongo(
                     score_id,
-                    scores.get("overall_score", ""),
                     scores.get("style_score", ""),
                     scores.get("story_score", ""),
                     scores.get("grammar_score", ""),
@@ -1687,122 +1685,28 @@ class RoyalRoadScraper:
 
     def _save_comment_to_mongo(self, comment_data):
         """Lưu comment vào MongoDB ngay khi cào xong"""
-        if not comment_data or not self.mongo_collection_comments:
-            return
-        
-        try:
-            existing = self.mongo_collection_comments.find_one({"comment_id": comment_data.get("comment_id")})
-            if existing:
-                self.mongo_collection_comments.update_one(
-                    {"comment_id": comment_data.get("comment_id")},
-                    {"$set": comment_data}
-                )
-            else:
-                self.mongo_collection_comments.insert_one(comment_data)
-        except Exception as e:
-            safe_print(f"        ⚠️ Lỗi khi lưu comment vào MongoDB: {e}")
+        if self.comment_scraper:
+            self.comment_scraper.save_comment_to_mongo(comment_data)
     
     def _save_chapter_to_mongo(self, chapter_data):
         """Lưu chapter vào MongoDB ngay khi cào xong chapter và comments"""
-        if not chapter_data or not self.mongo_collection_chapters:
-            return
-        
-        try:
-            existing = self.mongo_collection_chapters.find_one({"id": chapter_data.get("id")})
-            if existing:
-                self.mongo_collection_chapters.update_one(
-                    {"id": chapter_data.get("id")},
-                    {"$set": chapter_data}
-                )
-                safe_print(f"      🔄 Đã cập nhật chapter {chapter_data.get('id')} trong MongoDB")
-            else:
-                self.mongo_collection_chapters.insert_one(chapter_data)
-                safe_print(f"      ✅ Đã lưu chapter {chapter_data.get('id')} vào MongoDB")
-        except Exception as e:
-            safe_print(f"      ⚠️ Lỗi khi lưu chapter vào MongoDB: {e}")
+        if self.chapter_scraper:
+            self.chapter_scraper.save_chapter_to_mongo(chapter_data)
     
     def _save_review_to_mongo(self, review_data):
         """Lưu review vào MongoDB ngay khi cào xong"""
-        if not review_data or not self.mongo_collection_reviews:
-            return
-        
-        try:
-            existing = self.mongo_collection_reviews.find_one({"review_id": review_data.get("review_id")})
-            if existing:
-                self.mongo_collection_reviews.update_one(
-                    {"review_id": review_data.get("review_id")},
-                    {"$set": review_data}
-                )
-            else:
-                self.mongo_collection_reviews.insert_one(review_data)
-        except Exception as e:
-            safe_print(f"        ⚠️ Lỗi khi lưu review vào MongoDB: {e}")
+        if self.review_scraper:
+            self.review_scraper.save_review_to_mongo(review_data)
     
     def _save_user_to_mongo(self, user_id, username):
         """Lưu user vào MongoDB ngay khi gặp user_id và username"""
-        if not user_id or not username or not self.mongo_collection_users:
-            return
-        
-        try:
-            existing = self.mongo_collection_users.find_one({"user_id": user_id})
-            if existing:
-                # Update nếu username thay đổi
-                if existing.get("username") != username:
-                    self.mongo_collection_users.update_one(
-                        {"user_id": user_id},
-                        {"$set": {"username": username}}
-                    )
-            else:
-                user_data = {
-                    "user_id": user_id,  # Schema: user id
-                    "username": username  # Schema: username
-                }
-                self.mongo_collection_users.insert_one(user_data)
-        except Exception as e:
-            safe_print(f"        ⚠️ Lỗi khi lưu user vào MongoDB: {e}")
-    
-    def _save_score_to_mongo(self, score_id, overall_score, style_score, story_score, grammar_score, character_score):
-        """Lưu score vào MongoDB"""
-        if not score_id or not self.mongo_collection_scores:
-            return
-        
-        try:
-            score_data = {
-                "score_id": score_id,  # Schema: score id
-                "overall_score": overall_score,  # Schema: overall score
-                "style_score": style_score,  # Schema: style score
-                "story_score": story_score,  # Schema: story score
-                "grammar_score": grammar_score,  # Schema: grammar score
-                "character_score": character_score  # Schema: character score
-            }
-            
-            existing = self.mongo_collection_scores.find_one({"score_id": score_id})
-            if existing:
-                self.mongo_collection_scores.update_one(
-                    {"score_id": score_id},
-                    {"$set": score_data}
-                )
-            else:
-                self.mongo_collection_scores.insert_one(score_data)
-        except Exception as e:
-            safe_print(f"        ⚠️ Lỗi khi lưu score vào MongoDB: {e}")
+        if self.user_scraper:
+            self.user_scraper.save_user_to_mongo(user_id, username)
     
     def _save_story_to_mongo(self, story_data):
         """Lưu story vào MongoDB (có thể update nhiều lần khi có thêm chapters/reviews)"""
-        if not story_data or not self.mongo_collection_stories:
-            return
-        
-        try:
-            existing = self.mongo_collection_stories.find_one({"id": story_data.get("id")})
-            if existing:
-                self.mongo_collection_stories.update_one(
-                    {"id": story_data.get("id")},
-                    {"$set": story_data}
-                )
-            else:
-                self.mongo_collection_stories.insert_one(story_data)
-        except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
+        if self.story_scraper:
+            self.story_scraper.save_story_to_mongo(story_data)
     
     def _save_to_json(self, data):
         """

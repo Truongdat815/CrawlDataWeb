@@ -14,7 +14,7 @@ from src.scraper_engine import RoyalRoadScraper
 
 def main():
     # URL trang best-rated
-    best_rated_url = "https://www.royalroad.com/fictions/best-rated?page=500"
+    best_rated_url = "https://www.royalroad.com/fictions/best-rated?page=500u"
     
     # Khởi tạo bot
     bot = RoyalRoadScraper()
