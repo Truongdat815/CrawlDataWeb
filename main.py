@@ -38,21 +38,28 @@ def extract_story_id_from_url(url):
     return None
 
 def main():
-    # ========== DAN LINK WATTPAD TAI DAY ==========
-    story_url = input("Dan link story Wattpad: ").strip()
-    
-    if not story_url:
-        safe_print("Loi: Vui long dan link story!")
+    # ========== DOC STORY URLs TU FILE ==========
+    try:
+        with open('story_urls.txt', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        safe_print("Loi: Khong tim thay file story_urls.txt")
+        safe_print("Tao file story_urls.txt va dan URLs vao")
         return
     
-    # Extract story ID from URL
-    story_id = extract_story_id_from_url(story_url)
-    if not story_id:
-        safe_print(f"Loi: Khong the extract story ID tu URL: {story_url}")
+    # Filter va clean URLs (bo comment va blank lines)
+    urls = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            urls.append(line)
+    
+    if not urls:
+        safe_print("Loi: Khong co URL nao trong story_urls.txt")
+        safe_print("Vui long dan URLs vao file")
         return
     
-    safe_print(f"\nStory ID: {story_id}")
-    safe_print(f"URL: {story_url}")
+    safe_print(f"\nTim thay {len(urls)} story URL(s)")
     
     # ========== TUY CHINH SO LUONG CHAPTERS VA COMMENTS ==========
     # Uncomment de custom (None = lay tat ca):
@@ -72,35 +79,40 @@ def main():
     
     try:
         bot.start()
-        safe_print("Bat dau cao story...")
         
-        # Scrape 1 story voi metadata + chapters + comments
-        result = bot.scrape_story(
-            story_id=story_id,
-            story_url=story_url,
-            fetch_chapters=True,
-            fetch_comments=True
-        )
-        
-        if result:
-            safe_print("\n" + "="*60)
-            safe_print("Cao thanh cong!")
-            safe_print("="*60)
-            safe_print(f"Story: {result.get('storyName')}")
-            safe_print(f"Author: {result.get('userId')}")
-            tags = result.get('tags', [])[:5]
-            safe_print(f"Tags: {tags}...")
-            safe_print(f"Category: {result.get('category')}")
-            safe_print(f"Total Chapters: {result.get('totalChapters')}")
-            safe_print(f"Total Views: {result.get('totalViews')}")
-            safe_print(f"Voted: {result.get('voted')}")
+        # Scrape tung story
+        for idx, story_url in enumerate(urls, 1):
+            safe_print(f"\n[{idx}/{len(urls)}] Xu ly: {story_url}")
             
-            if "chapters" in result:
-                safe_print(f"Chapters fetched: {len(result['chapters'])}")
-            if "comments" in result:
-                safe_print(f"Comments fetched: {len(result['comments'])}")
-        else:
-            safe_print("\nCao that bai")
+            # Extract story ID from URL
+            story_id = extract_story_id_from_url(story_url)
+            if not story_id:
+                safe_print(f"  Loi: Khong the extract story ID tu URL")
+                continue
+            
+            safe_print(f"  Story ID: {story_id}")
+            
+            # Scrape story
+            result = bot.scrape_story(
+                story_id=story_id,
+                story_url=story_url,
+                fetch_chapters=True,
+                fetch_comments=True
+            )
+            
+            if result:
+                safe_print(f"  {result.get('storyName')}")
+                safe_print(f"  Author: {result.get('userId')}")
+                if "chapters" in result:
+                    safe_print(f"  Chapters: {len(result['chapters'])}")
+                if "comments" in result:
+                    safe_print(f"  Comments: {len(result['comments'])}")
+            else:
+                safe_print(f"  Cao that bai")
+        
+        safe_print(f"\n{'='*60}")
+        safe_print(f"Xong cao {len(urls)} story")
+        safe_print(f"{'='*60}")
             
     except Exception as e:
         safe_print(f"\nLoi chuong trinh: {e}")

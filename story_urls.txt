@@ -1,0 +1,10 @@
+# Danh sach story URLs can cao
+# Moi dong la 1 URL
+# Co the dung full URL hoac chi story ID
+
+# Example:
+# https://www.wattpad.com/story/83744060-15-days-with-the-possessive-billionaire
+# https://www.wattpad.com/1455298714-cast-of-chasing-red-movie
+# 83744060
+
+# Dan URLs tuan day:
