@@ -1,0 +1,208 @@
+"""
+Wattpad Login Service
+Handle authentication và cookie management
+"""
+
+import os
+import json
+import time
+from pathlib import Path
+from src.scrapers.base import safe_print
+
+
+COOKIES_FILE = "wattpad_cookies.json"
+
+
+class WattpadLoginService:
+    """Quản lý đăng nhập và cookies cho Wattpad"""
+    
+    def __init__(self):
+        self.cookies = None
+        self.is_authenticated = False
+    
+    def load_cookies_from_file(self):
+        """Load cookies từ file nếu có"""
+        if os.path.exists(COOKIES_FILE):
+            try:
+                with open(COOKIES_FILE, 'r') as f:
+                    self.cookies = json.load(f)
+                    self.is_authenticated = True
+                    safe_print(f"✅ Loaded cookies từ file")
+                    return True
+            except Exception as e:
+                safe_print(f"⚠️ Lỗi load cookies: {e}")
+                return False
+        return False
+    
+    def save_cookies_to_file(self, cookies):
+        """Lưu cookies vào file"""
+        try:
+            with open(COOKIES_FILE, 'w') as f:
+                json.dump(cookies, f, indent=2)
+                safe_print(f"✅ Lưu cookies vào file")
+                self.cookies = cookies
+                self.is_authenticated = True
+                return True
+        except Exception as e:
+            safe_print(f"❌ Lỗi lưu cookies: {e}")
+            return False
+    
+    def login_with_playwright(self, page, username, password):
+        """
+        Đăng nhập vào Wattpad dùng Playwright
+        
+        Args:
+            page: Playwright page object
+            username: Email hoặc username
+            password: Password
+        
+        Returns:
+            True nếu đăng nhập thành công
+        """
+        if page is None:
+            safe_print("❌ Playwright page chưa init")
+            return False
+        
+        try:
+            safe_print(f"🔑 Đang đăng nhập vào Wattpad...")
+            
+            # Navigate to login page
+            page.goto("https://www.wattpad.com/login", timeout=30000)
+            time.sleep(2)
+            
+            # Fill username/email
+            safe_print(f"   📝 Nhập email/username...")
+            page.fill('input[name="login"]', username)
+            time.sleep(0.5)
+            
+            # Fill password
+            safe_print(f"   🔐 Nhập password...")
+            page.fill('input[name="password"]', password)
+            time.sleep(0.5)
+            
+            # Click login button
+            safe_print(f"   ⬆️ Submit form...")
+            page.click('button[type="submit"]')
+            
+            # Wait for login to complete (redirect to home or profile)
+            try:
+                page.wait_for_url("**/home**", timeout=10000)
+            except:
+                # Nếu không redirect, check xem cookies có được set không
+                pass
+            
+            time.sleep(2)
+            
+            # Get cookies
+            cookies = page.context.cookies()
+            
+            if cookies:
+                self.save_cookies_to_file(cookies)
+                safe_print(f"✅ Đăng nhập thành công!")
+                return True
+            else:
+                safe_print(f"❌ Đăng nhập thất bại (không có cookies)")
+                return False
+                
+        except Exception as e:
+            safe_print(f"❌ Lỗi đăng nhập: {e}")
+            return False
+    
+    def apply_cookies_to_browser(self, page):
+        """
+        Áp dụng cookies vào Playwright page
+        
+        Args:
+            page: Playwright page object
+        
+        Returns:
+            True nếu áp dụng thành công
+        """
+        if page is None or not self.cookies:
+            return False
+        
+        try:
+            page.context.add_cookies(self.cookies)
+            safe_print(f"✅ Applied cookies to browser")
+            self.is_authenticated = True
+            return True
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi áp dụng cookies: {e}")
+            return False
+    
+    def is_logged_in(self):
+        """Check xem đã đăng nhập hay không"""
+        return self.is_authenticated and self.cookies is not None
+    
+    def clear_cookies(self):
+        """Xóa cookies"""
+        try:
+            if os.path.exists(COOKIES_FILE):
+                os.remove(COOKIES_FILE)
+                safe_print(f"✅ Xóa cookies")
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi xóa cookies: {e}")
+        
+        self.cookies = None
+        self.is_authenticated = False
+
+
+def login_if_needed(page, username=None, password=None):
+    """
+    Helper function để đăng nhập nếu cần
+    
+    Args:
+        page: Playwright page object
+        username: Email/username (optional)
+        password: Password (optional)
+    
+    Returns:
+        LoginService object
+    """
+    login_service = WattpadLoginService()
+    
+    # Thử load cookies từ file trước
+    if login_service.load_cookies_from_file():
+        if page:
+            login_service.apply_cookies_to_browser(page)
+        safe_print(f"✅ Đã có cookies, sử dụng để đăng nhập")
+        return login_service
+    
+    # Nếu không có cookies, đăng nhập mới
+    if username and password and page:
+        if login_service.login_with_playwright(page, username, password):
+            return login_service
+        else:
+            safe_print(f"⚠️ Đăng nhập thất bại, tiếp tục mà không đăng nhập")
+            return login_service
+    else:
+        safe_print(f"⚠️ Không có credentials hoặc page, bỏ qua đăng nhập")
+        return login_service
+
+
+if __name__ == "__main__":
+    # Test
+    from playwright.sync_api import sync_playwright
+    
+    print("\n" + "="*60)
+    print("🔑 WATTPAD LOGIN TEST")
+    print("="*60)
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
+        
+        # Nhập credentials
+        username = input("Email/Username: ")
+        password = input("Password: ")
+        
+        # Đăng nhập
+        login_service = login_if_needed(page, username, password)
+        
+        if login_service.is_logged_in():
+            print("\n✅ Đăng nhập thành công!")
+            print(f"Cookies lưu tại: {COOKIES_FILE}")
+        else:
+            print("\n❌ Đăng nhập thất bại")
+        
+        browser.close()

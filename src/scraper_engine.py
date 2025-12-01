@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from src import config, utils
+from src.login_service import WattpadLoginService, login_if_needed
 
 # Import MongoDB
 try:
@@ -140,6 +141,9 @@ class WattpadScraper:
         self.mongo_client = None
         self.mongo_db = None
         
+        # Initialize login service
+        self.login_service = WattpadLoginService()
+        
         # Initialize scrapers (will be set in start())
         self.story_scraper = None
         self.chapter_scraper = None
@@ -171,8 +175,8 @@ class WattpadScraper:
                 safe_print("   Tiếp tục lưu vào file JSON...")
                 self.mongo_client = None
 
-    def start(self):
-        """Khởi động scrapers và Playwright browser"""
+    def start(self, username=None, password=None):
+        """Khởi động scrapers, Playwright browser, và login"""
         try:
             # Khởi tạo Playwright browser để fetch prefetched data (JS-rendered)
             from playwright.sync_api import sync_playwright
@@ -184,6 +188,22 @@ class WattpadScraper:
             )
             self.page = self.context.new_page()
             safe_print("✅ Playwright browser initialized")
+            
+            # Đăng nhập vào Wattpad nếu có credentials
+            if username and password:
+                safe_print("\n" + "="*60)
+                safe_print("🔑 WATTPAD LOGIN")
+                safe_print("="*60)
+                self.login_service.login_with_playwright(self.page, username, password)
+            else:
+                # Load cookies từ file nếu có
+                if self.login_service.load_cookies_from_file():
+                    self.login_service.apply_cookies_to_browser(self.page)
+                    safe_print("✅ Đã load cookies từ file")
+                else:
+                    safe_print("⚠️ Không có credentials, scrape mà không đăng nhập")
+                    safe_print("   Một số trang có thể cần đăng nhập để xem")
+            
         except Exception as e:
             safe_print(f"⚠️ Lỗi khởi tạo Playwright: {e}")
             safe_print("   Tiếp tục mà không có Playwright (chỉ dùng API)")
@@ -194,7 +214,8 @@ class WattpadScraper:
         self.comment_scraper = CommentScraper(self.page, self.mongo_db)
         self.user_scraper = UserScraper(self.page, self.mongo_db)
         
-        safe_print("✅ Bot đã khởi động! (Wattpad API crawler + Playwright)")
+        safe_print("✅ Bot đã khởi động! (Wattpad API crawler + Playwright + Login)")
+
 
     def stop(self):
         """Đóng MongoDB connection"""
