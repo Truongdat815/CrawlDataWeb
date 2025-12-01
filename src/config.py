@@ -45,9 +45,9 @@ MAX_FICTION_WORKERS = 2  # Số fiction crawl song song cùng lúc (có thể t�
 
 # ========== SCRAPING LIMITS ==========
 # Giới hạn số lượng chapters và comments khi cào
-MAX_CHAPTERS_PER_STORY = None  # None = Lấy tất cả, số = Tối đa N chapters
-MAX_COMMENTS_PER_CHAPTER = None  # None = Lấy tất cả, số = Tối đa N comments
-MAX_STORIES_PER_BATCH = 100  # Tối đa 100 stories khi scrape batch
+MAX_CHAPTERS_PER_STORY = 3  # None = Lấy tất cả, số = Tối đa N chapters
+MAX_COMMENTS_PER_CHAPTER = 5  # None = Lấy tất cả, số = Tối đa N comments
+MAX_STORIES_PER_BATCH = 2  # Tối đa 100 stories khi scrape batch
 
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
