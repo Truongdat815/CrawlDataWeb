@@ -581,26 +581,44 @@ class WattpadScraper:
             # Parse HTML
             soup = BeautifulSoup(content, 'html.parser')
             
-            # Find window.prefetched script tag
-            scripts = soup.find_all('script', type='application/json')
+            # Find window.prefetched script tag (có thể là application/json hoặc text/javascript)
+            scripts = soup.find_all('script')
             
             for script in scripts:
-                if script.string and ('prefetched' in script.string or 'window.prefetched' in script.string):
-                    try:
-                        # Extract JSON from script content
-                        json_str = script.string
-                        
-                        # Remove "window.prefetched = " prefix if present
-                        if 'window.prefetched' in json_str:
-                            json_str = json_str.split('=', 1)[1].strip()
-                            if json_str.endswith(';'):
-                                json_str = json_str[:-1]
-                        
-                        prefetched_data = json.loads(json_str)
-                        safe_print(f"✅ Đã lấy prefetched data từ HTML")
-                        return prefetched_data
-                    except json.JSONDecodeError:
-                        continue
+                if script.string:
+                    script_content = script.string
+                    # Tìm window.prefetched trong script content
+                    if 'window.prefetched' in script_content:
+                        try:
+                            # Extract JSON từ script
+                            # Format: window.prefetched = {...}; hoặc window.prefetched={...}
+                            start_idx = script_content.find('window.prefetched')
+                            if start_idx == -1:
+                                continue
+                            
+                            # Skip "window.prefetched = " or "window.prefetched="
+                            start_idx = script_content.find('{', start_idx)
+                            if start_idx == -1:
+                                continue
+                            
+                            # Find matching closing brace
+                            brace_count = 0
+                            end_idx = start_idx
+                            for i in range(start_idx, len(script_content)):
+                                if script_content[i] == '{':
+                                    brace_count += 1
+                                elif script_content[i] == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0:
+                                        end_idx = i + 1
+                                        break
+                            
+                            json_str = script_content[start_idx:end_idx]
+                            prefetched_data = json.loads(json_str)
+                            safe_print(f"✅ Đã lấy prefetched data từ HTML (script tag)")
+                            return prefetched_data
+                        except json.JSONDecodeError:
+                            continue
             
             safe_print(f"⚠️ Không tìm thấy window.prefetched trong HTML")
             return None
