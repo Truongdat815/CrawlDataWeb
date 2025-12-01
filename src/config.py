@@ -13,8 +13,16 @@ os.makedirs(JSON_DIR, exist_ok=True)
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # Cấu hình Bot
-TIMEOUT = 60000  # 60 giây
+TIMEOUT = 60  # 60 giây
 HEADLESS = True # True = Chạy ngầm, False = Hiện trình duyệt
+
+# ========== RATE LIMITING & ERROR HANDLING ==========
+# Rate limiting để tránh ban IP từ Wattpad
+REQUEST_DELAY = 1.0  # Giây - Delay giữa các request (default: 1 giây)
+MAX_RETRIES = 3  # Số lần retry nếu request thất bại
+RETRY_BACKOFF = 2  # Multiplier cho exponential backoff (1s, 2s, 4s, 8s...)
+MAX_REQUESTS_PER_MINUTE = 60  # Rate limit: max 60 requests/phút
+REQUEST_TIMEOUT = 30  # Timeout cho mỗi request (giây)
 
 # ========== CẤU HÌNH TỐC ĐỘ ==========
 # ⚠️ Lưu ý: Giảm delays có thể tăng tốc nhưng cũng tăng rủi ro bị ban IP

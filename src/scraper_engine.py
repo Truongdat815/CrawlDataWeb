@@ -4,8 +4,10 @@ import sys
 import re
 import requests
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 from src import config, utils
 
 # Import MongoDB
@@ -22,6 +24,86 @@ from src.scrapers import (
 )
 
 
+class RateLimiter:
+    """Rate limiter để tránh ban IP"""
+    
+    def __init__(self, max_requests=None, time_window=60):
+        self.max_requests = max_requests or config.MAX_REQUESTS_PER_MINUTE
+        self.time_window = time_window  # seconds
+        self.request_times = deque()
+    
+    def wait_if_needed(self):
+        """Wait nếu vượt quá rate limit"""
+        now = datetime.now()
+        
+        # Remove requests ngoài time window
+        while self.request_times and self.request_times[0] < now - timedelta(seconds=self.time_window):
+            self.request_times.popleft()
+        
+        # Nếu đã max requests, wait
+        if len(self.request_times) >= self.max_requests:
+            sleep_time = (self.request_times[0] + timedelta(seconds=self.time_window) - now).total_seconds()
+            if sleep_time > 0:
+                safe_print(f"⏳ Rate limit reached. Waiting {sleep_time:.1f}s...")
+                time.sleep(sleep_time)
+        
+        # Record this request
+        self.request_times.append(datetime.now())
+
+
+def retry_request(func, max_retries=None, backoff=None):
+    """
+    Decorator for retry logic với exponential backoff
+    
+    Args:
+        func: Function to retry
+        max_retries: Number of retries (from config if None)
+        backoff: Backoff multiplier (from config if None)
+    
+    Returns:
+        Result hoặc None nếu tất cả retries thất bại
+    """
+    max_retries = max_retries or config.MAX_RETRIES
+    backoff = backoff or config.RETRY_BACKOFF
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                wait_time = backoff ** attempt
+                safe_print(f"⚠️ Timeout (attempt {attempt+1}/{max_retries}). Retry in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                safe_print(f"❌ Failed after {max_retries} retries (Timeout)")
+                return None
+        except requests.exceptions.ConnectionError:
+            if attempt < max_retries:
+                wait_time = backoff ** attempt
+                safe_print(f"⚠️ Connection error (attempt {attempt+1}/{max_retries}). Retry in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                safe_print(f"❌ Failed after {max_retries} retries (Connection error)")
+                return None
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code in [429, 503]:  # Rate limit or service unavailable
+                if attempt < max_retries:
+                    wait_time = backoff ** attempt * 5  # Longer wait for rate limit
+                    safe_print(f"⚠️ Server error {e.response.status_code} (attempt {attempt+1}/{max_retries}). Retry in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    safe_print(f"❌ Failed after {max_retries} retries (HTTP {e.response.status_code})")
+                    return None
+            else:
+                safe_print(f"❌ HTTP error {e.response.status_code}: {e}")
+                return None
+        except Exception as e:
+            safe_print(f"❌ Unexpected error: {e}")
+            return None
+    
+    return None
+
+
 class WattpadScraper:
     """Wattpad API-based scraper using modular components"""
     
@@ -31,6 +113,9 @@ class WattpadScraper:
         self.page = None
         self.playwright = None
         self.max_workers = max_workers or config.MAX_WORKERS
+        
+        # Rate limiter
+        self.rate_limiter = RateLimiter()
         
         # Khởi tạo MongoDB client nếu được bật
         self.mongo_client = None
@@ -127,6 +212,7 @@ class WattpadScraper:
     def fetch_story_from_api(self, story_id, fields=None):
         """
         Lấy dữ liệu 1 bộ truyện từ Wattpad API
+        Với rate limiting và retry logic
         
         Args:
             story_id: Story ID
@@ -141,10 +227,17 @@ class WattpadScraper:
         url = f"{config.BASE_URL}/api/v3/stories/{story_id}"
         params = {"fields": fields}
         
-        try:
-            response = requests.get(url, params=params, timeout=config.TIMEOUT)
+        # Apply rate limiting
+        self.rate_limiter.wait_if_needed()
+        
+        # Retry with backoff
+        def make_request():
+            response = requests.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
+        
+        try:
+            return retry_request(make_request)
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi fetch story {story_id}: {e}")
             return None
@@ -152,6 +245,7 @@ class WattpadScraper:
     def fetch_comments_from_api(self, story_id, part_id):
         """
         Lấy comments từ Wattpad API
+        Với rate limiting và retry logic
         
         Args:
             story_id: Story ID
@@ -167,13 +261,21 @@ class WattpadScraper:
         
         try:
             while True:
+                # Apply rate limiting
+                self.rate_limiter.wait_if_needed()
+                
                 params = {}
                 if pagination_cursor:
                     params["after"] = pagination_cursor
                 
-                response = requests.get(url, params=params, timeout=config.TIMEOUT)
-                response.raise_for_status()
-                data = response.json()
+                def make_request():
+                    response = requests.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
+                    response.raise_for_status()
+                    return response.json()
+                
+                data = retry_request(make_request)
+                if not data:
+                    break
                 
                 if "comments" in data:
                     all_comments.extend(data["comments"])
@@ -192,16 +294,25 @@ class WattpadScraper:
     def fetch_categories(self):
         """
         Lấy danh sách categories từ Wattpad API
+        Với rate limiting và retry logic
         
         Returns:
             List of categories with mapping
         """
         url = f"{config.BASE_URL}/api/v3/categories"
         
-        try:
-            response = requests.get(url, timeout=config.TIMEOUT)
+        # Apply rate limiting
+        self.rate_limiter.wait_if_needed()
+        
+        def make_request():
+            response = requests.get(url, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
-            categories = response.json()
+            return response.json()
+        
+        try:
+            categories = retry_request(make_request)
+            if not categories:
+                return {}
             
             # Tạo mapping id → name_english
             category_map = {cat["id"]: cat["name_english"] for cat in categories}
@@ -277,7 +388,7 @@ class WattpadScraper:
     def fetch_html_prefetched_data(self, story_url):
         """
         Lấy dữ liệu từ window.prefetched trong HTML page
-        (Chứa chapters, tags, categories, comments)
+        Với rate limiting và retry logic
         
         Args:
             story_url: Full URL to story chapter
@@ -285,21 +396,29 @@ class WattpadScraper:
         Returns:
             dict with prefetched data or None
         """
-        try:
-            response = requests.get(story_url, timeout=config.TIMEOUT)
+        # Apply rate limiting
+        self.rate_limiter.wait_if_needed()
+        
+        def make_request():
+            response = requests.get(story_url, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
+            return response.content
+        
+        try:
+            content = retry_request(make_request)
+            if not content:
+                return None
             
             # Parse HTML
-            soup = BeautifulSoup(response.content, 'html.parser')
+            soup = BeautifulSoup(content, 'html.parser')
             
             # Find window.prefetched script tag
             scripts = soup.find_all('script', type='application/json')
             
             for script in scripts:
-                if 'prefetched' in script.string or 'window.prefetched' in script.string:
+                if script.string and ('prefetched' in script.string or 'window.prefetched' in script.string):
                     try:
                         # Extract JSON from script content
-                        # Format: window.prefetched = {...}
                         json_str = script.string
                         
                         # Remove "window.prefetched = " prefix if present
