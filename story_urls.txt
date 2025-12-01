@@ -1,12 +1,6 @@
-# Danh sach trang Wattpad can cao
-https://www.wattpad.com/home
-# Moi dong la 1 URL trang (co the la trang danh sach stories)
-# He thong se tu quyet tung story tren trang
+# Wattpad story URLs to scrape
+# Format: https://www.wattpad.com/[page_url]
+# Each line = one page to scrape
 
-# Example:
-# https://www.wattpad.com/stories/romance
-# https://www.wattpad.com/stories/drama
-# https://www.wattpad.com/user/username/stories
+https://www.wattpad.com/stories/romance
 
-
-# Dan trang URLs tuan day:

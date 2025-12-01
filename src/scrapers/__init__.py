@@ -13,6 +13,7 @@ from src.scrapers.story import StoryScraper
 from src.scrapers.chapter import ChapterScraper
 from src.scrapers.comment import CommentScraper
 from src.scrapers.user import UserScraper
+from src.scrapers.chapter_content import ChapterContentScraper
 from src.scrapers.base import BaseScraper, safe_print
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     'ChapterScraper',
     'CommentScraper',
     'UserScraper',
+    'ChapterContentScraper',
     'BaseScraper',
     'safe_print'
 ]

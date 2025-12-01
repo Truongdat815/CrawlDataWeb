@@ -5,6 +5,8 @@ Responsible for: title, description, stats, images, author info, etc.
 
 from src.scrapers.base import BaseScraper, safe_print
 from src import config
+from src.utils.validation import validate_against_schema
+from src.schemas.story_schema import STORY_SCHEMA
 
 
 class StoryScraper(BaseScraper):
@@ -14,24 +16,10 @@ class StoryScraper(BaseScraper):
         super().__init__(page, mongo_db, config)
         self.init_collections({"stories": config.MONGODB_COLLECTION_STORIES})
     
-    def scrape_story_metadata(self, story_data, extra_info=None):
+    @staticmethod
+    def map_api_to_story(story_data, extra_info=None):
         """
-        Xử lý metadata của 1 bộ truyện từ API Wattpad
-        Mapping fields từ API response sang Wattpad schema:
-        - storyId: từ id
-        - storyName: từ title
-        - storyUrl: từ url
-        - coverImg: từ cover
-        - description: từ description
-        - totalChapters: từ numParts
-        - totalViews: từ readCount
-        - voted: từ voteCount
-        - status: từ completed (true/false)
-        - userId: từ user.name
-        - time: từ createDate
-        - tags: từ extra_info (HTML prefetched)
-        - category: từ extra_info (HTML prefetched)
-        - freeChapter: true (mặc định Wattpad)
+        Map API response + extra_info to Wattpad story schema
         
         Args:
             story_data: API response từ /api/v3/stories/{id}
@@ -70,11 +58,70 @@ class StoryScraper(BaseScraper):
                     if cats and len(cats) > 0:
                         processed_story["category"] = cats[0]
             
-            return processed_story
+            # ✅ Validate before return
+            validated = validate_against_schema(processed_story, STORY_SCHEMA, strict=False)
+            return validated
             
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi xử lý metadata story: {e}")
+            safe_print(f"⚠️ Story validation failed: {e}")
             return None
+    
+    def scrape_story_metadata(self, story_data, extra_info=None):
+        """
+        Xử lý metadata của 1 bộ truyện từ API Wattpad
+        
+        Args:
+            story_data: API response từ /api/v3/stories/{id}
+            extra_info: dict từ HTML window.prefetched (tags, categories, language)
+        
+        Returns:
+            story_data dict với đầy đủ thông tin story
+        """
+        return self.map_api_to_story(story_data, extra_info)
+    
+    @staticmethod
+    def extract_story_info_from_prefetched(prefetched_data, story_id):
+        """
+        Trích xuất thông tin story từ window.prefetched
+        
+        Args:
+            prefetched_data: window.prefetched object
+            story_id: Story ID
+        
+        Returns:
+            dict chứa {tags, categories, language, ...} từ prefetched
+        """
+        story_info = {
+            "tags": [],
+            "categories": [],
+            "language": "en"
+        }
+        
+        try:
+            # Story metadata thường nằm trong prefetched['story'] hoặc tương tự
+            for key, value in prefetched_data.items():
+                # Tags thường có format "tag.{something}" hoặc trong "story.metadata"
+                if key == "story.metadata" and "data" in value:
+                    story_meta = value["data"]
+                    
+                    # Extract tags nếu có
+                    if "tags" in story_meta:
+                        story_info["tags"] = story_meta.get("tags", [])
+                    
+                    # Extract categories nếu có
+                    if "categories" in story_meta:
+                        story_info["categories"] = story_meta.get("categories", [])
+                    
+                    # Extract language nếu có
+                    if "language" in story_meta:
+                        story_info["language"] = story_meta.get("language", "en")
+                    
+                    safe_print(f"✅ Trích xuất tags ({len(story_info['tags'])}): {', '.join(story_info['tags'][:3])}")
+            
+            return story_info
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi trích xuất story info: {e}")
+            return story_info
     
     def save_story_to_mongo(self, story_data):
         """

@@ -10,10 +10,16 @@ Schema:
 - publishedTime: publish date
 - lastUpdated: last update date
 - chapterUrl: URL to chapter
+- commentCount: number of comments
+- wordCount: word count
+- rating: chapter rating
+- pages: number of pages
 """
 
 from src.scrapers.base import BaseScraper, safe_print
 from src import config
+from src.utils.validation import validate_against_schema
+from src.schemas.chapter_schema import CHAPTER_SCHEMA
 
 
 class ChapterScraper(BaseScraper):
@@ -22,6 +28,80 @@ class ChapterScraper(BaseScraper):
     def __init__(self, page=None, mongo_db=None):
         super().__init__(page, mongo_db, config)
         self.init_collections({"chapters": "chapters"})
+    
+    @staticmethod
+    def map_prefetched_to_chapter(prefetched_data, story_id):
+        """
+        Map window.prefetched data to Wattpad chapter schema with validation
+        
+        Args:
+            prefetched_data: dict từ window.prefetched (data field)
+            story_id: ID của story (parent)
+        
+        Returns:
+            dict formatted theo Wattpad chapter schema, or None if invalid
+        """
+        try:
+            mapped = {
+                "chapterId": str(prefetched_data.get("id")),
+                "storyId": str(story_id),
+                "chapterName": prefetched_data.get("title"),
+                "voted": prefetched_data.get("voteCount", 0),
+                "views": prefetched_data.get("readCount", 0),
+                "commentCount": prefetched_data.get("commentCount", 0),
+                "wordCount": prefetched_data.get("wordCount", 0),
+                "publishedTime": prefetched_data.get("createDate"),
+                "lastUpdated": prefetched_data.get("modifyDate"),
+                "chapterUrl": prefetched_data.get("url"),
+                "rating": prefetched_data.get("rating"),
+                "pages": prefetched_data.get("pages", 1),
+                "order": prefetched_data.get("order", 0),
+            }
+            
+            # ✅ Validate before return
+            validated = validate_against_schema(mapped, CHAPTER_SCHEMA, strict=False)
+            return validated
+        except Exception as e:
+            safe_print(f"⚠️  Chapter validation failed: {e}")
+            return None
+    
+    @staticmethod
+    def extract_chapters_from_prefetched(prefetched_data, story_id):
+        """
+        Trích xuất chapters từ prefetched data
+        
+        Args:
+            prefetched_data: window.prefetched object
+            story_id: Story ID
+        
+        Returns:
+            List of chapter data (limited by MAX_CHAPTERS_PER_STORY)
+        """
+        chapters = []
+        
+        try:
+            # Chapters thường nằm trong "part.{story_id}.metadata"
+            for key, value in prefetched_data.items():
+                if key.startswith("part.") and "metadata" in key:
+                    # Check limit
+                    if config.MAX_CHAPTERS_PER_STORY and len(chapters) >= config.MAX_CHAPTERS_PER_STORY:
+                        safe_print(f"   ⏸️ Đã reach limit {config.MAX_CHAPTERS_PER_STORY} chapters")
+                        break
+                    
+                    if "data" in value:
+                        chapter_data = value["data"]
+                        
+                        # Map chapter fields using static method
+                        processed_chapter = ChapterScraper.map_prefetched_to_chapter(chapter_data, story_id)
+                        if processed_chapter:
+                            chapters.append(processed_chapter)
+                            safe_print(f"   ✅ Chapter: {chapter_data.get('title')}")
+            
+            safe_print(f"✅ Đã trích xuất {len(chapters)} chapters")
+            return chapters
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi trích xuất chapters: {e}")
+            return []
     
     def save_chapter_to_mongo(self, chapter_data):
         """

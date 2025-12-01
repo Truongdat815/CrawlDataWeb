@@ -81,10 +81,12 @@ def main():
     
     try:
         # Start with Wattpad credentials (auto-login)
-        username = config.WATTPAD_USERNAME if hasattr(config, 'WATTPAD_USERNAME') else None
-        password = config.WATTPAD_PASSWORD if hasattr(config, 'WATTPAD_PASSWORD') else None
+        # username = config.WATTPAD_USERNAME if hasattr(config, 'WATTPAD_USERNAME') else None
+        # password = config.WATTPAD_PASSWORD if hasattr(config, 'WATTPAD_PASSWORD') else None
+        # 
+        # bot.start(username=username, password=password)
         
-        bot.start(username=username, password=password)
+        bot.start()
         
         # Scrape tung trang
         all_results = []
@@ -103,6 +105,36 @@ def main():
         safe_print(f"\n{'='*60}")
         safe_print(f"Xong cao {len(all_results)} stories tu {len(page_urls)} trang")
         safe_print(f"{'='*60}")
+        
+        # Save results to JSON files
+        if all_results:
+            safe_print(f"\n💾 Lưu dữ liệu đã cào...")
+            import os
+            os.makedirs('data/json', exist_ok=True)
+            
+            for story in all_results:
+                story_id = story.get('storyId', 'unknown')
+                try:
+                    story_name = story.get('storyName', 'Unknown')
+                    
+                    if not story_id or story_id == 'unknown':
+                        continue
+                    
+                    # Create filename from story name (sanitize invalid chars for Windows)
+                    safe_name = story_name.replace('/', '_').replace('\\', '_').replace('|', '_').replace('?', '_').replace('*', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace(':', '_')[:50]
+                    filename = f"{story_id}_{safe_name}.json"
+                    filepath = os.path.join('data/json', filename)
+                    
+                    # Save as JSON
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        import json
+                        json.dump(story, f, ensure_ascii=False, indent=2, default=str)
+                    
+                    safe_print(f"   ✅ Saved: {filename}")
+                except Exception as e:
+                    safe_print(f"   ⚠️ Lỗi save {story_id}: {e}")
+            
+            safe_print(f"✅ Đã lưu {len(all_results)} stories vào data/json")
             
     except Exception as e:
         safe_print(f"\nLoi chuong trinh: {e}")
