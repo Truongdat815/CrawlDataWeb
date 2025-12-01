@@ -6,6 +6,7 @@ Responsible for: title, description, stats, images, author info, etc.
 from src.scrapers.base import BaseScraper, safe_print
 from src import config
 from src.utils.validation import validate_against_schema
+from src.utils import download_image
 from src.schemas.story_schema import STORY_SCHEMA
 
 
@@ -20,6 +21,7 @@ class StoryScraper(BaseScraper):
     def map_api_to_story(story_data, extra_info=None):
         """
         Map API response + extra_info to Wattpad story schema
+        Download cover image và lưu đường dẫn local vào JSON
         
         Args:
             story_data: API response từ /api/v3/stories/{id}
@@ -29,12 +31,23 @@ class StoryScraper(BaseScraper):
             story_data dict với đầy đủ thông tin story
         """
         try:
+            story_id = story_data.get("id")
+            cover_url = story_data.get("cover")
+            
+            # Download cover image nếu có URL
+            cover_img_path = None
+            if cover_url:
+                safe_print(f"   📥 Đang download ảnh cover...")
+                cover_img_path = download_image(cover_url, story_id)
+                if cover_img_path:
+                    safe_print(f"   ✅ Ảnh cover: {cover_img_path}")
+            
             # Mapping từ API response
             processed_story = {
-                "storyId": story_data.get("id"),
+                "storyId": story_id,
                 "storyName": story_data.get("title"),
                 "storyUrl": story_data.get("url"),
-                "coverImg": story_data.get("cover"),
+                "coverImg": cover_img_path if cover_img_path else cover_url,  # Use local path if available, else URL
                 "category": None,
                 "status": "completed" if story_data.get("completed") else "ongoing",
                 "tags": [],

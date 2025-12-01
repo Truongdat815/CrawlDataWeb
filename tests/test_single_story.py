@@ -69,6 +69,20 @@ def main():
             filename = f"{result['storyId']}_{safe_name}.json"
             filepath = os.path.join(test_data_dir, filename)
             
+            # Remove _id field added by MongoDB (không serialize được)
+            if '_id' in result:
+                del result['_id']
+            
+            # Remove _id từ chapters
+            if 'chapters' in result:
+                for chapter in result['chapters']:
+                    if '_id' in chapter:
+                        del chapter['_id']
+                    if 'comments' in chapter:
+                        for comment in chapter['comments']:
+                            if '_id' in comment:
+                                del comment['_id']
+            
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
             

@@ -706,6 +706,15 @@ class WattpadScraper:
                                 chapter["comments"] = chapter_comments
                                 safe_print(f"      ✅ Comments: {len(chapter_comments)} comments")
                         
+                        # Step 3e: Save chapter to MongoDB (NGAY SAU KHI HOÀN THÀNH)
+                        if self.chapter_scraper is not None and self.mongo_db is not None:
+                            self.chapter_scraper.save_chapter_to_mongo(chapter)
+                        
+                        # Step 3f: Save comments to MongoDB (nếu có)
+                        if fetch_comments and chapter_comments and self.comment_scraper is not None and self.mongo_db is not None:
+                            for comment in chapter_comments:
+                                self.comment_scraper.save_comment_to_mongo(comment)
+                        
                     except Exception as e:
                         safe_print(f"      ⚠️ Lỗi: {e}")
                         import traceback
@@ -713,6 +722,11 @@ class WattpadScraper:
                 
                 processed_story["chapters"] = chapters
                 safe_print(f"\n   ✅ Hoàn thành cào {len(chapters)} chapters")
+        
+        # Save story to MongoDB (CUỐI CÙNG)
+        if self.story_scraper is not None and self.mongo_db is not None:
+            safe_print(f"   💾 Đang lưu story vào MongoDB...")
+            self.story_scraper.save_story_to_mongo(processed_story)
         
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")
         return processed_story
