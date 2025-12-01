@@ -1,7 +1,7 @@
 import os
 
 # --- CẤU HÌNH HỆ THỐNG ---
-BASE_URL = "https://www.royalroad.com"
+BASE_URL = "https://www.wattpad.com"
 
 # Thư mục lưu trữ
 DATA_DIR = "data"
@@ -41,7 +41,7 @@ MONGODB_USERNAME = "xuannguyentruong15"
 MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
 CLUSTER_URL = "crawl.ujyutza.mongodb.net"
 
-MONGODB_DB_NAME = "RoyalRoadData"
+MONGODB_DB_NAME = "WattpadData"
 MONGODB_COLLECTION_STORIES = "stories"
 
 # Connection string đầy đủ với các options chuẩn
