@@ -63,6 +63,12 @@ MAX_CHAPTERS_PER_STORY = 3  # None = Lấy tất cả, số = Tối đa N chapte
 MAX_COMMENTS_PER_CHAPTER = 5  # None = Lấy tất cả, số = Tối đa N comments
 MAX_STORIES_PER_BATCH = 2  # Tối đa 100 stories khi scrape batch
 
+# ========== WATTPAD LOGIN CREDENTIALS ==========
+# Thêm credentials để tự động đăng nhập
+# Để trống nếu muốn dùng cookies từ file
+WATTPAD_USERNAME = "buonnguqua"
+WATTPAD_PASSWORD = "goodbyenha123"
+
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
 MONGODB_USERNAME = "xuannguyentruong15"

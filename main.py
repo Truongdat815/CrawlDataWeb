@@ -80,7 +80,11 @@ def main():
     bot = WattpadScraper()
     
     try:
-        bot.start()
+        # Start with Wattpad credentials (auto-login)
+        username = config.WATTPAD_USERNAME if hasattr(config, 'WATTPAD_USERNAME') else None
+        password = config.WATTPAD_PASSWORD if hasattr(config, 'WATTPAD_PASSWORD') else None
+        
+        bot.start(username=username, password=password)
         
         # Scrape tung trang
         all_results = []
