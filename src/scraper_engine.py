@@ -172,14 +172,29 @@ class WattpadScraper:
                 self.mongo_client = None
 
     def start(self):
-        """Khởi động scrapers (Wattpad API không cần browser)"""
+        """Khởi động scrapers và Playwright browser"""
+        try:
+            # Khởi tạo Playwright browser để fetch prefetched data (JS-rendered)
+            from playwright.sync_api import sync_playwright
+            
+            self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.launch(headless=config.HEADLESS)
+            self.context = self.browser.new_context(
+                user_agent=config.DEFAULT_USER_AGENT
+            )
+            self.page = self.context.new_page()
+            safe_print("✅ Playwright browser initialized")
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khởi tạo Playwright: {e}")
+            safe_print("   Tiếp tục mà không có Playwright (chỉ dùng API)")
+        
         # Khởi tạo scrapers
         self.story_scraper = StoryScraper(self.page, self.mongo_db)
         self.chapter_scraper = ChapterScraper(self.page, self.mongo_db)
         self.comment_scraper = CommentScraper(self.page, self.mongo_db)
         self.user_scraper = UserScraper(self.page, self.mongo_db)
         
-        safe_print("✅ Bot đã khởi động! (Wattpad API crawler)")
+        safe_print("✅ Bot đã khởi động! (Wattpad API crawler + Playwright)")
 
     def stop(self):
         """Đóng MongoDB connection"""
@@ -557,7 +572,7 @@ class WattpadScraper:
     def fetch_html_prefetched_data(self, story_url):
         """
         Lấy dữ liệu từ window.prefetched trong HTML page
-        Với rate limiting và retry logic
+        Dùng Playwright để execute JavaScript (window.prefetched được render bởi JS)
         
         Args:
             story_url: Full URL to story chapter
@@ -565,65 +580,42 @@ class WattpadScraper:
         Returns:
             dict with prefetched data or None
         """
-        # Apply rate limiting
-        self.rate_limiter.wait_if_needed()
-        
-        def make_request():
-            response = self.http.get(story_url, timeout=config.REQUEST_TIMEOUT)
-            response.raise_for_status()
-            return response.content
+        # Nếu không có page object (Playwright chưa init), trả về None
+        if self.page is None:
+            safe_print(f"⚠️ Playwright page chưa init, bỏ qua prefetched data")
+            return None
         
         try:
-            content = retry_request(make_request)
-            if not content:
+            # Apply rate limiting
+            self.rate_limiter.wait_if_needed()
+            
+            safe_print(f"   🌐 Đang fetch HTML với Playwright (execute JS)...")
+            
+            # Navigate to page (Playwright sẽ execute tất cả JS)
+            self.page.goto(story_url, timeout=config.REQUEST_TIMEOUT * 1000)
+            
+            # Chờ window.prefetched được render
+            try:
+                self.page.wait_for_function(
+                    "() => window.prefetched !== undefined",
+                    timeout=5000
+                )
+            except:
+                # Nếu timeout, vẫn thử lấy
+                pass
+            
+            # Lấy window.prefetched object từ browser context
+            prefetched_data = self.page.evaluate("() => window.prefetched")
+            
+            if prefetched_data:
+                safe_print(f"✅ Đã lấy prefetched data từ browser (Playwright)")
+                return prefetched_data
+            else:
+                safe_print(f"⚠️ window.prefetched không có trong page")
                 return None
-            
-            # Parse HTML
-            soup = BeautifulSoup(content, 'html.parser')
-            
-            # Find window.prefetched script tag (có thể là application/json hoặc text/javascript)
-            scripts = soup.find_all('script')
-            
-            for script in scripts:
-                if script.string:
-                    script_content = script.string
-                    # Tìm window.prefetched trong script content
-                    if 'window.prefetched' in script_content:
-                        try:
-                            # Extract JSON từ script
-                            # Format: window.prefetched = {...}; hoặc window.prefetched={...}
-                            start_idx = script_content.find('window.prefetched')
-                            if start_idx == -1:
-                                continue
-                            
-                            # Skip "window.prefetched = " or "window.prefetched="
-                            start_idx = script_content.find('{', start_idx)
-                            if start_idx == -1:
-                                continue
-                            
-                            # Find matching closing brace
-                            brace_count = 0
-                            end_idx = start_idx
-                            for i in range(start_idx, len(script_content)):
-                                if script_content[i] == '{':
-                                    brace_count += 1
-                                elif script_content[i] == '}':
-                                    brace_count -= 1
-                                    if brace_count == 0:
-                                        end_idx = i + 1
-                                        break
-                            
-                            json_str = script_content[start_idx:end_idx]
-                            prefetched_data = json.loads(json_str)
-                            safe_print(f"✅ Đã lấy prefetched data từ HTML (script tag)")
-                            return prefetched_data
-                        except json.JSONDecodeError:
-                            continue
-            
-            safe_print(f"⚠️ Không tìm thấy window.prefetched trong HTML")
-            return None
+                
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi fetch HTML: {e}")
+            safe_print(f"⚠️ Lỗi khi fetch HTML với Playwright: {e}")
             return None
 
     def extract_chapters_from_prefetched(self, prefetched_data, story_id):
