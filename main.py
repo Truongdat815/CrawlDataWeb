@@ -38,7 +38,7 @@ def extract_story_id_from_url(url):
     return None
 
 def main():
-    # ========== DOC STORY URLs TU FILE ==========
+    # ========== DOC TRANG URLs TU FILE ==========
     try:
         with open('story_urls.txt', 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -48,26 +48,28 @@ def main():
         return
     
     # Filter va clean URLs (bo comment va blank lines)
-    urls = []
+    page_urls = []
     for line in lines:
         line = line.strip()
         if line and not line.startswith('#'):
-            urls.append(line)
+            page_urls.append(line)
     
-    if not urls:
+    if not page_urls:
         safe_print("Loi: Khong co URL nao trong story_urls.txt")
-        safe_print("Vui long dan URLs vao file")
+        safe_print("Vui long dan URLs trang vao file")
         return
     
-    safe_print(f"\nTim thay {len(urls)} story URL(s)")
+    safe_print(f"\nTim thay {len(page_urls)} trang URL(s)")
     
     # ========== TUY CHINH SO LUONG CHAPTERS VA COMMENTS ==========
     # Uncomment de custom (None = lay tat ca):
-    # config.MAX_CHAPTERS_PER_STORY = 5  # Lay toi da 5 chapters
+    # config.MAX_CHAPTERS_PER_STORY = 5  # Lay toi da 5 chapters moi story
     # config.MAX_COMMENTS_PER_CHAPTER = 20  # Lay toi da 20 comments moi chapter
+    # config.MAX_STORIES_PER_BATCH = 10  # Lay toi da 10 stories tren 1 trang
     
     safe_print("\n" + "="*60)
     safe_print("Cau hinh hien tai:")
+    safe_print(f"  Max stories/trang: {config.MAX_STORIES_PER_BATCH}")
     safe_print(f"  Max chapters/story: {config.MAX_CHAPTERS_PER_STORY or 'Unlimited'}")
     safe_print(f"  Max comments/chapter: {config.MAX_COMMENTS_PER_CHAPTER or 'Unlimited'}")
     safe_print(f"  Rate limit: {config.MAX_REQUESTS_PER_MINUTE} requests/minute")
@@ -80,38 +82,22 @@ def main():
     try:
         bot.start()
         
-        # Scrape tung story
-        for idx, story_url in enumerate(urls, 1):
-            safe_print(f"\n[{idx}/{len(urls)}] Xu ly: {story_url}")
+        # Scrape tung trang
+        all_results = []
+        for page_idx, page_url in enumerate(page_urls, 1):
+            safe_print(f"\n[Trang {page_idx}/{len(page_urls)}] {page_url}")
             
-            # Extract story ID from URL
-            story_id = extract_story_id_from_url(story_url)
-            if not story_id:
-                safe_print(f"  Loi: Khong the extract story ID tu URL")
-                continue
-            
-            safe_print(f"  Story ID: {story_id}")
-            
-            # Scrape story
-            result = bot.scrape_story(
-                story_id=story_id,
-                story_url=story_url,
+            # Scrape all stories from this page
+            results = bot.scrape_stories_from_page(
+                page_url=page_url,
                 fetch_chapters=True,
                 fetch_comments=True
             )
             
-            if result:
-                safe_print(f"  {result.get('storyName')}")
-                safe_print(f"  Author: {result.get('userId')}")
-                if "chapters" in result:
-                    safe_print(f"  Chapters: {len(result['chapters'])}")
-                if "comments" in result:
-                    safe_print(f"  Comments: {len(result['comments'])}")
-            else:
-                safe_print(f"  Cao that bai")
+            all_results.extend(results)
         
         safe_print(f"\n{'='*60}")
-        safe_print(f"Xong cao {len(urls)} story")
+        safe_print(f"Xong cao {len(all_results)} stories tu {len(page_urls)} trang")
         safe_print(f"{'='*60}")
             
     except Exception as e:

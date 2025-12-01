@@ -398,6 +398,123 @@ class WattpadScraper:
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")
         return processed_story
 
+    # ==================== PAGE SCRAPING METHODS ====================
+    
+    def fetch_story_links_from_page(self, page_url, max_stories=None):
+        """
+        Quét trang Wattpad để lấy danh sách story links
+        
+        Args:
+            page_url: URL trang danh sách stories
+            max_stories: Max số stories để lấy (None = tất cả, hoặc dùng config.MAX_STORIES_PER_BATCH)
+        
+        Returns:
+            List of story URLs
+        """
+        if max_stories is None:
+            max_stories = config.MAX_STORIES_PER_BATCH
+        
+        # Apply rate limiting
+        self.rate_limiter.wait_if_needed()
+        
+        def make_request():
+            response = requests.get(page_url, timeout=config.REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return response.content
+        
+        try:
+            content = retry_request(make_request)
+            if not content:
+                return []
+            
+            # Parse HTML
+            soup = BeautifulSoup(content, 'html.parser')
+            story_links = []
+            
+            # Tìm story links - các cách khác nhau tùy vào layout trang
+            # Cách 1: Links có dạng /story/{id}-{title}
+            for link in soup.find_all('a', href=True):
+                href = link.get('href', '')
+                
+                # Match story URLs
+                if re.search(r'/story/\d+', href) or re.search(r'/\d+\-', href):
+                    # Ensure full URL
+                    if not href.startswith('http'):
+                        href = config.BASE_URL + href
+                    
+                    # Extract story ID để check duplicate
+                    story_id_match = re.search(r'/(\d+)', href)
+                    if story_id_match:
+                        story_id = story_id_match.group(1)
+                        
+                        # Check if already added
+                        existing = [url for url in story_links if story_id in url]
+                        if not existing:
+                            story_links.append(href)
+                            
+                            # Check limit
+                            if max_stories and len(story_links) >= max_stories:
+                                break
+            
+            safe_print(f"✅ Tìm được {len(story_links)} stories trên trang")
+            return story_links
+            
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi quét trang: {e}")
+            return []
+
+    def scrape_stories_from_page(self, page_url, fetch_chapters=True, fetch_comments=True):
+        """
+        Quét tất cả stories từ 1 trang
+        
+        Args:
+            page_url: URL trang danh sách
+            fetch_chapters: Có lấy chapters không
+            fetch_comments: Có lấy comments không
+        
+        Returns:
+            List of scraped story data
+        """
+        safe_print(f"\n{'='*60}")
+        safe_print(f"📄 Quét trang: {page_url}")
+        safe_print(f"{'='*60}")
+        
+        # 1. Get story links from page
+        story_links = self.fetch_story_links_from_page(page_url)
+        if not story_links:
+            safe_print(f"❌ Không tìm được stories trên trang")
+            return []
+        
+        # 2. Scrape từng story
+        results = []
+        for idx, story_url in enumerate(story_links, 1):
+            safe_print(f"\n[{idx}/{len(story_links)}] {story_url}")
+            
+            # Extract story ID
+            story_id_match = re.search(r'/(\d+)', story_url)
+            if not story_id_match:
+                safe_print(f"  ⚠️ Không extract được story ID")
+                continue
+            
+            story_id = story_id_match.group(1)
+            
+            # Scrape story
+            result = self.scrape_story(
+                story_id=story_id,
+                story_url=story_url,
+                fetch_chapters=fetch_chapters,
+                fetch_comments=fetch_comments
+            )
+            
+            if result:
+                results.append(result)
+        
+        safe_print(f"\n{'='*60}")
+        safe_print(f"✅ Quét xong {len(results)}/{len(story_links)} stories")
+        safe_print(f"{'='*60}")
+        
+        return results
+
     # ==================== HTML SCRAPING METHODS ====================
     
     def fetch_html_prefetched_data(self, story_url):
