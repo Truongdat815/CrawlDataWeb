@@ -35,6 +35,9 @@ class ChapterScraper(BaseScraper):
         
         try:
             collection = self.get_collection("chapters")
+            if collection is None:
+                return
+            
             existing = collection.find_one({"chapterId": chapter_data.get("chapterId")})
             
             if existing:

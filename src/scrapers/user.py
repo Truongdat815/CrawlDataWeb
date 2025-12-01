@@ -29,6 +29,9 @@ class UserScraper(BaseScraper):
         
         try:
             collection = self.get_collection("users")
+            if collection is None:
+                return
+            
             existing = collection.find_one({"userId": user_id})
             
             user_data = {

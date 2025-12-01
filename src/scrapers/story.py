@@ -88,6 +88,9 @@ class StoryScraper(BaseScraper):
         
         try:
             collection = self.get_collection("stories")
+            if collection is None:
+                return
+            
             existing = collection.find_one({"storyId": story_data.get("storyId")})
             
             if existing:

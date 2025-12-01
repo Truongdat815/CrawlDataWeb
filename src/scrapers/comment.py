@@ -35,6 +35,9 @@ class CommentScraper(BaseScraper):
         
         try:
             collection = self.get_collection("comments")
+            if collection is None:
+                return
+            
             existing = collection.find_one({"commentId": comment_data.get("commentId")})
             
             if existing:
