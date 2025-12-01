@@ -1,4 +1,5 @@
 # Danh sach trang Wattpad can cao
+https://www.wattpad.com/stories/truy%E1%BB%87n-ng%E1%BA%AFn
 # Moi dong la 1 URL trang (co the la trang danh sach stories)
 # He thong se tu quyet tung story tren trang
 
@@ -6,5 +7,6 @@
 # https://www.wattpad.com/stories/romance
 # https://www.wattpad.com/stories/drama
 # https://www.wattpad.com/user/username/stories
+
 
 # Dan trang URLs tuan day:

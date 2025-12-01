@@ -13,8 +13,11 @@ from src import config, utils
 # Import MongoDB
 try:
     from pymongo import MongoClient
+    from typing import Optional
     MONGODB_AVAILABLE = True
 except ImportError:
+    MongoClient = None  # type: ignore
+    Optional = None  # type: ignore
     MONGODB_AVAILABLE = False
 
 # Import scrapers
@@ -133,16 +136,20 @@ class WattpadScraper:
         self.mongo_collection_comments = None
         self.mongo_collection_users = None
         
+        self.mongo_client = None
+        self.mongo_db = None
+        
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
             try:
-                self.mongo_client = MongoClient(config.MONGODB_URI)
-                self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
-                # Keep for backward compatibility
-                self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
-                self.mongo_collection_chapters = self.mongo_db["chapters"]
-                self.mongo_collection_comments = self.mongo_db["comments"]
-                self.mongo_collection_users = self.mongo_db["users"]
-                safe_print("✅ Đã kết nối MongoDB với 4 collections (Wattpad schema)")
+                if MongoClient is not None:
+                    self.mongo_client = MongoClient(config.MONGODB_URI)
+                    self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
+                    # Keep for backward compatibility
+                    self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
+                    self.mongo_collection_chapters = self.mongo_db["chapters"]
+                    self.mongo_collection_comments = self.mongo_db["comments"]
+                    self.mongo_collection_users = self.mongo_db["users"]
+                    safe_print("✅ Đã kết nối MongoDB với 4 collections (Wattpad schema)")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -196,6 +203,9 @@ class WattpadScraper:
             try:
                 story_data = self.fetch_story_from_api(story_id, fields)
                 if story_data:
+                    if self.story_scraper is None:
+                        safe_print(f"⚠️ [{idx}/{len(story_ids)}] Story scraper chưa được khởi tạo")
+                        continue
                     processed = self.story_scraper.scrape_story_metadata(story_data)
                     if processed:
                         stories_data.append(processed)
@@ -364,8 +374,9 @@ class WattpadScraper:
             safe_print(f"❌ Không thể lấy metadata cho story {story_id}")
             return None
         
-        # 2. Fetch HTML prefetched data (nếu có URL)
+        # Try to fetch from HTML prefetched data (tags, categories, chapters)
         extra_info = None
+        prefetched_data = None
         if story_url:
             safe_print(f"   🌐 Đang fetch HTML prefetched data...")
             prefetched_data = self.fetch_html_prefetched_data(story_url)
@@ -373,6 +384,9 @@ class WattpadScraper:
                 extra_info = self.extract_story_info_from_prefetched(prefetched_data)
         
         # 3. Process story metadata (kèm tags + categories)
+        if self.story_scraper is None:
+            safe_print(f"❌ Story scraper chưa được khởi tạo")
+            return None
         processed_story = self.story_scraper.scrape_story_metadata(story_data, extra_info)
         
         if not processed_story:
@@ -434,7 +448,14 @@ class WattpadScraper:
             # Tìm story links - các cách khác nhau tùy vào layout trang
             # Cách 1: Links có dạng /story/{id}-{title}
             for link in soup.find_all('a', href=True):
-                href = link.get('href', '')
+                href_raw = link.get('href')
+                if href_raw is None:
+                    continue
+                
+                # Convert to string if needed
+                href = str(href_raw) if href_raw else ''
+                if not href:
+                    continue
                 
                 # Match story URLs
                 if re.search(r'/story/\d+', href) or re.search(r'/\d+\-', href):
