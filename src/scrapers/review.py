@@ -27,16 +27,24 @@ class ReviewScraper(BaseScraper):
         """
         reviews = []
         
+        if self.page is None:
+            safe_print("⚠️ Playwright page chưa được khởi tạo, bỏ qua scrape_reviews")
+            return reviews
+        
         try:
             safe_print("... Đang lấy reviews cho toàn bộ truyện")
             self.page.goto(story_url, timeout=config.TIMEOUT)
             time.sleep(2)
+            
             
             # Scroll để load reviews section
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
             # Lấy tất cả review elements
+            if self.page is None:
+                return reviews
+            
             review_elements = self.page.locator("div.review, div[class*='review']").all()
             
             for idx, review_elem in enumerate(review_elements):
@@ -175,6 +183,9 @@ class ReviewScraper(BaseScraper):
         
         try:
             collection = self.get_collection("reviews")
+            if collection is None:
+                return
+            
             existing = collection.find_one({"review_id": review_data.get("review_id")})
             
             if existing:
