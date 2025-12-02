@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 from src import config, utils
 
@@ -27,7 +28,7 @@ def safe_print(*args, **kwargs):
         message = message.encode('ascii', 'replace').decode('ascii')
         print(message, **kwargs)
 
-class RoyalRoadScraper:
+class ScribbleHubScraper:
     def __init__(self, max_workers=None):
         self.browser = None
         self.context = None
@@ -64,9 +65,37 @@ class RoyalRoadScraper:
     def start(self):
         """Khởi động trình duyệt"""
         self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=config.HEADLESS)
-        self.context = self.browser.new_context()
+        self.browser = self.playwright.chromium.launch(
+            headless=config.HEADLESS,
+            args=['--disable-blink-features=AutomationControlled']  # Ẩn automation flags
+        )
+        
+        # Tạo context với user agent và headers thật để tránh bot detection
+        self.context = self.browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            viewport={'width': 1920, 'height': 1080},
+            locale='en-US',
+            extra_http_headers={
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Cache-Control': 'max-age=0',
+            }
+        )
         self.page = self.context.new_page()
+        
+        # Ẩn webdriver property để tránh bot detection
+        self.page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+        
         safe_print("✅ Bot đã khởi động!")
 
     def stop(self):
@@ -90,7 +119,20 @@ class RoyalRoadScraper:
         """
         safe_print(f"📚 Đang truy cập trang best-rated: {best_rated_url}")
         self.page.goto(best_rated_url, timeout=config.TIMEOUT)
-        time.sleep(2)
+        
+        # Đợi page load hoàn toàn (quan trọng cho ScribbleHub)
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=30000)
+            safe_print("   ✅ Page đã load xong (networkidle)")
+        except:
+            # Nếu networkidle timeout, đợi domcontentloaded
+            try:
+                self.page.wait_for_load_state("domcontentloaded", timeout=10000)
+                safe_print("   ✅ Page đã load xong (domcontentloaded)")
+            except:
+                safe_print("   ⚠️ Page load timeout, tiếp tục...")
+        
+        time.sleep(3)  # Đợi thêm để JavaScript render xong
         
         # Lấy danh sách các bộ truyện từ trang best-rated
         if start_from > 0:
@@ -130,8 +172,8 @@ class RoyalRoadScraper:
 
     def _get_fiction_urls_from_best_rated(self, num_fictions=10, start_from=0):
         """
-        Lấy danh sách URL của các bộ truyện từ trang best-rated
-        Selector: h2.fiction-title a
+        Lấy danh sách URL của các bộ truyện từ trang best-rated (ScribbleHub)
+        Selector: div.search_main_box .search_title a
         Args:
             num_fictions: Số lượng bộ truyện muốn lấy
             start_from: Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên)
@@ -139,40 +181,41 @@ class RoyalRoadScraper:
         fiction_urls = []
         
         try:
-            # Scroll xuống để load thêm nội dung nếu cần
-            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(2)
+            self.page.wait_for_load_state("networkidle", timeout=20000)
             
-            # Lấy tất cả các link truyện từ thẻ h2.fiction-title a
-            fiction_links = self.page.locator("h2.fiction-title a").all()
+            # Lấy tất cả các link truyện từ ScribbleHub ranking page
+            cards = self.page.locator("div.search_main_box .search_title a").all()
             
-            # Tính toán vị trí bắt đầu và kết thúc
+            if not cards:
+                safe_print("⚠️ Không tìm thấy link truyện nào với selector div.search_main_box .search_title a")
+                return []
+            
+            safe_print(f"✅ Tìm thấy {len(cards)} links truyện")
+            
+            # Lấy URLs và cắt theo start_from, num_fictions
+            for a in cards:
+                href = a.get_attribute("href")
+                if href and href not in fiction_urls:
+                    # Chuẩn hóa URL
+                    if href.startswith("/"):
+                        full_url = config.BASE_URL + href
+                    elif href.startswith("http"):
+                        full_url = href
+                    else:
+                        full_url = config.BASE_URL + "/" + href
+                    fiction_urls.append(full_url)
+            
+            # Cắt theo start_from và num_fictions
             start_index = start_from
             end_index = start_from + num_fictions
+            selected_urls = fiction_urls[start_index:end_index]
             
-            # Lấy các link từ vị trí start_from đến end_index
-            for link in fiction_links[start_index:end_index]:
-                try:
-                    href = link.get_attribute("href")
-                    if href:
-                        # Tạo full URL
-                        if href.startswith("/"):
-                            full_url = config.BASE_URL + href
-                        elif href.startswith("http"):
-                            full_url = href
-                        else:
-                            full_url = config.BASE_URL + "/" + href
-                        
-                        if full_url not in fiction_urls:
-                            fiction_urls.append(full_url)
-                except Exception as e:
-                    safe_print(f"⚠️ Lỗi khi lấy URL truyện: {e}")
-                    continue
-            
-            return fiction_urls
+            return selected_urls
             
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy danh sách truyện từ best-rated: {e}")
+            import traceback
+            safe_print(traceback.format_exc())
             return []
 
     def scrape_fiction(self, fiction_url):
@@ -182,88 +225,231 @@ class RoyalRoadScraper:
         """
         safe_print(f"🌍 Đang truy cập truyện: {fiction_url}")
         self.page.goto(fiction_url, timeout=config.TIMEOUT)
+        
+        # Đợi page load hoàn toàn
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=30000)
+        except:
+            try:
+                self.page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except:
+                pass
+        
+        time.sleep(3)  # Đợi thêm để JavaScript render xong
 
-        # 1. Lấy ID truyện từ URL (Ví dụ: 21220)
-        fiction_id = fiction_url.split("/")[4]
+        # 1. Lấy ID truyện từ URL (ScribbleHub format: /series/ID/title/)
+        # Ví dụ: https://www.scribblehub.com/series/664073/rebirth-of-the-nephilim/
+        try:
+            url_parts = fiction_url.rstrip('/').split('/')
+            # Tìm phần số ID (thường là phần thứ 4 sau /series/)
+            fiction_id = ""
+            for i, part in enumerate(url_parts):
+                if part == "series" and i + 1 < len(url_parts):
+                    fiction_id = url_parts[i + 1]
+                    break
+            if not fiction_id:
+                # Fallback: lấy từ cuối URL
+                fiction_id = url_parts[-1] if url_parts else ""
+        except:
+            fiction_id = fiction_url.split("/")[-2] if "/" in fiction_url else ""
 
-        # 2. Lấy thông tin tổng quan (Metadata)
+        # 2. Lấy thông tin tổng quan (Metadata) - ScribbleHub
         safe_print("... Đang lấy thông tin chung")
         
-        # Lấy title
-        title = self.page.locator("h1").first.inner_text()
+        # Lấy title - ScribbleHub thường dùng h1.fic_title hoặc .fic_title
+        title = ""
+        try:
+            title_selectors = ["h1.fic_title", ".fic_title", "h1", ".wi_fic_title"]
+            for selector in title_selectors:
+                try:
+                    title_elem = self.page.locator(selector).first
+                    if title_elem.count() > 0:
+                        title = title_elem.inner_text().strip()
+                        break
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy title: {e}")
         
-        # Lấy URL ảnh bìa rồi tải về luôn
-        img_url_raw = self.page.locator(".cover-art-container img").get_attribute("src")
-        local_img_path = utils.download_image(img_url_raw, fiction_id)
+        # Lấy URL ảnh bìa rồi tải về luôn - ScribbleHub
+        img_url_raw = ""
+        try:
+            cover_selectors = [".fic_image img", ".cover img", ".nov_cover img", "img[src*='cover']"]
+            for selector in cover_selectors:
+                try:
+                    img_elem = self.page.locator(selector).first
+                    if img_elem.count() > 0:
+                        img_url_raw = img_elem.get_attribute("src")
+                        if img_url_raw:
+                            break
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy cover image: {e}")
+        
+        local_img_path = utils.download_image(img_url_raw, fiction_id) if img_url_raw else None
 
-        # Lấy author
-        author = self.page.locator(".fic-title h4 a").first.inner_text()
+        # Lấy author - ScribbleHub
+        author = ""
+        try:
+            author_selectors = [".auth_name_fic a", ".fic_author a", ".auth_name a", "a[href*='/profile/']"]
+            for selector in author_selectors:
+                try:
+                    author_elem = self.page.locator(selector).first
+                    if author_elem.count() > 0:
+                        author = author_elem.inner_text().strip()
+                        if author:
+                            break
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy author: {e}")
 
-        # Lấy category
-        category = self.page.locator(".fiction-info span").first.inner_text()
+        # Lấy category/genre - ScribbleHub
+        category = ""
+        try:
+            category_selectors = [".fic_genre", ".genre", ".search_genre a"]
+            for selector in category_selectors:
+                try:
+                    category_elems = self.page.locator(selector).all()
+                    if category_elems:
+                        categories = [elem.inner_text().strip() for elem in category_elems[:3]]  # Lấy 3 đầu tiên
+                        category = ", ".join(categories) if categories else ""
+                        if category:
+                            break
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy category: {e}")
 
-        # Lấy status
-        status = self.page.locator(".fiction-info span:nth-child(2)").first.inner_text()
+        # Lấy status - ScribbleHub
+        status = ""
+        try:
+            status_selectors = [".fic_status", ".status", "[class*='status']"]
+            for selector in status_selectors:
+                try:
+                    status_elem = self.page.locator(selector).first
+                    if status_elem.count() > 0:
+                        status = status_elem.inner_text().strip()
+                        if status:
+                            break
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy status: {e}")
 
-        #Lấy tags
-        tags = self.page.locator(".tags a").all_inner_texts()
+        # Lấy tags/genres - ScribbleHub
+        tags = []
+        try:
+            tag_selectors = [".fic_genre", ".genre", ".search_genre a", ".tags a"]
+            for selector in tag_selectors:
+                try:
+                    tag_elems = self.page.locator(selector).all()
+                    if tag_elems:
+                        tags = [elem.inner_text().strip() for elem in tag_elems]
+                        if tags:
+                            break
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy tags: {e}")
 
-        #Lấy description - giữ nguyên định dạng như trong UI
+        # Lấy description - ScribbleHub (trang chi tiết)
         description = ""
         try:
-            desc_container = self.page.locator(".description").first
-            if desc_container.count() > 0:
-                # Lấy HTML để giữ định dạng
-                html_content = desc_container.inner_html()
-                # Chuyển HTML sang text với định dạng đúng
-                description = self._convert_html_to_formatted_text(html_content)
+            # Scroll để đảm bảo description được load (có thể có "more>>" cần expand)
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+            
+            desc_selectors = [
+                ".wi_fic_description",  # With wrapper description
+                ".fic_description",  # Fiction description
+                ".description",  # Generic description
+                ".novel_description",  # Novel description
+                "[class*='description']",  # Bất kỳ class nào có 'description'
+            ]
+            
+            for selector in desc_selectors:
+                try:
+                    desc_container = self.page.locator(selector).first
+                    if desc_container.count() > 0:
+                        # Thử click "more>>" nếu có để expand description
+                        try:
+                            more_link = desc_container.locator(".morelink, [onclick*='showtext']").first
+                            if more_link.count() > 0:
+                                more_link.click()
+                                time.sleep(1)
+                        except:
+                            pass
+                        
+                        # Lấy HTML để giữ định dạng
+                        html_content = desc_container.inner_html()
+                        # Chuyển HTML sang text với định dạng đúng
+                        description = self._convert_html_to_formatted_text(html_content)
+                        if description:
+                            safe_print(f"   ✅ Tìm thấy description với selector: {selector}")
+                            break
+                except:
+                    continue
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy description: {e}")
             description = ""
 
-        #Lấy stats
-        # stats = self.page.locator(".stats-content .list-item").all()
-        # Container chính: .stats-content ul.list-unstyled
-        base_locator = ".stats-content ul.list-unstyled li:nth-child({}) span"
-
-        # 1. Overall Score (Nằm ở vị trí con thứ 2)
-        overall_score = self.page.locator(base_locator.format(2)).inner_text()
-
-        # 2. Style Score (Vị trí con thứ 4)
-        style_score = self.page.locator(base_locator.format(4)).inner_text()
-
-        # 3. Story Score (Vị trí con thứ 6)
-        story_score = self.page.locator(base_locator.format(6)).inner_text()
-
-        # 4. Grammar Score (Vị trí con thứ 8)
-        grammar_score = self.page.locator(base_locator.format(8)).inner_text()
-
-        # 5. Character Score (Vị trí con thứ 10)
-        character_score = self.page.locator(base_locator.format(10)).inner_text()
-
-        # 1. Định vị tất cả các thẻ <li> chứa GIÁ TRỊ số liệu
-        # Sử dụng class đặc trưng (.font-red-sunglo) và giới hạn trong khối stats bên phải (.col-sm-6)
-        stats_values_locator = self.page.locator("div.col-sm-6 li.font-red-sunglo")
+        # Lấy stats - ScribbleHub (trang chi tiết)
+        # Cấu trúc: .fic_stats > .st_item
+        overall_score = ""
+        style_score = ""
+        story_score = ""
+        grammar_score = ""
+        character_score = ""
         
-        # 2. Lấy giá trị bằng cách dùng chỉ mục (index)
+        total_views = ""
+        average_views = ""
+        followers = ""
+        favorites = ""
+        ratings = ""
+        pages = ""
         
-        # Lấy total_views (Index 0)
-        total_views = stats_values_locator.nth(0).inner_text()
-        
-        # Lấy average_views (Index 1)
-        average_views = stats_values_locator.nth(1).inner_text()
-        
-        # Lấy followers (Index 2)
-        followers = stats_values_locator.nth(2).inner_text()
-        
-        # Lấy favorites (Index 3)
-        favorites = stats_values_locator.nth(3).inner_text()
-        
-        # Lấy ratings (Index 4)
-        ratings = stats_values_locator.nth(4).inner_text()
-        
-        # Lấy pages/words (Index 5 - Giá trị cuối cùng)
-        pages = stats_values_locator.nth(5).inner_text()
+        try:
+            # Scroll để đảm bảo stats được load
+            self.page.evaluate("window.scrollTo(0, 0)")
+            time.sleep(1)
+            
+            # Tìm stats container
+            stats_container = self.page.locator(".fic_stats").first
+            if stats_container.count() > 0:
+                # Lấy tất cả các stat items
+                stat_items = stats_container.locator(".st_item").all()
+                
+                for stat_item in stat_items:
+                    try:
+                        stat_text = stat_item.inner_text().strip()
+                        stat_lower = stat_text.lower()
+                        
+                        # Parse các stats
+                        if "view" in stat_lower and not total_views:
+                            match = re.search(r'([\d.]+[KMkm]?)\s*views?', stat_lower)
+                            if match:
+                                total_views = match.group(1)
+                        
+                        if "favorite" in stat_lower and not favorites:
+                            match = re.search(r'([\d,]+)\s*favorites?', stat_lower)
+                            if match:
+                                favorites = match.group(1)
+                        
+                        if "chapter" in stat_lower and "week" not in stat_lower and not pages:
+                            match = re.search(r'([\d,]+)\s*chapters?', stat_lower)
+                            if match:
+                                pages = match.group(1) + " Chapters"
+                        
+                        if "reader" in stat_lower and not followers:
+                            match = re.search(r'([\d,]+)\s*readers?', stat_lower)
+                            if match:
+                                followers = match.group(1)
+                    except:
+                        continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy stats: {e}")
 
         # Tạo cấu trúc dữ liệu tổng quan sau khi đã lấy hết các biến
         # Theo scheme: fiction id, fiction name, fiction url, cover image, author, category, status, tags, description
@@ -298,9 +484,9 @@ class RoyalRoadScraper:
             "chapters": []     # Chuẩn bị cái mảng rỗng để chứa các chương
         }
 
-        # 3. Lấy danh sách link chương từ TẤT CẢ các trang phân trang
-        safe_print("... Đang lấy danh sách chương từ tất cả các trang")
-        chapter_urls = self._get_all_chapters_from_pagination(fiction_url)
+        # 3. Lấy danh sách link chương từ TẤT CẢ các trang TOC
+        safe_print("... Đang lấy danh sách chương từ tất cả các trang TOC")
+        chapter_urls = self._get_all_chapters_for_story(fiction_url)
         
         safe_print(f"--> Tổng cộng tìm thấy {len(chapter_urls)} chương từ tất cả các trang.")
 
@@ -355,72 +541,101 @@ class RoyalRoadScraper:
         # 5. Lưu kết quả ra JSON
         self._save_to_json(fiction_data)
 
-    def _get_all_chapters_from_pagination(self, fiction_url):
+    def _get_all_chapters_for_story(self, story_url):
         """
-        Lấy tất cả chapters từ tất cả các trang phân trang
-        Pagination sử dụng JavaScript (AJAX), không đổi URL
-        Trả về danh sách URL của tất cả chapters
+        Vào truyện, duyệt toàn bộ TOC pages, trả list chapter URLs.
+        Chỉ cào khi thật sự có ol.toc_ol trong HTML.
         """
-        all_chapter_urls = []
+        all_chapters = []
         
         try:
-            # Trang đầu tiên: Lấy từ trang fiction chính
-            safe_print(f"    📄 Đang lấy chapters từ trang 1 (trang fiction chính)...")
-            self.page.goto(fiction_url, timeout=config.TIMEOUT)
-            time.sleep(2)
+            # TOC page 1
+            toc_url = story_url.rstrip("/") + "/?toc=1#content1"
+            safe_print(f"    🔗 Vào TOC: {toc_url}")
+            self.page.goto(toc_url, timeout=config.TIMEOUT)
             
-            # Lấy chapters từ trang fiction chính
+            # Đợi page load
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=20000)
+            except:
+                self.page.wait_for_load_state("domcontentloaded", timeout=10000)
+            
+            # Đợi thêm để JavaScript render TOC
+            time.sleep(3)
+            
+            # Scroll xuống để trigger lazy load và đảm bảo TOC được render
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
+            self.page.evaluate("window.scrollTo(0, 0)")
+            time.sleep(1)
+            
+            # Debug: Kiểm tra URL và HTML
+            safe_print(f"    Debug: Đang ở URL: {self.page.url}")
+            page_content = self.page.content()
+            has_toc_ol = "toc_ol" in page_content
+            safe_print(f"    Debug: Có 'toc_ol' trong HTML: {has_toc_ol}")
+            
             page_chapters = self._get_chapters_from_current_page()
-            all_chapter_urls.extend(page_chapters)
+            all_chapters.extend(page_chapters)
             safe_print(f"    ✅ Trang 1: Lấy được {len(page_chapters)} chapters")
             
-            # Tìm số trang tối đa cho chapters từ pagination trên trang fiction chính
-            max_page = self._get_max_chapter_page()
+            # Nếu không tìm thấy chapters ở URL ?toc=1, thử vào trang chính
+            if len(page_chapters) == 0:
+                safe_print("    ⚠️ Không tìm thấy chapters ở URL ?toc=1, thử vào trang chính...")
+                self.page.goto(story_url, timeout=config.TIMEOUT)
+                time.sleep(3)
+                self.page.wait_for_load_state("networkidle", timeout=20000)
+                # Scroll xuống đến phần TOC
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(2)
+                page_chapters = self._get_chapters_from_current_page()
+                if page_chapters:
+                    safe_print(f"    ✅ Tìm thấy {len(page_chapters)} chapters từ trang chính")
+                    all_chapters.extend(page_chapters)
             
-            # Nếu chỉ có 1 trang, return luôn
-            if max_page <= 1:
-                safe_print(f"    📚 Chỉ có 1 trang chapters")
-                return all_chapter_urls
+            # Các trang TOC tiếp theo (2,3,4...)
+            pag_links = self.page.locator("#pagination-mesh-toc a.page-link").all()
+            seen = set()
             
-            safe_print(f"    📚 Tìm thấy {max_page} trang chapters (trang 1 đã lấy, còn {max_page - 1} trang nữa)")
-            
-            # Loop qua từng trang còn lại (từ trang 2 trở đi)
-            # Sử dụng click vào pagination để load thêm chapters (AJAX, không đổi URL)
-            for page_num in range(2, max_page + 1):
-                safe_print(f"    📄 Đang lấy chapters từ trang {page_num}/{max_page}...")
+            for a in pag_links:
+                href = a.get_attribute("href")
+                if not href:
+                    continue
                 
-                # Click vào nút pagination để chuyển trang (AJAX load, không đổi URL)
-                if not self._go_to_chapter_page(page_num):
-                    safe_print(f"    ⚠️ Không thể chuyển đến trang {page_num}, dừng lại")
-                    break
+                full = urljoin(toc_url, href)
+                if full in seen:
+                    continue
+                seen.add(full)
                 
-                # Đợi AJAX load xong
+                safe_print(f"    🔗 Vào TOC page: {full}")
+                self.page.goto(full, timeout=config.TIMEOUT)
+                
+                # Đợi page load
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=20000)
+                except:
+                    self.page.wait_for_load_state("domcontentloaded", timeout=10000)
+                
+                # Đợi thêm để JavaScript render
+                time.sleep(3)
+                
+                # Scroll để trigger render
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(2)
                 
-                # Lấy chapters từ trang hiện tại
-                page_chapters = self._get_chapters_from_current_page()
-                all_chapter_urls.extend(page_chapters)
-                
-                safe_print(f"    ✅ Trang {page_num}: Lấy được {len(page_chapters)} chapters")
-                
-                # Delay giữa các trang
-                if page_num < max_page:
-                    time.sleep(1)
+                all_chapters.extend(self._get_chapters_from_current_page())
             
-            return all_chapter_urls
+            safe_print(f"    ✅ Tổng cộng {len(all_chapters)} chapter URLs")
+            return all_chapters
             
         except Exception as e:
-            safe_print(f"    ⚠️ Lỗi khi lấy chapters từ pagination: {e}")
-            # Fallback: Lấy từ trang đầu tiên (trang fiction chính)
-            try:
-                self.page.goto(fiction_url, timeout=config.TIMEOUT)
-                time.sleep(2)
-                return self._get_chapters_from_current_page()
-            except:
-                return []
+            safe_print(f"    ⚠️ Lỗi khi lấy chapters từ TOC: {e}")
+            import traceback
+            safe_print(traceback.format_exc())
+            return []
 
     def _get_max_chapter_page(self):
-        """Lấy số trang chapters tối đa từ pagination"""
+        """Lấy số trang chapters tối đa từ pagination (ScribbleHub: ul#pagination-mesh-toc)"""
         try:
             # Scroll xuống để load pagination
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -428,8 +643,10 @@ class RoyalRoadScraper:
             
             max_page = 1  # Mặc định là 1 trang
             
-            # Tìm pagination element - có thể là pagination-small hoặc pagination
+            # ScribbleHub dùng: ul#pagination-mesh-toc với các link a.page-link
             pagination_selectors = [
+                "ul#pagination-mesh-toc",  # ScribbleHub TOC pagination
+                "#pagination-mesh-toc",  # Alternative
                 "ul.pagination-small",
                 "ul.pagination",
                 ".pagination-small",
@@ -446,29 +663,39 @@ class RoyalRoadScraper:
                     continue
             
             if pagination and pagination.count() > 0:
-                # Lấy tất cả các link có data-page attribute
-                page_links = pagination.locator("a[data-page]").all()
+                # Lấy tất cả các link page (a.page-link cho ScribbleHub)
+                page_links = pagination.locator("a.page-link, a[href*='?toc=']").all()
                 
                 page_numbers = []
                 for link in page_links:
                     try:
-                        page_num_str = link.get_attribute("data-page")
-                        if page_num_str:
-                            page_num = int(page_num_str)
+                        # ScribbleHub: href="?toc=2#content1" -> extract số 2
+                        href = link.get_attribute("href") or ""
+                        if "?toc=" in href:
+                            # Extract số từ ?toc=N
+                            import re
+                            match = re.search(r'\?toc=(\d+)', href)
+                            if match:
+                                page_num = int(match.group(1))
+                                page_numbers.append(page_num)
+                        
+                        # Fallback: lấy từ text nếu là số
+                        link_text = link.inner_text().strip()
+                        if link_text.isdigit():
+                            page_num = int(link_text)
                             page_numbers.append(page_num)
                     except:
                         continue
                 
-                # Nếu không có data-page, thử lấy từ text content
+                # Nếu không có, thử lấy từ data-page attribute
                 if not page_numbers:
                     try:
-                        all_links = pagination.locator("a").all()
-                        for link in all_links:
+                        page_links = pagination.locator("a[data-page]").all()
+                        for link in page_links:
                             try:
-                                link_text = link.inner_text().strip()
-                                # Bỏ qua các nút navigation (Next, Previous) và icon
-                                if link_text.isdigit():
-                                    page_num = int(link_text)
+                                page_num_str = link.get_attribute("data-page")
+                                if page_num_str:
+                                    page_num = int(page_num_str)
                                     page_numbers.append(page_num)
                             except:
                                 continue
@@ -544,142 +771,99 @@ class RoyalRoadScraper:
 
     def _go_to_chapter_page(self, page_num):
         """
-        Chuyển đến trang chapters cụ thể bằng cách click vào link hoặc nút Next
+        Chuyển đến trang chapters cụ thể (ScribbleHub: dùng URL ?toc=N#content1)
         Trả về True nếu thành công, False nếu thất bại
         """
         try:
-            # Tìm pagination
-            pagination_selectors = [
-                "ul.pagination-small",
-                "ul.pagination",
-                ".pagination-small",
-                ".pagination"
-            ]
+            # ScribbleHub dùng URL pattern: ?toc=N#content1
+            # Lấy base URL (bỏ query params hiện tại)
+            base_url = self.page.url.split('?')[0].split('#')[0]
+            toc_url = f"{base_url}?toc={page_num}#content1"
             
-            pagination = None
-            for selector in pagination_selectors:
+            # Goto URL mới (ScribbleHub sẽ load AJAX)
+            self.page.goto(toc_url, timeout=config.TIMEOUT)
+            time.sleep(3)
+            
+            # Đợi page load
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=15000)
+            except:
+                pass
+            
+            # Đợi TOC container xuất hiện - dùng selector cụ thể cho ScribbleHub
+            try:
+                self.page.wait_for_selector("ol.toc_ol li.toc_w", timeout=10000)
+                return True
+            except:
+                # Fallback: thử click pagination link
                 try:
-                    pagination = self.page.locator(selector).first
+                    pagination = self.page.locator("ul#pagination-mesh-toc").first
                     if pagination.count() > 0:
-                        break
-                except:
-                    continue
-            
-            if not pagination or pagination.count() == 0:
-                return False
-            
-            # Cách 1: Thử tìm link có data-page = page_num
-            try:
-                page_link = pagination.locator(f'a[data-page="{page_num}"]').first
-                if page_link.count() > 0:
-                    page_link.click()
-                    time.sleep(2)
-                    return True
-            except:
-                pass
-            
-            # Cách 2: Nếu không có data-page, thử tìm link có text = page_num
-            # Lấy tất cả các link trong pagination và tìm link có text = page_num
-            try:
-                all_links = pagination.locator("a").all()
-                for link in all_links:
-                    try:
-                        link_text = link.inner_text().strip()
-                        # Kiểm tra xem text có phải là số và bằng page_num không
-                        if link_text.isdigit() and int(link_text) == page_num:
-                            # Kiểm tra xem không phải là nút navigation (không có class nav-arrow)
-                            parent_class = link.evaluate("el => el.closest('li')?.className || ''")
-                            if "nav-arrow" not in parent_class:
-                                link.click()
-                                time.sleep(2)
-                                return True
-                    except:
-                        continue
-            except:
-                pass
-            
-            # Cách 3: Click nút "Next" nhiều lần (chỉ dùng nếu page_num nhỏ)
-            # Tìm nút Next (có class nav-arrow hoặc chứa icon chevron-right)
-            if page_num <= 10:  # Giới hạn để tránh click quá nhiều
-                # Tìm trang hiện tại
-                current_page = 1
-                try:
-                    active_page = pagination.locator("li.page-active a").first
-                    if active_page.count() > 0:
-                        active_text = active_page.inner_text().strip()
-                        if active_text.isdigit():
-                            current_page = int(active_text)
+                        # Tìm link có href chứa ?toc=page_num
+                        page_link = pagination.locator(f'a[href*="?toc={page_num}"]').first
+                        if page_link.count() > 0:
+                            page_link.click()
+                            time.sleep(3)
+                            return True
                 except:
                     pass
-                
-                # Click Next cho đến khi đến trang cần
-                while current_page < page_num:
-                    # Tìm nút Next (có thể là .nav-arrow với icon chevron-right)
-                    next_selectors = [
-                        'a.pagination-button:has(i.fa-chevron-right)',
-                        '.nav-arrow a:has(i.fa-chevron-right)',
-                        'a:has(i.fa-chevron-right)',
-                        '.nav-arrow a',
-                        'a.pagination-button'
-                    ]
-                    
-                    next_button = None
-                    for selector in next_selectors:
-                        try:
-                            next_button = pagination.locator(selector).last  # Lấy nút cuối (Next)
-                            if next_button.count() > 0:
-                                # Kiểm tra xem có phải nút Next không (không phải Previous)
-                                href = next_button.get_attribute("href") or ""
-                                if "page" in href.lower() or "next" in href.lower() or not href:
-                                    break
-                        except:
-                            continue
-                    
-                    if next_button and next_button.count() > 0:
-                        try:
-                            next_button.click()
-                            time.sleep(2)
-                            current_page += 1
-                        except:
-                            return False
-                    else:
-                        return False
-                
-                return True
-            
-            return False
+                return False
             
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi chuyển đến trang {page_num}: {e}")
             return False
 
     def _get_chapters_from_current_page(self):
-        """Lấy danh sách chapters từ trang hiện tại"""
+        """
+        Lấy danh sách chapter URLs từ trang TOC hiện tại (layout có ol.toc_ol).
+        Chỉ cào khi thật sự có ol.toc_ol trong HTML.
+        """
         chapter_urls = []
         
         try:
-            # Lấy tất cả các rows trong table chapters
-            chapter_rows = self.page.locator("table#chapters tbody tr").all()
+            # Đảm bảo page đã load
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=15000)
+            except:
+                self.page.wait_for_load_state("domcontentloaded", timeout=10000)
             
-            for row in chapter_rows:
+            # Scroll để đảm bảo TOC được render
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+            
+            html = self.page.content()
+            
+            # Nếu không có toc_ol thì coi như layout khác -> bỏ qua
+            if "toc_ol" not in html:
+                safe_print("        ⚠️ Trang này không có TOC kiểu ol.toc_ol -> bỏ qua")
+                safe_print(f"        Debug URL: {self.page.url}")
+                # Debug: Kiểm tra các element liên quan
                 try:
-                    link_el = row.locator("td").first.locator("a")
-                    if link_el.count() > 0:
-                        url = link_el.get_attribute("href")
-                        if url:
-                            # Tạo full URL
-                            if url.startswith("/"):
-                                full_url = config.BASE_URL + url
-                            elif url.startswith("http"):
-                                full_url = url
-                            else:
-                                full_url = config.BASE_URL + "/" + url
-                            
-                            # Tránh duplicate
-                            if full_url not in chapter_urls:
-                                chapter_urls.append(full_url)
+                    toc_table = self.page.locator("div.wi_fic_table.toc").count()
+                    safe_print(f"        Debug: Tìm thấy {toc_table} div.wi_fic_table.toc")
+                    toc_ol = self.page.locator("ol.toc_ol").count()
+                    safe_print(f"        Debug: Tìm thấy {toc_ol} ol.toc_ol")
                 except:
+                    pass
+                return []
+            
+            # Lấy tất cả link chương trong TOC
+            self.page.wait_for_selector("ol.toc_ol li.toc_w a.toc_a", timeout=15000)
+            links = self.page.locator("ol.toc_ol li.toc_w a.toc_a").all()
+            safe_print(f"        ✅ Tìm thấy {len(links)} chapters trên trang TOC hiện tại")
+            
+            for el in links:
+                href = el.get_attribute("href")
+                if not href:
                     continue
+                
+                if href.startswith("http"):
+                    full = href
+                else:
+                    full = urljoin(config.BASE_URL + "/", href.lstrip("/"))
+                
+                if full not in chapter_urls:
+                    chapter_urls.append(full)
             
             return chapter_urls
             
@@ -775,39 +959,78 @@ class RoyalRoadScraper:
         return result
 
     def _scrape_single_chapter(self, url):
-        """Hàm con: Chỉ chịu trách nhiệm vào 1 link chương và trả về cục data của chương đó"""
+        """Hàm con: Chỉ chịu trách nhiệm vào 1 link chương và trả về cục data của chương đó (ScribbleHub)"""
         try:
             self.page.goto(url, timeout=config.TIMEOUT)
-            self.page.wait_for_selector(".chapter-inner", timeout=10000)
-
-            title = self.page.locator("h1").first.inner_text()
+            time.sleep(2)
             
-            # Lấy content với định dạng đúng (giữ nguyên xuống dòng như trong UI)
+            # Đợi page load - thử nhiều selector
+            content_selectors = [".chapter-inner", ".chp_raw", ".wi_chapter_content", ".chapter_content"]
+            content_loaded = False
+            for selector in content_selectors:
+                try:
+                    self.page.wait_for_selector(selector, timeout=5000)
+                    content_loaded = True
+                    break
+                except:
+                    continue
+
+            # Lấy title - ScribbleHub
+            title = ""
+            try:
+                title_selectors = ["h1", ".chapter-title", ".chp_title", "h2.chapter-title"]
+                for selector in title_selectors:
+                    try:
+                        title_elem = self.page.locator(selector).first
+                        if title_elem.count() > 0:
+                            title = title_elem.inner_text().strip()
+                            break
+                    except:
+                        continue
+            except:
+                pass
+            
+            # Lấy content với định dạng đúng (ScribbleHub)
             content = ""
             try:
-                content_container = self.page.locator(".chapter-inner").first
-                if content_container.count() > 0:
-                    # Lấy HTML để giữ định dạng
-                    html_content = content_container.inner_html()
-                    # Chuyển HTML sang text với định dạng đúng
-                    content = self._convert_html_to_formatted_text(html_content)
-                else:
-                    # Fallback: dùng inner_text nếu không tìm thấy
-                    content = self.page.locator(".chapter-inner").inner_text()
+                content_selectors = [".chp_raw", ".wi_chapter_content", ".chapter-inner", ".chapter_content"]
+                for selector in content_selectors:
+                    try:
+                        content_container = self.page.locator(selector).first
+                        if content_container.count() > 0:
+                            # Lấy HTML để giữ định dạng
+                            html_content = content_container.inner_html()
+                            # Chuyển HTML sang text với định dạng đúng
+                            content = self._convert_html_to_formatted_text(html_content)
+                            if content:
+                                break
+                    except:
+                        continue
+                
+                # Fallback: dùng inner_text nếu không tìm thấy
+                if not content:
+                    for selector in content_selectors:
+                        try:
+                            content = self.page.locator(selector).first.inner_text()
+                            if content:
+                                break
+                        except:
+                            continue
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi khi lấy content: {e}")
-                content = self.page.locator(".chapter-inner").inner_text()
 
             # Lấy comments cho chapter này
             safe_print(f"      ... Đang lấy comments cho chương")
             chapter_comments = self._scrape_comments(url, "chapter")
             
-            # Lấy chapter_id từ URL (ví dụ: /chapter/123456/ -> 123456)
+            # Lấy chapter_id từ URL (ScribbleHub format: /read/ID/title/chapter/CHAPTER_ID/)
             chapter_id = ""
             try:
-                url_parts = url.split("/chapter/")
-                if len(url_parts) > 1:
-                    chapter_id = url_parts[1].split("/")[0]
+                # ScribbleHub: /read/1672529-title/chapter/2013841/
+                # Chapter ID là số sau /chapter/
+                match = re.search(r'/chapter/(\d+)/', url)
+                if match:
+                    chapter_id = match.group(1)
             except:
                 chapter_id = ""
 
@@ -851,25 +1074,61 @@ class RoyalRoadScraper:
             
             # Cào chương
             worker_page.goto(url, timeout=config.TIMEOUT)
-            worker_page.wait_for_selector(".chapter-inner", timeout=10000)
+            time.sleep(2)
+            
+            # Đợi page load - thử nhiều selector (ScribbleHub)
+            content_selectors = [".chapter-inner", ".chp_raw", ".wi_chapter_content", ".chapter_content"]
+            for selector in content_selectors:
+                try:
+                    worker_page.wait_for_selector(selector, timeout=5000)
+                    break
+                except:
+                    continue
             
             # Delay sau khi load page
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
 
-            title = worker_page.locator("h1").first.inner_text()
+            # Lấy title - ScribbleHub
+            title = ""
+            try:
+                title_selectors = ["h1", ".chapter-title", ".chp_title", "h2.chapter-title"]
+                for selector in title_selectors:
+                    try:
+                        title_elem = worker_page.locator(selector).first
+                        if title_elem.count() > 0:
+                            title = title_elem.inner_text().strip()
+                            break
+                    except:
+                        continue
+            except:
+                pass
             
-            # Lấy content với định dạng đúng
+            # Lấy content với định dạng đúng (ScribbleHub)
             content = ""
             try:
-                content_container = worker_page.locator(".chapter-inner").first
-                if content_container.count() > 0:
-                    html_content = content_container.inner_html()
-                    content = self._convert_html_to_formatted_text(html_content)
-                else:
-                    content = worker_page.locator(".chapter-inner").inner_text()
+                content_selectors = [".chp_raw", ".wi_chapter_content", ".chapter-inner", ".chapter_content"]
+                for selector in content_selectors:
+                    try:
+                        content_container = worker_page.locator(selector).first
+                        if content_container.count() > 0:
+                            html_content = content_container.inner_html()
+                            content = self._convert_html_to_formatted_text(html_content)
+                            if content:
+                                break
+                    except:
+                        continue
+                
+                # Fallback
+                if not content:
+                    for selector in content_selectors:
+                        try:
+                            content = worker_page.locator(selector).first.inner_text()
+                            if content:
+                                break
+                        except:
+                            continue
             except Exception as e:
                 safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy content: {e}")
-                content = worker_page.locator(".chapter-inner").inner_text()
 
             # Delay trước khi lấy comments
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
@@ -881,12 +1140,14 @@ class RoyalRoadScraper:
             # Delay sau khi hoàn thành chương
             time.sleep(config.DELAY_BETWEEN_CHAPTERS)
             
-            # Lấy chapter_id từ URL (ví dụ: /chapter/123456/ -> 123456)
+            # Lấy chapter_id từ URL (ScribbleHub format: /read/ID/title/chapter/CHAPTER_ID/)
             chapter_id = ""
             try:
-                url_parts = url.split("/chapter/")
-                if len(url_parts) > 1:
-                    chapter_id = url_parts[1].split("/")[0]
+                # ScribbleHub: /read/1672529-title/chapter/2013841/
+                # Chapter ID là số sau /chapter/
+                match = re.search(r'/chapter/(\d+)/', url)
+                if match:
+                    chapter_id = match.group(1)
             except:
                 chapter_id = ""
 
@@ -984,7 +1245,7 @@ class RoyalRoadScraper:
             return 1  # Nếu lỗi, mặc định chỉ có 1 trang
 
     def _scrape_comments_from_page(self, page_url):
-        """Lấy comments từ một trang cụ thể"""
+        """Lấy comments từ một trang cụ thể (ScribbleHub chapter page)"""
         comments = []
         
         try:
@@ -995,31 +1256,18 @@ class RoyalRoadScraper:
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
-            # Lấy tất cả div.comment và filter những cái không nằm trong ul.subcomments
-            all_comments = self.page.locator("div.comment").all()
+            # ScribbleHub chapter comments: div#comments.comments-area.chp > ol.comment-list.chapters > li
+            # Lấy tất cả các li trong ol.comment-list.chapters (level 1 comments)
+            all_comment_lis = self.page.locator("div#comments.comments-area.chp ol.comment-list.chapters > li").all()
             
-            for comment_elem in all_comments:
+            # Nếu không tìm thấy với selector mới, thử selector cũ (RoyalRoad)
+            if not all_comment_lis:
+                all_comment_lis = self.page.locator("div.comment").all()
+            
+            for comment_li in all_comment_lis:
                 try:
-                    # Kiểm tra xem comment này có nằm trong ul.subcomments không
-                    is_in_subcomments = comment_elem.evaluate("""
-                        el => {
-                            let parent = el.parentElement;
-                            while (parent) {
-                                if (parent.tagName === 'UL' && parent.classList.contains('subcomments')) {
-                                    return true;
-                                }
-                                parent = parent.parentElement;
-                            }
-                            return false;
-                        }
-                    """)
-                    
-                    # Nếu nằm trong subcomments thì skip (đây là reply, sẽ được lấy đệ quy)
-                    if is_in_subcomments:
-                        continue
-                    
-                    # Đây là comment gốc, lấy nó và tất cả replies
-                    comment_data = self._scrape_single_comment_recursive(comment_elem)
+                    # Parse comment và replies đệ quy
+                    comment_data = self._scrape_single_comment_recursive(comment_li)
                     if comment_data:
                         comments.append(comment_data)
                 except Exception as e:
@@ -1228,7 +1476,7 @@ class RoyalRoadScraper:
             return 1
 
     def _scrape_comments_from_page_worker(self, page, page_url):
-        """Lấy comments từ một trang cụ thể - dùng page từ worker"""
+        """Lấy comments từ một trang cụ thể - dùng page từ worker (ScribbleHub chapter)"""
         comments = []
         
         try:
@@ -1240,27 +1488,16 @@ class RoyalRoadScraper:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
-            all_comments = page.locator("div.comment").all()
+            # ScribbleHub chapter comments: div#comments.comments-area.chp > ol.comment-list.chapters > li
+            all_comment_lis = page.locator("div#comments.comments-area.chp ol.comment-list.chapters > li").all()
             
-            for comment_elem in all_comments:
+            # Nếu không tìm thấy với selector mới, thử selector cũ (RoyalRoad)
+            if not all_comment_lis:
+                all_comment_lis = page.locator("div.comment").all()
+            
+            for comment_li in all_comment_lis:
                 try:
-                    is_in_subcomments = comment_elem.evaluate("""
-                        el => {
-                            let parent = el.parentElement;
-                            while (parent) {
-                                if (parent.tagName === 'UL' && parent.classList.contains('subcomments')) {
-                                    return true;
-                                }
-                                parent = parent.parentElement;
-                            }
-                            return false;
-                        }
-                    """)
-                    
-                    if is_in_subcomments:
-                        continue
-                    
-                    comment_data = self._scrape_single_comment_recursive(comment_elem)
+                    comment_data = self._scrape_single_comment_recursive(comment_li)
                     if comment_data:
                         comments.append(comment_data)
                 except Exception as e:
@@ -1275,14 +1512,18 @@ class RoyalRoadScraper:
     def _scrape_single_comment_recursive(self, comment_elem):
         """
         Hàm đệ quy để lấy một comment và tất cả replies của nó
-        Cấu trúc HTML:
-        - div.comment
-          - div.media.media-v2 (nội dung comment chính)
-          - ul.subcomments (chứa các replies)
-            - div.comment (reply, có thể có ul.subcomments riêng)
+        Hỗ trợ cả ScribbleHub (li#comment-XXX) và RoyalRoad (div.comment)
         """
         try:
-            # Lấy comment container (div.media.media-v2)
+            import re
+            
+            # Kiểm tra xem là ScribbleHub format (li#comment-XXX) hay RoyalRoad format (div.comment)
+            li_id = comment_elem.get_attribute("id") or ""
+            if li_id.startswith("comment-"):
+                # Đây là ScribbleHub format
+                return self._parse_scribblehub_comment(comment_elem)
+            
+            # Thử RoyalRoad format
             media_elem = comment_elem.locator("div.media.media-v2").first
             if media_elem.count() == 0:
                 return None
@@ -1413,11 +1654,93 @@ class RoyalRoadScraper:
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi parse comment: {e}")
             return None
+    
+    def _parse_scribblehub_comment(self, comment_li):
+        """Parse comment theo cấu trúc ScribbleHub chapter comments"""
+        try:
+            import re
+            
+            # Comment ID: id="comment-3636791" -> 3636791
+            li_id = comment_li.get_attribute("id") or ""
+            match = re.search(r'comment-(\d+)', li_id)
+            comment_id = match.group(1) if match else ""
+            
+            # Username: span.fn a
+            username = ""
+            user_id = ""
+            try:
+                username_elem = comment_li.locator("span.fn a").first
+                if username_elem.count() > 0:
+                    username = username_elem.inner_text().strip()
+                    # User ID từ href: /profile/65092/username/ -> 65092
+                    user_url = username_elem.get_attribute("href") or ""
+                    user_id_match = re.search(r'/profile/(\d+)/', user_url)
+                    user_id = user_id_match.group(1) if user_id_match else ""
+            except:
+                username = "[Unknown]"
+                user_id = ""
+            
+            # Time: span.com_date a với attribute title
+            timestamp = ""
+            comment_url = ""
+            try:
+                date_elem = comment_li.locator("span.com_date a").first
+                if date_elem.count() > 0:
+                    timestamp = date_elem.get_attribute("title") or date_elem.inner_text().strip()
+                    comment_url = date_elem.get_attribute("href") or ""
+            except:
+                pass
+            
+            # Chapter ID từ comment_url: ?cid=3636791&chapter=1709464 -> 1709464
+            chapter_id = ""
+            try:
+                if "chapter=" in comment_url:
+                    match = re.search(r'chapter=(\d+)', comment_url)
+                    if match:
+                        chapter_id = match.group(1)
+            except:
+                pass
+            
+            # Comment text: div.user-comment.comment
+            comment_text = ""
+            try:
+                comment_body = comment_li.locator("div.user-comment.comment").first
+                if comment_body.count() > 0:
+                    comment_text = comment_body.inner_text().strip()
+            except:
+                pass
+            
+            comment_data = {
+                "comment_id": comment_id,
+                "username": username,
+                "user_id": user_id,
+                "chapter_id": chapter_id,
+                "comment_text": comment_text,
+                "time": timestamp,
+                "comment_url": comment_url,
+                "replies": []
+            }
+            
+            # Lấy replies: ol.children > li
+            try:
+                children_ol = comment_li.locator("ol.children").first
+                if children_ol.count() > 0:
+                    reply_lis = children_ol.locator("> li").all()
+                    for reply_li in reply_lis:
+                        reply_data = self._parse_scribblehub_comment(reply_li)
+                        if reply_data:
+                            comment_data["replies"].append(reply_data)
+            except:
+                pass
+            
+            return comment_data
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi parse ScribbleHub comment: {e}")
+            return None
 
     def _scrape_reviews(self, fiction_url):
         """
-        Lấy tất cả reviews từ trang fiction
-        Theo scheme: review id, title, username, at chapter, time, content, score (overall, style, story, grammar, character)
+        Lấy tất cả reviews từ trang fiction (ScribbleHub)
         """
         reviews = []
         try:
@@ -1431,46 +1754,14 @@ class RoyalRoadScraper:
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
-            # Tìm reviews section - có thể là tab "Reviews" hoặc section riêng
-            # Thử tìm các selector phổ biến cho reviews
-            review_selectors = [
-                ".review",
-                ".review-item",
-                ".review-container",
-                "[class*='review']",
-                ".rating-review"
-            ]
+            # ScribbleHub dùng: .w-comments-item cho reviews
+            review_elements = self.page.locator(".w-comments-item").all()
             
-            review_elements = []
-            for selector in review_selectors:
-                try:
-                    elements = self.page.locator(selector).all()
-                    if elements:
-                        review_elements = elements
-                        safe_print(f"      ✅ Tìm thấy {len(elements)} reviews với selector: {selector}")
-                        break
-                except:
-                    continue
-            
-            # Nếu không tìm thấy với selector thông thường, thử tìm trong tabs
             if not review_elements:
-                try:
-                    # Thử click vào tab "Reviews" nếu có
-                    reviews_tab = self.page.locator("a[href*='reviews'], button:has-text('Reviews'), .nav-tabs a:has-text('Reviews')").first
-                    if reviews_tab.count() > 0:
-                        reviews_tab.click()
-                        time.sleep(3)
-                        # Thử lại với các selector
-                        for selector in review_selectors:
-                            try:
-                                elements = self.page.locator(selector).all()
-                                if elements:
-                                    review_elements = elements
-                                    break
-                            except:
-                                continue
-                except:
-                    pass
+                safe_print("      ⚠️ Không tìm thấy reviews!")
+                return []
+            
+            safe_print(f"      ✅ Tìm thấy {len(review_elements)} reviews")
             
             # Parse từng review
             for review_elem in review_elements:
@@ -1491,69 +1782,66 @@ class RoyalRoadScraper:
 
     def _parse_single_review(self, review_elem):
         """
-        Parse một review element thành dictionary theo scheme
+        Parse một review element thành dictionary theo scheme (ScribbleHub)
         """
         try:
-            # Lấy review ID
+            # Lấy review ID từ id attribute
             review_id = ""
             try:
-                review_id = review_elem.get_attribute("id") or review_elem.get_attribute("data-id") or ""
-                if review_id.startswith("review-"):
-                    review_id = review_id.replace("review-", "")
+                review_id = review_elem.get_attribute("id") or ""
+                if review_id.startswith("comment-"):
+                    review_id = review_id.replace("comment-", "")
             except:
                 pass
             
-            # Lấy title
+            # Lấy title - ScribbleHub không có title riêng, lấy từ status
             title = ""
             try:
-                title_elem = review_elem.locator("h3, h4, .review-title, [class*='title']").first
-                if title_elem.count() > 0:
-                    title = title_elem.inner_text().strip()
+                status_elem = review_elem.locator(".status_cmt .fic_r_stats").first
+                if status_elem.count() > 0:
+                    title = status_elem.inner_text().strip()
             except:
                 pass
             
             # Lấy username
             username = ""
             try:
-                username_elem = review_elem.locator("a[href*='/profile/'], .username, .reviewer-name, [class*='username']").first
+                username_elem = review_elem.locator(".revname, a[id^='revname']").first
                 if username_elem.count() > 0:
                     username = username_elem.inner_text().strip()
             except:
                 username = "[Unknown]"
             
-            # Lấy "at chapter" - chapter mà review được viết
+            # Lấy "at chapter"
             at_chapter = ""
             try:
-                chapter_elem = review_elem.locator("a[href*='/chapter/'], .chapter-link, [class*='chapter']").first
-                if chapter_elem.count() > 0:
-                    at_chapter = chapter_elem.inner_text().strip()
-                    # Hoặc lấy từ href
-                    if not at_chapter:
-                        href = chapter_elem.get_attribute("href") or ""
-                        if "/chapter/" in href:
-                            at_chapter = href.split("/chapter/")[1].split("/")[0]
+                status_elem = review_elem.locator(".status_cmt .fic_r_stats").first
+                if status_elem.count() > 0:
+                    at_chapter = status_elem.inner_text().strip()
             except:
                 pass
             
             # Lấy time
             time_str = ""
             try:
-                time_elem = review_elem.locator("time, .timestamp, [class*='time'], [class*='date']").first
+                time_elem = review_elem.locator(".pro_item_al a").first
                 if time_elem.count() > 0:
-                    time_str = time_elem.get_attribute("datetime") or time_elem.inner_text().strip()
+                    time_str = time_elem.inner_text().strip()
             except:
                 pass
             
             # Lấy content
             content = ""
             try:
-                content_elem = review_elem.locator(".review-content, .review-text, [class*='content'], [class*='text']").first
+                content_elem = review_elem.locator(".w-comments-item-text").first
                 if content_elem.count() > 0:
-                    content = content_elem.inner_text().strip()
+                    # Lấy HTML để giữ định dạng
+                    html_content = content_elem.inner_html()
+                    content = self._convert_html_to_formatted_text(html_content)
             except:
                 pass
             
-            # Lấy scores (overall, style, story, grammar, character)
+            # Lấy scores từ stars
             scores = {
                 "overall": "",
                 "style": "",
@@ -1563,25 +1851,15 @@ class RoyalRoadScraper:
             }
             
             try:
-                # Tìm các score elements
-                score_elements = review_elem.locator(".score, .rating, [class*='score'], [class*='rating']").all()
-                for score_elem in score_elements:
-                    try:
-                        score_text = score_elem.inner_text().strip()
-                        score_label = score_elem.get_attribute("data-label") or ""
-                        # Có thể parse từ text hoặc từ data attributes
-                        if "overall" in score_label.lower() or "overall" in score_text.lower():
-                            scores["overall"] = score_text
-                        elif "style" in score_label.lower() or "style" in score_text.lower():
-                            scores["style"] = score_text
-                        elif "story" in score_label.lower() or "story" in score_text.lower():
-                            scores["story"] = score_text
-                        elif "grammar" in score_label.lower() or "grammar" in score_text.lower():
-                            scores["grammar"] = score_text
-                        elif "character" in score_label.lower() or "character" in score_text.lower():
-                            scores["character"] = score_text
-                    except:
-                        continue
+                # Đếm số sao được chọn (filled stars)
+                filled_stars = review_elem.locator(".userreview.fa-star").count()
+                empty_stars = review_elem.locator(".userreview.fa-star-o").count()
+                half_stars = review_elem.locator(".userreview.fa-star-half-o").count()
+                
+                # Tính overall score
+                if filled_stars > 0:
+                    overall = filled_stars + (half_stars * 0.5)
+                    scores["overall"] = str(overall)
             except:
                 pass
             

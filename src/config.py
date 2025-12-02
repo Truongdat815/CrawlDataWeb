@@ -1,7 +1,7 @@
 import os
 
 # --- CẤU HÌNH HỆ THỐNG ---
-BASE_URL = "https://www.royalroad.com"
+BASE_URL = "https://www.scribblehub.com"
 
 # Thư mục lưu trữ
 DATA_DIR = "data"
@@ -22,11 +22,12 @@ MAX_WORKERS = 3  # Số thread để cào chapters song song
 
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
-MONGODB_USERNAME = "ngohoangtruongdat2_db_user"
-MONGODB_PASSWORD = "DatMongo2025!"
-CLUSTER_URL = "project.uoeyhrh.mongodb.net"
+# Sử dụng environment variables để bảo mật (ưu tiên)
+MONGODB_USERNAME = os.getenv("MONGODB_USERNAME", "ngohoangtruongdat2_db_user")
+MONGODB_PASSWORD = os.getenv("MONGODB_PASSWORD", "DatMongo2025!")
+CLUSTER_URL = os.getenv("MONGODB_CLUSTER_URL", "project.uoeyhrh.mongodb.net")
 
-MONGODB_DB_NAME = "royalroad_db"
+MONGODB_DB_NAME = "scribblehub_db"
 # Collection names - tách riêng như bạn của bạn
 MONGODB_COLLECTION_STORIES = "stories"
 MONGODB_COLLECTION_CHAPTERS = "chapters"

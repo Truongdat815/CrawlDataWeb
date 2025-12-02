@@ -10,14 +10,14 @@ def safe_print(*args, **kwargs):
         message = message.encode('ascii', 'replace').decode('ascii')
         print(message, **kwargs)
 
-from src.scraper_engine import RoyalRoadScraper
+from src.scraper_engine import ScribbleHubScraper
 
 def main():
     # URL trang best-rated page 500
-    best_rated_url = "https://www.royalroad.com/fictions/best-rated?page=500"
+    best_rated_url = "https://www.scribblehub.com/series-ranking/"
     
     # Khởi tạo bot
-    bot = RoyalRoadScraper()
+    bot = ScribbleHubScraper()
     
     try:
         bot.start()
