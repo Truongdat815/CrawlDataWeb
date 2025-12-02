@@ -1,4 +1,5 @@
 playwright>=1.40.0
 requests>=2.31.0
-pymongo>=4.6.0
+pymongo==3.12.0
+uuid6==2025.0.1
 
