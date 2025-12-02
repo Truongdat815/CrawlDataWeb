@@ -1,0 +1,203 @@
+{
+  "cookies": [
+    {
+      "name": "e2",
+      "value": "%7B%22pid%22%3A%22qi_p_googleonetap%22%2C%22l1%22%3A1%2C%22eid%22%3A%22qi_I01%22%7D",
+      "domain": ".webnovel.com",
+      "path": "/book",
+      "expires": 1767199917,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "e1",
+      "value": "%7B%22pid%22%3A%22qi_p_googleonetap%22%2C%22l1%22%3A5%2C%22eid%22%3A%22qi_I05%22%7D",
+      "domain": ".webnovel.com",
+      "path": "/book",
+      "expires": 1767199917,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_csrfToken",
+      "value": "cac01cdd-793f-40b5-8075-0be2ee0a56ce",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1767372707.49902,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "webnovel_uuid",
+      "value": "1764607909_322662478",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1799167907.49913,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__cf_bm",
+      "value": "VCOMQfGb4fy1ABbTOnWmWekc7pll5AITGoD2o95Gz3M-1764607909-1.0.1.1-VvD6XqdjVE3AJ8IUW00QR2EHkcHCS_OuVi9ofnLbuYE0O2HgK51kIG0CE0uFd5xPwUV5YdAjCUN_.sEHZN2SKgduxCLCHpm.i1ZEibweT9E",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1764609707.499151,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "__cf_bm",
+      "value": "5YVgMvKB0uk_1V9Yq4hRHmInxRvQklasxk9LZTXFVOg-1764607909-1.0.1.1-QVQ_A_xtHLKQCbWpqoki7hHDDGu5YsPN0iY4PEmxWD2fivZA4X5Q4TS0kHRWQdFyvmC.tszuxUVgBzOVCaRydxJNN44CShZ91SCleH6utZM",
+      "domain": ".yueimg.com",
+      "path": "/",
+      "expires": 1764609707.641764,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "webnovel-content-language",
+      "value": "en",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1796143907,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "webnovel-language",
+      "value": "en",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1796143907,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "NEXT_LOCALE",
+      "value": "en",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1796143907,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "cf_clearance",
+      "value": "ZcxLglCWOMQ0ZWW2jnuv4eh0mXHsVXn6m.b4aYhDN1I-1764607910-1.2.1.1-UX0TjIcXLHGDnzVmrqAKPlwGDb6OXEmZkERFPylOk1Cihb8C.6ks81rSMkes0N9nTnFMZ5N92zryfykMaLO0Wbl9WIRwbTOFr5UNieaE2V6EAGa0I1A5KJ4C6h_RIX8.Zvj5_lhzOYRhLTHJz7DTK8uNTzaRvmETpUxheTcsuKznXsL7.IIeniXDNyub9g_AdyQPFas8m_5nE8H_COmvB3bPj76.yGQQmSLGI5er3O4",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1796143908.205191,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None",
+      "partitionKey": "https://webnovel.com",
+      "_crHasCrossSiteAncestor": false
+    },
+    {
+      "name": "_ga_PH6KHFG28N",
+      "value": "GS2.1.s1764607909$o1$g0$t1764607909$j60$l0$h0",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1799167909.568277,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_fbp",
+      "value": "fb.1.1764607909669.69058634397725809",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1772383909,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "g_state",
+      "value": "{\"i_l\":0,\"i_ll\":1764607909758,\"i_b\":\"7+ckYl8E+2JCyIe9jLlK1+YEFtMEwmnGCYXdrir7QTo\"}",
+      "domain": "www.webnovel.com",
+      "path": "/",
+      "expires": 1780159909,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "AMP_TOKEN",
+      "value": "%24NOT_FOUND",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1764611509,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.2.1387880717.1764607910",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1799167909.934736,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gid",
+      "value": "GA1.2.1867996202.1764607910",
+      "domain": ".webnovel.com",
+      "path": "/",
+      "expires": 1764694309,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "dontneedgoogleonetap",
+      "value": "1",
+      "domain": "www.webnovel.com",
+      "path": "/",
+      "expires": 1764608400,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://www.webnovel.com",
+      "localStorage": [
+        {
+          "name": "aegis_session_id",
+          "value": "{\"id\":\"SDK-ce667be7a4aacd6ccfb2\",\"sessionId\":\"d7c24964a2b7aec539d0466976e946d8\"}"
+        },
+        {
+          "name": "AEGIS_ID",
+          "value": "45b115a0-89f2-4156-a21d-ee2757670f78"
+        },
+        {
+          "name": "lastExternalReferrer",
+          "value": "empty"
+        },
+        {
+          "name": "lastExternalReferrerTime",
+          "value": "1764607909663"
+        },
+        {
+          "name": "topicsLastReferenceTime",
+          "value": "1764607909677"
+        }
+      ]
+    }
+  ]
+}

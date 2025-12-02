@@ -10,24 +10,30 @@ def safe_print(*args, **kwargs):
         message = message.encode('ascii', 'replace').decode('ascii')
         print(message, **kwargs)
 
-from src.scraper_engine import RoyalRoadScraper
+from src.webnovel_scraper import WebnovelScraper
 
 def main():
-    # URL trang best-rated page 500
-    best_rated_url = "https://www.royalroad.com/fictions/best-rated?page=500"
+    # URL của bộ truyện Webnovel cần cào
+    book_url = "https://www.webnovel.com/book/avatar-tlab-tai-lung_34078380808505505"
     
-    # Khởi tạo bot
-    bot = RoyalRoadScraper()
+    # Khởi tạo scraper
+    scraper = WebnovelScraper()
     
     try:
-        bot.start()
-        # Cào 5 bộ truyện từ vị trí thứ 6 tới thứ 10 (bỏ qua 5 bộ đầu)
-        # start_from=5 nghĩa là bỏ qua 5 bộ đầu tiên (vị trí 0-4), bắt đầu từ vị trí 5 (bộ thứ 6)
-        bot.scrape_best_rated_fictions(best_rated_url, num_fictions=5, start_from=5)
+        scraper.start()
+
+        # Command-line flag: --export-cookies -> open browser, let user login, then save cookies.json
+        if '--export-cookies' in sys.argv:
+            scraper.export_cookies_interactive(target_url=book_url, save_path='cookies.json')
+        else:
+            # Cào book without manual login (no interactive steps)
+            scraper.scrape_book(book_url, max_chapters=None, wait_for_login=False)
     except Exception as e:
-        safe_print(f"Lỗi chương trình: {e}")
+        safe_print(f"❌ Error: {e}")
+        import traceback
+        safe_print(traceback.format_exc())
     finally:
-        bot.stop()
+        scraper.stop()
 
 if __name__ == "__main__":
     main()
