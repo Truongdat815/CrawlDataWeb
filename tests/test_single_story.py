@@ -51,39 +51,12 @@ def test_chapter_url():
             import time
             time.sleep(2)  # Wait for page to fully load
             
-            # Click "Hiển thị thêm" buttons từ show-more-btn div
-            print(f"💬 Clicking 'Hiển thị thêm' buttons...")
+            # Fetch comments using v5 API via Playwright
+            print(f"\n🔍 Fetching comments for chapter {chapter_id} via v5 API...")
+            comments = bot.fetch_comments_from_api_v5(chapter_id)
             
-            for attempt in range(10):
-                # Find button trong div.show-more-btn
-                show_more_btn = None
-                
-                try:
-                    show_more_btn = bot.page.query_selector('div.show-more-btn button')
-                except:
-                    pass
-                
-                if not show_more_btn:
-                    print(f"   ✅ No more 'Hiển thị thêm' buttons found")
-                    break
-                
-                try:
-                    show_more_btn.click()
-                    time.sleep(0.8)
-                    print(f"   ✅ Clicked button {attempt + 1}")
-                except Exception as e:
-                    print(f"   ⚠️ Error clicking: {e}")
-                    break
-            
-            # Get HTML after clicking
-            page_html = bot.page.content()
-            
-            # Extract comments from HTML
-            from src.scrapers.comment import CommentScraper
-            comments = CommentScraper.extract_comments_from_html(page_html, chapter_id)
-            
-            print(f"\n✅ Extracted {len(comments)} comments from chapter HTML:")
-            for i, cmt in enumerate(comments, 1):
+            print(f"\n✅ Fetched {len(comments)} comments from v5 API:")
+            for i, cmt in enumerate(comments[:10], 1):  # Show first 10
                 print(f"   {i}. {cmt.get('userName', 'Unknown')}: {cmt.get('commentText', '')[:60]}...")
     
     except Exception as e:

@@ -16,7 +16,6 @@ from src.scrapers.base import BaseScraper, safe_print
 from src import config
 from src.utils.validation import validate_against_schema
 from src.schemas.comment_schema import COMMENT_SCHEMA
-from bs4 import BeautifulSoup
 import uuid
 
 
@@ -27,180 +26,162 @@ class CommentScraper(BaseScraper):
         super().__init__(page, mongo_db, config)
         self.init_collections({"comments": "comments", "users": "users"})
     
+
+
+
     @staticmethod
-    def map_api_to_comment(comment_data, chapter_id):
+    def map_v5_comment(api_comment, chapter_id):
         """
-        Map API comment response to Wattpad comment schema with validation
-        
-        Args:
-            comment_data: API response comment object
-            chapter_id: Parent chapter ID
-        
-        Returns:
-            dict formatted theo Wattpad comment schema, or None if invalid
+        Map Wattpad v5 comment object to internal COMMENT_SCHEMA
+        Returns validated dict or None
         """
         try:
+            # Normalize commentId
+            cid = None
+            try:
+                cid = api_comment.get("commentId", {}).get("resourceId")
+            except Exception:
+                cid = None
+            if not cid:
+                cid = str(uuid.uuid4())
+
+            res = api_comment.get("resource") or {}
+            resource_namespace = res.get("namespace")
+            resource_id = res.get("resourceId")
+
             mapped = {
-                "commentId": str(comment_data.get("id")),
-                "parentId": comment_data.get("parentId"),
-                "react": comment_data.get("voteCount", 0),
-                "userId": comment_data.get("author", {}).get("name"),
+                "commentId": cid,
+                "parentId": None,
+                "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0) if isinstance(api_comment.get("sentiments"), dict) else 0,
+                "sentiments": api_comment.get("sentiments"),
+                "userId": str(uuid.uuid4()),
+                "userName": api_comment.get("user", {}).get("name", "Anonymous"),
+                "userAvatar": api_comment.get("user", {}).get("avatar"),
                 "chapterId": str(chapter_id),
-                "createdAt": comment_data.get("createdAt"),
-                "commentText": comment_data.get("body", ""),
-                "paragraphIndex": comment_data.get("paragraphIndex"),
-                "type": "inline" if comment_data.get("paragraphIndex") else "chapter_end"
+                "createdAt": api_comment.get("created"),
+                "modified": api_comment.get("modified"),
+                "deeplink": api_comment.get("deeplink"),
+                "replyCount": api_comment.get("replyCount", 0),
+                "resourceNamespace": resource_namespace,
+                "resourceId": resource_id,
+                "status": api_comment.get("status"),
+                "commentText": api_comment.get("text", ""),
+                "paragraphIndex": None,
+                "type": "chapter_end" if resource_namespace == "parts" else "inline"
             }
-            
-            # ✅ Validate before return
+
+            # Validate
+            from src.schemas.comment_schema import COMMENT_SCHEMA
+            from src.utils.validation import validate_against_schema
             validated = validate_against_schema(mapped, COMMENT_SCHEMA, strict=False)
             return validated
         except Exception as e:
-            safe_print(f"⚠️  Comment validation failed: {e}")
+            safe_print(f"⚠️ map_v5_comment failed: {e}")
             return None
-    
+
     @staticmethod
-    def extract_comment_info_from_prefetched(prefetched_data, chapter_id):
+    def process_v5_comments_page(api_data, chapter_id, namespace='paragraphs', comment_scraper=None):
         """
-        Trích xuất thông tin comment từ prefetched data
-        
-        Args:
-            prefetched_data: window.prefetched object
-            chapter_id: Chapter ID (parent)
-        
-        Returns:
-            List of comment data (limited by MAX_COMMENTS_PER_CHAPTER)
+        Process a v5 comments page JSON: map & save comments, return (mapped_list, parent_ids_with_replies, next_cursor)
         """
-        comments = []
-        
+        results = []
+        parents = []
+        next_cursor = None
+
         try:
-            # Comments thường nằm trong "comment.{chapter_id}.metadata"
-            for key, value in prefetched_data.items():
-                if key.startswith("comment.") and "metadata" in key:
-                    # Check limit
-                    if config.MAX_COMMENTS_PER_CHAPTER and len(comments) >= config.MAX_COMMENTS_PER_CHAPTER:
-                        safe_print(f"   ⏸️ Đã reach limit {config.MAX_COMMENTS_PER_CHAPTER} comments")
-                        break
-                    
-                    if "data" in value:
-                        comment_data = value["data"]
-                        
-                        # Map comment fields using static method
-                        processed_comment = CommentScraper.map_api_to_comment(comment_data, chapter_id)
-                        if processed_comment:
-                            comments.append(processed_comment)
-                            safe_print(f"   ✅ Comment: {comment_data.get('body', '')[:50]}")
-            
-            safe_print(f"✅ Đã trích xuất {len(comments)} comments")
-            return comments
-        except Exception as e:
-            safe_print(f"⚠️ Lỗi khi trích xuất comments: {e}")
-            return []
-    
-    @staticmethod
-    def extract_comments_from_html(page_html, chapter_id):
-        """
-        Extract comments từ HTML DOM của chapter page
-        
-        HTML structure:
-        <div class="comment-card-container">
-            <div class="commentCardContainer__P0qWo">
-                <div class="commentCardContentContainer__F9gGk">
-                    <h3 class="title-action">username</h3>
-                    <pre class="text-body-sm">comment text</pre>
-                    <p class="postedDate__xcq5D">1 ngày trước</p>
-                </div>
-            </div>
-        </div>
-        
-        Args:
-            page_html: HTML content of chapter page
-            chapter_id: Chapter ID (parent)
-        
-        Returns:
-            List of comment dicts (limited by MAX_COMMENTS_PER_CHAPTER)
-        """
-        comments = []
-        
-        try:
-            soup = BeautifulSoup(page_html, 'html.parser')
-            
-            # Find all comment containers - updated selector
-            comment_containers = soup.find_all('div', class_='comment-card-container')
-            safe_print(f"      🔍 Debug: Tìm thấy {len(comment_containers)} comment containers (class: comment-card-container)")
-            
-            # If no comments found, try alternative selector
-            if not comment_containers:
-                comment_containers = soup.find_all('div', class_='commentCardContainer__P0qWo')
-                safe_print(f"      🔍 Debug: Fallback - Tìm thấy {len(comment_containers)} comment containers (class: commentCardContainer__P0qWo)")
-            
-            # If still no comments, try the old selector
-            if not comment_containers:
-                comment_containers = soup.find_all('div', class_='commentCardContentContainer__F9gGk')
-                safe_print(f"      🔍 Debug: Fallback 2 - Tìm thấy {len(comment_containers)} comment containers (class: commentCardContentContainer__F9gGk)")
-            
-            for container in comment_containers:
-                # Check limit
-                if config.MAX_COMMENTS_PER_CHAPTER and len(comments) >= config.MAX_COMMENTS_PER_CHAPTER:
-                    break
-                
-                try:
-                    # Extract username
-                    username_elem = container.find('h3', class_='title-action')
-                    username = username_elem.get_text(strip=True) if username_elem else "Anonymous"
-                    
-                    # Extract comment text
-                    comment_text_elem = container.find('pre', class_='text-body-sm')
-                    comment_text = comment_text_elem.get_text(strip=True) if comment_text_elem else ""
-                    
-                    # Extract posted date
-                    date_elem = container.find('p', class_='postedDate__xcq5D')
-                    posted_date = date_elem.get_text(strip=True) if date_elem else "Unknown"
-                    
-                    # Skip empty comments
-                    if not comment_text:
-                        continue
-                    
-                    # Create comment object
-                    comment = {
-                        "commentId": str(uuid.uuid4()),  # Generate unique ID since HTML doesn't have it
-                        "parentId": None,
-                        "react": 0,  # Like count not visible in basic HTML
-                        "userId": str(uuid.uuid4()),  # Generate UUID for user ID (không có từ HTML)
-                        "userName": username,  # Username từ HTML
-                        "chapterId": str(chapter_id),
-                        "createdAt": posted_date,
-                        "commentText": comment_text,
-                        "paragraphIndex": None,
-                        "type": "chapter_end"
-                    }
-                    
-                    # Validate
-                    validated = validate_against_schema(comment, COMMENT_SCHEMA, strict=False)
-                    if validated:
-                        comments.append(validated)
-                        safe_print(f"      ✅ Comment từ {username}: {comment_text[:50]}")
-                
-                except Exception as e:
-                    safe_print(f"      ⚠️ Lỗi parse comment: {e}")
+            comments = api_data.get('comments', [])
+            for api_comment in comments:
+                mapped = CommentScraper.map_v5_comment(api_comment, chapter_id)
+                if not mapped:
                     continue
-            
-            if comments:
-                safe_print(f"      ✅ Extracted {len(comments)} comments từ HTML")
-            return comments
-        
+
+                # Save to DB via existing method
+                try:
+                    # If a CommentScraper instance is provided, use it to persist
+                    if comment_scraper is not None:
+                        try:
+                            comment_scraper.save_comment_to_mongo(mapped, user_name=mapped.get('userName'))
+                        except Exception as e:
+                            safe_print(f"⚠️ Error saving mapped v5 comment: {e}")
+                    else:
+                        # No scraper provided - skip saving here
+                        pass
+                except Exception as e:
+                    safe_print(f"⚠️ Error saving mapped v5 comment: {e}")
+
+                results.append(mapped)
+
+                # If this top-level comment has replies, record parent id
+                # For 'parts' namespace, check replyCount to fetch replies from 'comments' namespace
+                if namespace == 'parts' and api_comment.get('replyCount', 0) > 0:
+                    parent_res_id = api_comment.get('commentId', {}).get('resourceId')
+                    if parent_res_id:
+                        parents.append(parent_res_id)
+
+            pagination = api_data.get('pagination') or {}
+            if pagination and pagination.get('after'):
+                next_cursor = pagination['after'].get('resourceId')
+
+            return results, parents, next_cursor
         except Exception as e:
-            safe_print(f"      ⚠️ Lỗi extract comments từ HTML: {e}")
-            return []
-    
+            safe_print(f"⚠️ process_v5_comments_page failed: {e}")
+            return [], [], None
+
+
+    @staticmethod
+    def fetch_v5_page_via_playwright(page, resource_id, namespace='parts', cursor=None, limit=None):
+        """
+        Use Playwright page context to call Wattpad v5 comments endpoint from the browser (uses page cookies/token).
+        
+        Args:
+            page: Playwright page object
+            resource_id: Chapter ID or Comment ID (format: chapterId_hash for inline, or commentId for replies)
+            namespace: 'parts' for chapter comments, 'comments' for replies, 'paragraphs' for inline
+            cursor: Pagination cursor (format: resourceId for parts/paragraphs, or complex format for after)
+            limit: Optional limit for number of comments
+        
+        Returns JSON dict or None.
+        """
+        try:
+            origin = 'https://www.wattpad.com'
+            params = []
+            if cursor:
+                params.append(f"after={cursor}")
+            if limit:
+                params.append(f"limit={limit}")
+            qs = "?" + "&".join(params) if params else ""
+            url = f"{origin}/v5/comments/namespaces/{namespace}/resources/{resource_id}/comments{qs}"
+
+            # Use Playwright's request API (re-uses browser cookies and auth)
+            try:
+                resp = page.request.get(url, headers={"Accept": "application/json"})
+            except Exception as e:
+                safe_print(f"⚠️ Playwright request.get failed: {e}")
+                return None
+
+            status = getattr(resp, 'status', None) or getattr(resp, 'status_code', None)
+            if status is not None and int(status) >= 400:
+                safe_print(f"⚠️ Playwright request returned status {status}")
+                return None
+
+            try:
+                return resp.json()
+            except Exception:
+                try:
+                    text = resp.text()
+                    import json as _json
+                    return _json.loads(text)
+                except Exception as e:
+                    safe_print(f"⚠️ Failed to parse Playwright response: {e}")
+                    return None
+        except Exception as e:
+            safe_print(f"⚠️ fetch_v5_page_via_playwright unexpected: {e}")
+            return None
+
     def save_comment_to_mongo(self, comment_data, user_name=None):
         """
         Lưu comment vào MongoDB (lưu userId là UUID)
         Đồng thời lưu user info vào collection users
-        
-        Args:
-            comment_data: dict chứa thông tin comment (Wattpad schema)
-            user_name: Tên user (để lưu vào users collection) - lấy từ userName field
         """
         if not comment_data or not self.collection_exists("comments"):
             return

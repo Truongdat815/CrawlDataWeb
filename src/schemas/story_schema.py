@@ -19,4 +19,10 @@ STORY_SCHEMA = {
     "freeChapter": "isPaywalled",         # Free chapter flag
     "time": "createDate",                 # Creation date
     "userId": "user.name",                # Author/User ID
+    "length": "length",
+    "modifyDate": "modifyDate",
+    "cover_timestamp": "cover_timestamp",
+    "commentCount": "commentCount",
+    "rating": "rating",
+    
 }

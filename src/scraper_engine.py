@@ -5,6 +5,8 @@ import re
 import uuid
 import requests
 import time
+import threading
+import random
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
@@ -30,6 +32,14 @@ from src.scrapers import (
 
 # Import duplicate checker
 from src.utils.duplicate_checker import DuplicateChecker
+
+# Import playwright-stealth if available
+try:
+    from playwright_stealth import stealth_sync  # type: ignore[import-not-found]
+    STEALTH_AVAILABLE = True
+except ImportError:
+    stealth_sync = None  # type: ignore
+    STEALTH_AVAILABLE = False
 
 
 class RateLimiter:
@@ -116,7 +126,6 @@ class WattpadScraper:
     """Wattpad API-based scraper using modular components"""
     
     def __init__(self, max_workers=None):
-        self.browser = None
         self.context = None
         self.page = None
         self.playwright = None
@@ -141,9 +150,8 @@ class WattpadScraper:
             self.http.proxies.update(proxies)
             safe_print(f"🌐 Proxy configured: {config.HTTPS_PROXY or config.HTTP_PROXY}")
         
-        # Khởi tạo MongoDB client nếu được bật
-        self.mongo_client = None
-        self.mongo_db = None
+        # Track current proxy used for Playwright context
+        self._current_proxy = None
         
         # Initialize login service
         self.login_service = WattpadLoginService()
@@ -161,6 +169,7 @@ class WattpadScraper:
         self.mongo_collection_comments = None
         self.mongo_collection_users = None
         
+        # Khởi tạo MongoDB client nếu được bật
         self.mongo_client = None
         self.mongo_db = None
         
@@ -180,20 +189,101 @@ class WattpadScraper:
                 safe_print("   Tiếp tục lưu vào file JSON...")
                 self.mongo_client = None
 
+    def _build_proxy_dict(self, proxy_server=None):
+        """Helper to build proxy dict for Playwright from proxy server string or config."""
+        if not proxy_server:
+            proxies_list = getattr(config, 'PROXIES', []) or []
+            if proxies_list:
+                proxy_server = random.choice(proxies_list)
+                self._current_proxy = proxy_server
+            elif config.HTTPS_PROXY or config.HTTP_PROXY:
+                proxy_server = config.HTTPS_PROXY or config.HTTP_PROXY
+                self._current_proxy = proxy_server
+        
+        if proxy_server:
+            return {'server': proxy_server}
+        return None
+
+    def _simulate_human_behavior(self, page):
+        """Simulate human-like behavior to avoid bot detection"""
+        try:
+            import random
+            # Random delay
+            page.wait_for_timeout(random.randint(1000, 3000))
+            # Random mouse movement
+            page.mouse.move(random.randint(100, 400), random.randint(100, 400))
+            # Random scroll
+            page.mouse.wheel(0, random.randint(300, 800))
+            # Another delay
+            page.wait_for_timeout(random.randint(1000, 2000))
+        except Exception as e:
+            safe_print(f"⚠️ Human behavior simulation failed: {e}")
+
     def start(self, username=None, password=None):
         """Khởi động scrapers, Playwright browser, và login"""
         try:
-            # Khởi tạo Playwright browser để fetch prefetched data (JS-rendered)
+            # Khởi tạo Playwright persistent context (simulate real browser)
             from playwright.sync_api import sync_playwright
-            
+            import random
+
             self.playwright = sync_playwright().start()
-            self.browser = self.playwright.chromium.launch(headless=config.HEADLESS)
-            self.context = self.browser.new_context(
-                user_agent=config.DEFAULT_USER_AGENT
-            )
-            self.page = self.context.new_page()
-            safe_print("✅ Playwright browser initialized")
-            
+
+            # Ensure profile dir exists
+            profile_dir = getattr(config, 'PLAYWRIGHT_PROFILE_DIR', None)
+            if not profile_dir:
+                profile_dir = os.path.join(os.getcwd(), '.pw-profile')
+            os.makedirs(profile_dir, exist_ok=True)
+
+            # Setup proxy using helper
+            proxy_dict = self._build_proxy_dict()
+
+            ua = getattr(config, 'PLAYWRIGHT_USER_AGENT', config.DEFAULT_USER_AGENT)
+
+            # Extra headers to bypass bot detection
+            extra_headers = {
+                "Accept-Language": "en-US,en;q=0.9",
+                "DNT": "1",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-User": "?1",
+                "Sec-Fetch-Dest": "document",
+            }
+
+            # Launch persistent context (headful recommended)
+            pw = self.playwright
+            # playwright runtime object may be typed as Optional in static analysis; ignore for attribute access
+            self.context = pw.chromium.launch_persistent_context(
+                profile_dir,
+                headless=False if not config.HEADLESS else True,
+                user_agent=ua,
+                proxy=proxy_dict,  # type: ignore[arg-type]
+                extra_http_headers=extra_headers,
+                viewport={"width": 1280, "height": 800},
+                java_script_enabled=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled'
+                ]
+            )  # type: ignore[attr-defined]
+
+            # Get page (existing or new)
+            pages = self.context.pages
+            self.page = pages[0] if pages else self.context.new_page()
+
+            # Apply stealth to page (bypass bot detection)
+            if STEALTH_AVAILABLE:
+                try:
+                    stealth_sync(self.page)  # type: ignore[misc]
+                    safe_print("✅ Stealth mode activated")
+                except Exception as e:
+                    safe_print(f"⚠️ Stealth activation failed: {e}")
+            else:
+                safe_print("⚠️ playwright-stealth not installed, skipping stealth mode")
+                safe_print("   Install with: pip install playwright-stealth")
+
+            safe_print("✅ Playwright persistent context initialized")
+
             # Đăng nhập vào Wattpad nếu có credentials
             if username and password:
                 safe_print("\n" + "="*60)
@@ -208,12 +298,12 @@ class WattpadScraper:
                 else:
                     safe_print("⚠️ Không có credentials, scrape mà không đăng nhập")
                     safe_print("   Một số trang có thể cần đăng nhập để xem")
-            
+
         except Exception as e:
             safe_print(f"⚠️ Lỗi khởi tạo Playwright: {e}")
             safe_print("   Tiếp tục mà không có Playwright (chỉ dùng API)")
-        
-        # Khởi tạo scrapers
+
+        # Khởi tạo scrapers (dù có Playwright hay không)
         self.story_scraper = StoryScraper(self.page, self.mongo_db)
         self.chapter_scraper = ChapterScraper(self.page, self.mongo_db)
         self.comment_scraper = CommentScraper(self.page, self.mongo_db)
@@ -222,13 +312,98 @@ class WattpadScraper:
         
         safe_print("✅ Bot đã khởi động! (Wattpad API crawler + Playwright + Login)")
 
+    def _rotate_proxy_and_restart(self):
+        """Choose a different proxy from config.PROXIES and restart the Playwright context."""
+        try:
+            proxies_list = getattr(config, 'PROXIES', []) or []
+            if not proxies_list:
+                safe_print("ℹ️ No proxies configured to rotate")
+                return False
+
+            # Choose a new proxy different from current
+            candidates = [p for p in proxies_list if p != self._current_proxy]
+            if not candidates:
+                candidates = proxies_list
+            new_proxy = random.choice(candidates)
+            self._current_proxy = new_proxy
+            safe_print(f"🔁 Rotating proxy: {new_proxy}")
+
+            # Close existing context
+            try:
+                if self.context is not None:
+                    try:
+                        self.context.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Launch new persistent context with new proxy
+            profile_dir = getattr(config, 'PLAYWRIGHT_PROFILE_DIR', None)
+            if not profile_dir:
+                profile_dir = os.path.join(os.getcwd(), '.pw-profile')
+            os.makedirs(profile_dir, exist_ok=True)
+
+            proxy_dict = self._build_proxy_dict(new_proxy)
+            ua = getattr(config, 'PLAYWRIGHT_USER_AGENT', config.DEFAULT_USER_AGENT)
+
+            # Extra headers to bypass bot detection (same as start())
+            extra_headers = {
+                "Accept-Language": "en-US,en;q=0.9",
+                "DNT": "1",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-User": "?1",
+                "Sec-Fetch-Dest": "document",
+            }
+
+            pw = self.playwright
+            if pw is None:
+                return False
+            self.context = pw.chromium.launch_persistent_context(
+                profile_dir,
+                headless=False if not config.HEADLESS else True,
+                user_agent=ua,
+                proxy=proxy_dict,  # type: ignore[arg-type]
+                extra_http_headers=extra_headers,
+                viewport={"width": 1280, "height": 800},
+                java_script_enabled=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-blink-features=AutomationControlled'
+                ]
+            )  # type: ignore[attr-defined]
+            pages = self.context.pages
+            self.page = pages[0] if pages else self.context.new_page()
+            
+            # Apply stealth to new page
+            if STEALTH_AVAILABLE:
+                try:
+                    stealth_sync(self.page)  # type: ignore[misc]
+                except Exception:
+                    pass
+            
+            self._current_proxy = new_proxy
+            safe_print("✅ Restarted Playwright context with new proxy")
+            return True
+        except Exception as e:
+            safe_print(f"⚠️ Failed to rotate proxy and restart context: {e}")
+            return False
+
 
     def stop(self):
-        """Đóng MongoDB connection"""
-        if self.browser:
-            self.browser.close()
+        """Đóng MongoDB connection và Playwright"""
+        if self.context:
+            try:
+                self.context.close()
+            except Exception:
+                pass
         if self.playwright:
-            self.playwright.stop()
+            try:
+                self.playwright.stop()
+            except Exception:
+                pass
         if self.mongo_client:
             self.mongo_client.close()
             safe_print("✅ Đã đóng kết nối MongoDB")
@@ -252,7 +427,8 @@ class WattpadScraper:
             return []
         
         if fields is None:
-            fields = "id,title,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description"
+            # Include tags and categories so story mapping can use API-provided values
+            fields = "id,title,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description,tags,categories"
         
         safe_print(f"📚 Đang cào {len(story_ids)} bộ truyện từ Wattpad API...")
         
@@ -312,7 +488,7 @@ class WattpadScraper:
 
     def fetch_comments_from_api_v5(self, chapter_id):
         """
-        Lấy comments từ Wattpad API v5 (endpoint mới)
+        Lấy comments từ Wattpad API v5 (endpoint mới) - dùng Playwright từ main thread
         
         Args:
             chapter_id: Chapter/Part ID
@@ -320,65 +496,87 @@ class WattpadScraper:
         Returns:
             List of comments (limited by MAX_COMMENTS_PER_CHAPTER)
         """
-        # URL: /v5/comments/namespaces/parts/resources/{chapterId}/comments
-        url = f"{config.BASE_URL}/v5/comments/namespaces/parts/resources/{chapter_id}/comments"
-        
-        all_comments = []
-        
-        try:
-            # Apply rate limiting
-            self.rate_limiter.wait_if_needed()
-            
-            def make_request():
-                response = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
-                response.raise_for_status()
-                return response.json()
-            
-            data = retry_request(make_request)
-            if not data or "comments" not in data:
-                return []
-            
-            comments_data = data["comments"]
-            
-            # Map API response to our schema
-            from src.scrapers.comment import CommentScraper
-            
-            for api_comment in comments_data:
-                # Check limit
-                if config.MAX_COMMENTS_PER_CHAPTER and len(all_comments) >= config.MAX_COMMENTS_PER_CHAPTER:
-                    break
+        # Sequential processing using Playwright (thread-safe, main thread only)
+        self._v5_saved_flag = False
+        collected = []
+        seen = set()
+
+        def process_page(resource_id, namespace, cursor=None):
+            """Fetch and process a single page using Playwright"""
+            key = (resource_id, namespace, cursor)
+            if key in seen:
+                return
+            seen.add(key)
+
+            try:
+                # Use Playwright to fetch (browser cookies/token)
+                if not self.page:
+                    safe_print("⚠️ No Playwright page available")
+                    return
                 
+                # Log pagination info
+                cursor_display = f"cursor={cursor[:30]}..." if cursor and len(cursor) > 30 else f"cursor={cursor}"
+                safe_print(f"      📄 Fetching {namespace} page: {cursor_display if cursor else 'page 1'}")
+                
+                self.rate_limiter.wait_if_needed()
+                data = CommentScraper.fetch_v5_page_via_playwright(self.page, resource_id, namespace, cursor)
+
+                # If no data and we have proxies configured, try rotating proxy and retry once
+                if (not data or "comments" not in data) and getattr(config, 'PROXIES', []):
+                    safe_print("⚠️ No data from v5 endpoint; attempting proxy rotation and retry")
+                    try:
+                        rotated = self._rotate_proxy_and_restart()
+                        if rotated:
+                            self.rate_limiter.wait_if_needed()
+                            data = CommentScraper.fetch_v5_page_via_playwright(self.page, resource_id, namespace, cursor)
+                    except Exception as e:
+                        safe_print(f"⚠️ Proxy rotation attempt failed: {e}")
+
+                if not data or "comments" not in data:
+                    return
+
+                # Delegate mapping & saving to CommentScraper
                 try:
-                    # Map v5 API response
-                    mapped_comment = {
-                        "commentId": api_comment.get("commentId", {}).get("resourceId", str(uuid.uuid4())),
-                        "parentId": None,
-                        "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0),
-                        "userId": str(uuid.uuid4()),  # Generate UUID for userId
-                        "userName": api_comment.get("user", {}).get("name", "Anonymous"),
-                        "chapterId": str(chapter_id),
-                        "createdAt": api_comment.get("created"),
-                        "commentText": api_comment.get("text", ""),
-                        "paragraphIndex": None,
-                        "type": "chapter_end" if api_comment.get("resource", {}).get("namespace") == "parts" else "inline"
-                    }
-                    
-                    # Validate
-                    from src.utils.validation import validate_against_schema
-                    from src.schemas.comment_schema import COMMENT_SCHEMA
-                    validated = validate_against_schema(mapped_comment, COMMENT_SCHEMA, strict=False)
-                    if validated:
-                        all_comments.append(validated)
-                
+                    mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(data, chapter_id, namespace, comment_scraper=self.comment_scraper)
                 except Exception as e:
-                    safe_print(f"      ⚠️ Lỗi map comment: {e}")
-                    continue
-            
-            return all_comments
-        
-        except Exception as e:
-            safe_print(f"      ⚠️ Lỗi fetch comments API v5: {e}")
-            return []
+                    safe_print(f"      ⚠️ Error processing v5 page: {e}")
+                    mapped_list, parents, next_cursor = [], [], None
+
+                if mapped_list:
+                    # respect MAX_COMMENTS_PER_CHAPTER
+                    added_count = 0
+                    for m in mapped_list:
+                        if config.MAX_COMMENTS_PER_CHAPTER and len(collected) >= config.MAX_COMMENTS_PER_CHAPTER:
+                            break
+                        collected.append(m)
+                        added_count += 1
+                    # mark that comments were saved by process_v5_comments_page
+                    self._v5_saved_flag = True
+                    safe_print(f"      ✅ Processed {added_count} comments (total: {len(collected)}/{config.MAX_COMMENTS_PER_CHAPTER or 'unlimited'})")
+
+                # Recursively fetch replies (only for 'parts' namespace with replyCount > 0)
+                if namespace == 'parts' and parents:
+                    safe_print(f"      💬 Found {len(parents)} comments with replies, fetching...")
+                    for p in parents:
+                        process_page(p, 'comments', None)
+
+                # Pagination
+                if next_cursor and (not config.MAX_COMMENTS_PER_CHAPTER or len(collected) < config.MAX_COMMENTS_PER_CHAPTER):
+                    cursor_short = next_cursor[:40] + '...' if len(next_cursor) > 40 else next_cursor
+                    safe_print(f"      ➡️ Next page available, continuing pagination... (cursor: {cursor_short})")
+                    process_page(resource_id, namespace, next_cursor)
+                elif not next_cursor:
+                    safe_print(f"      ℹ️ No more pages (reached end)")
+
+            except Exception as e:
+                safe_print(f"      ⚠️ Lỗi fetch comments v5 ({resource_id} {namespace}): {e}")
+                return
+
+        # Start from main thread (no ThreadPoolExecutor - Playwright sequential)
+        # Use 'parts' namespace for chapter-level comments
+        process_page(chapter_id, 'parts', None)
+
+        return collected
 
     def fetch_comments_from_api(self, story_id, part_id):
         """
@@ -676,49 +874,73 @@ class WattpadScraper:
             safe_print(f"   📚 Đang lấy danh sách chapters...")
             chapters = []
             chapter_urls = []
+
+            # Prefer `parts` from story_data as authoritative chapter list (if available)
+            parts_from_api = story_data.get("parts") or []
+            if parts_from_api and isinstance(parts_from_api, list):
+                safe_print(f"   ℹ️ Sử dụng `parts[]` từ API làm nguồn chapters ({len(parts_from_api)})")
+                for idx_p, p in enumerate(parts_from_api, 1):
+                    chapter_obj = {
+                        "chapterId": str(p.get("id")),
+                        "storyId": str(story_id),
+                        "chapterUrl": p.get("url") if p.get("url") and p.get("url").startswith("http") else (config.BASE_URL + str(p.get("url")) if p.get("url") else f"{config.BASE_URL}/{p.get('id')}"),
+                        "chapterName": p.get("title"),
+                        "views": p.get("readCount", 0),
+                        "voted": p.get("voteCount", 0),
+                        "commentCount": p.get("commentCount", 0),
+                        "wordCount": p.get("length") or p.get("wordCount"),
+                        "publishedTime": p.get("createDate"),
+                        "lastUpdated": p.get("modifyDate"),
+                        "order": idx_p - 1
+                    }
+                    chapters.append(chapter_obj)
+
+            # If we already populated chapters from parts[], skip HTML/API discovery
+            if not chapters:
             
-            # Step 1: Extract chapter URLs from story overview page
-            if self.page:
-                try:
-                    # Navigate to story overview page to get table of contents
-                    story_overview_url = f"{config.BASE_URL}/story/{story_id}"
-                    safe_print(f"   🔍 Đang extract danh sách chapters từ story overview...")
-                    
-                    self.rate_limiter.wait_if_needed()
-                    self.page.goto(story_overview_url, wait_until="load", timeout=config.REQUEST_TIMEOUT * 1000)
-                    self.page.wait_for_timeout(2000)
-                    
-                    page_html = self.page.content()
-                    chapter_urls = self.extract_chapter_urls_from_html(page_html, story_id, config.MAX_CHAPTERS_PER_STORY)
-                    
-                    if chapter_urls:
-                        safe_print(f"   ✅ Tìm được {len(chapter_urls)} chapters từ HTML")
-                        for i, url in enumerate(chapter_urls, 1):
-                            safe_print(f"      [{i}] {url}")
-                    
-                except Exception as e:
-                    safe_print(f"   ⚠️ Lỗi khi extract từ story page: {e}")
-            
-            # Step 2: If no URLs found, fallback to API or prefetched
-            if not chapter_urls:
-                chapters = self.fetch_chapters_from_api(story_id)
-                if not chapters and prefetched_data:
-                    chapters = ChapterScraper.extract_chapters_from_prefetched(prefetched_data, story_id)
-            else:
-                # Build basic chapter objects từ URLs
-                for url in chapter_urls:
-                    # Extract chapter ID - should be at start after domain
-                    # URL format: https://www.wattpad.com/1234567-chapter-name
-                    chapter_id_match = re.search(r'/(\d+)(?:-|/|$)', url)
-                    if chapter_id_match:
-                        chapter_id = chapter_id_match.group(1)
-                        chapter_obj = {
-                            "chapterId": chapter_id,
-                            "storyId": story_id,
-                            "chapterUrl": url,
-                            "chapterName": f"Chapter {len(chapters) + 1}",
-                        }
-                        chapters.append(chapter_obj)
+                # Step 1: Extract chapter URLs from story overview page
+                if self.page:
+                    try:
+                        # Navigate to story overview page to get table of contents
+                        story_overview_url = f"{config.BASE_URL}/story/{story_id}"
+                        safe_print(f"   🔍 Đang extract danh sách chapters từ story overview...")
+                        
+                        self.rate_limiter.wait_if_needed()
+                        self.page.goto(story_overview_url, wait_until="load", timeout=config.REQUEST_TIMEOUT * 1000)
+                        self.page.wait_for_timeout(2000)
+                        self._simulate_human_behavior(self.page)
+                        
+                        page_html = self.page.content()
+                        chapter_urls = self.extract_chapter_urls_from_html(page_html, story_id, config.MAX_CHAPTERS_PER_STORY)
+                        
+                        if chapter_urls:
+                            safe_print(f"   ✅ Tìm được {len(chapter_urls)} chapters từ HTML")
+                            for i, url in enumerate(chapter_urls, 1):
+                                safe_print(f"      [{i}] {url}")
+                        
+                    except Exception as e:
+                        safe_print(f"   ⚠️ Lỗi khi extract từ story page: {e}")
+                
+                # Step 2: If no URLs found, fallback to API or prefetched
+                if not chapter_urls:
+                    chapters = self.fetch_chapters_from_api(story_id)
+                    if not chapters and prefetched_data:
+                        chapters = ChapterScraper.extract_chapters_from_prefetched(prefetched_data, story_id)
+                else:
+                    # Build basic chapter objects từ URLs
+                    for url in chapter_urls:
+                        # Extract chapter ID - should be at start after domain
+                        # URL format: https://www.wattpad.com/1234567-chapter-name
+                        chapter_id_match = re.search(r'/([0-9]+)(?:-|/|$)', url)
+                        if chapter_id_match:
+                            chapter_id = chapter_id_match.group(1)
+                            chapter_obj = {
+                                "chapterId": chapter_id,
+                                "storyId": story_id,
+                                "chapterUrl": url,
+                                "chapterName": f"Chapter {len(chapters) + 1}",
+                            }
+                            chapters.append(chapter_obj)
             
             if chapters:
                 # Step 3: Scrape từng chapter - FOR EACH CHAPTER: content + comments + metadata
@@ -757,6 +979,7 @@ class WattpadScraper:
                         self.rate_limiter.wait_if_needed()
                         self.page.goto(chapter_url, wait_until="load", timeout=config.REQUEST_TIMEOUT * 1000)
                         self.page.wait_for_timeout(2000)
+                        self._simulate_human_behavior(self.page)
                         
                         # Step 3b: Fetch window.prefetched data của chapter này
                         chapter_prefetched_data = self.page.evaluate("() => window.prefetched")
@@ -804,56 +1027,12 @@ class WattpadScraper:
                         if fetch_comments:
                             safe_print(f"      💬 Đang lấy comments...")
                             
-                            # Click "Hiển thị thêm" buttons để load thêm comments
-                            if self.page:
-                                try:
-                                    # Loop to click all "Show more" buttons
-                                    for attempt in range(10):  # Try up to 10 times to load more
-                                        # Find "Hiển thị thêm" button in show-more-btn div
-                                        # <div class="show-more-btn"><button>Hiển thị thêm</button></div>
-                                        show_more_btn = None
-                                        
-                                        try:
-                                            # Selector: div.show-more-btn button
-                                            show_more_btn = self.page.query_selector('div.show-more-btn button')
-                                        except:
-                                            pass
-                                        
-                                        if not show_more_btn:
-                                            break  # No more buttons
-                                        
-                                        try:
-                                            show_more_btn.click()
-                                            safe_print(f"      ✅ Clicked 'Hiển thị thêm' button (attempt {attempt + 1})")
-                                            time.sleep(0.8)  # Wait for comments to load
-                                        except Exception as e:
-                                            safe_print(f"      ⚠️ Lỗi click button: {e}")
-                                            break
-                                    
-                                    # Also scroll down to load lazy-loaded comments
-                                    for i in range(4):
-                                        self.page.evaluate('window.scrollBy(0, 400)')
-                                        time.sleep(0.3)
-                                except Exception as e:
-                                    safe_print(f"      ⚠️ Lỗi khi load more comments: {e}")
-                            
-                            # Get updated HTML after clicking show more
-                            page_html = self.page.content() if self.page else page_html
-                            
-                            # Try API v5 first (fastest - new endpoint)
+                            # Use API v5 with Playwright (only method)
                             chapter_comments = None
                             try:
                                 chapter_comments = self.fetch_comments_from_api_v5(chapter_id)
                             except Exception as e:
                                 safe_print(f"      ⚠️ Lỗi API v5: {e}")
-                            
-                            # If no API comments, try prefetched data
-                            if not chapter_comments and chapter_prefetched_data:
-                                chapter_comments = CommentScraper.extract_comment_info_from_prefetched(chapter_prefetched_data, chapter_id)
-                            
-                            # Last resort: Try HTML extraction
-                            if not chapter_comments:
-                                chapter_comments = CommentScraper.extract_comments_from_html(page_html, chapter_id)
                             
                             if chapter_comments:
                                 # ✅ LƯUÍ: Không lưu comments trong chapter object
@@ -866,9 +1045,13 @@ class WattpadScraper:
                         
                         # Step 3f: Save comments to MongoDB (nếu có)
                         if fetch_comments and chapter_comments and self.comment_scraper is not None and self.mongo_db is not None:
-                            for comment in chapter_comments:
-                                user_name = comment.get("userName")  # Extract userName from comment (display name)
-                                self.comment_scraper.save_comment_to_mongo(comment, user_name=user_name)
+                            # If v5 fetcher already saved comments to DB, skip double-saving
+                            if getattr(self, '_v5_saved_flag', False):
+                                safe_print(f"      ℹ️ Comments already saved by v5 fetcher; skipping duplicate save")
+                            else:
+                                for comment in chapter_comments:
+                                    user_name = comment.get("userName")  # Extract userName from comment (display name)
+                                    self.comment_scraper.save_comment_to_mongo(comment, user_name=user_name)
                         
                     except Exception as e:
                         safe_print(f"      ⚠️ Lỗi: {e}")
@@ -1086,73 +1269,6 @@ class WattpadScraper:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lưu file JSON: {e}")
     
-    def extract_chapter_content_from_page(self, chapter_id):
-        """
-        Trích xuất nội dung chapter từ Playwright page hiện tại
-        
-        Args:
-            chapter_id: Chapter ID
-        
-        Returns:
-            dict chứa chapter content data (mapped + validated) or None
-        """
-        if self.page is None:
-            safe_print(f"⚠️  Playwright page chưa init, không thể lấy content")
-            return None
-        
-        try:
-            safe_print(f"   📖 Đang trích xuất chapter content...")
-            
-            # CSS selectors - Dựa vào cấu trúc HTML thực tế của Wattpad
-            # ✅ Content container: div.panel-reading
-            # ✅ Paragraph tags: div.panel-reading p
-            CONTENT_CONTAINER_SELECTOR = 'div.panel-reading'
-            PARAGRAPH_SELECTOR = 'div.panel-reading p'
-            
-            # 1. Chờ khối nội dung tải xong
-            try:
-                self.page.wait_for_selector(CONTENT_CONTAINER_SELECTOR, timeout=30000)
-                safe_print(f"   ✅ Content container loaded (div.panel-reading)")
-            except Exception as e:
-                safe_print(f"   ⚠️  Content container not found: {e}")
-                return None
-            
-            # 2. Lấy TẤT CẢ các đoạn văn (paragraphs) từ <p> tags
-            # Sử dụng inner_text() để lấy text từ mỗi <p> riêng biệt
-            # Điều này đảm bảo bỏ qua nested elements (buttons, divs) bên trong <p> tags
-            try:
-                p_locators = self.page.locator(PARAGRAPH_SELECTOR).all()
-                paragraphs = []
-                
-                for p_locator in p_locators:
-                    # inner_text() lấy tất cả text từ <p> tag (bao gồm nested elements)
-                    # Nhưng nó loại bỏ HTML tags và trả về clean text
-                    p_text = p_locator.inner_text()
-                    if p_text and p_text.strip():  # Chỉ lấy nếu không rỗng
-                        paragraphs.append(p_text.strip())
-                
-                safe_print(f"   ✅ Trích xuất {len(paragraphs)} paragraphs từ <p> tags")
-                
-                # 3. Nối các đoạn lại thành một khối văn bản duy nhất bằng double newlines
-                full_content = "\n\n".join(paragraphs)
-                safe_print(f"   ✅ Full content: {len(full_content)} characters")
-                
-                # Map và save
-                if self.chapter_content_scraper:
-                    content_data = self.chapter_content_scraper.map_html_to_chapter_content(full_content, chapter_id)
-                    if content_data:
-                        self.chapter_content_scraper.save_chapter_content_to_mongo(content_data)
-                        return content_data
-                
-                return None
-            except Exception as e:
-                safe_print(f"   ⚠️  Lỗi khi lấy paragraphs: {e}")
-                return None
-        
-        except Exception as e:
-            safe_print(f"⚠️  Lỗi khi trích xuất chapter content: {e}")
-            return None
-
 
 # For backward compatibility
 RoyalRoadScraper = WattpadScraper

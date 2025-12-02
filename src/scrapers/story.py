@@ -42,7 +42,10 @@ class StoryScraper(BaseScraper):
                 if cover_img_path:
                     safe_print(f"   ✅ Ảnh cover: {cover_img_path}")
             
-            # Mapping từ API response
+            # Mapping từ API response (prefer API values; fallback to extra_info)
+            # Note: intentionally NOT including these fields in `stories` collection:
+            #   readerBrowseEligibility, firstPublishedPart, lastPublishedPart,
+            #   copyright, firstPartId, language
             processed_story = {
                 "storyId": story_id,
                 "storyName": story_data.get("title"),
@@ -58,18 +61,42 @@ class StoryScraper(BaseScraper):
                 "mature": story_data.get("mature", False),
                 "freeChapter": not story_data.get("isPaywalled", False),
                 "time": story_data.get("createDate"),
-                "userId": story_data.get("user", {}).get("name")
+                "userId": story_data.get("user", {}).get("name"),
+                # additional useful metadata to persist
+                "length": story_data.get("length"),
+                "modifyDate": story_data.get("modifyDate"),
+                "cover_timestamp": story_data.get("cover_timestamp"),
+                "commentCount": story_data.get("commentCount"),
+                "rating": story_data.get("rating")
             }
-            
-            # Add extra info từ HTML prefetched (nếu có)
+            # Prefer tags/categories from API response if available
+            api_tags = story_data.get("tags")
+            if api_tags and isinstance(api_tags, list):
+                processed_story["tags"] = api_tags
+
+            # categories may be returned as a list or single value
+            api_cats = story_data.get("categories") or story_data.get("category")
+            if api_cats:
+                if isinstance(api_cats, list) and len(api_cats) > 0:
+                    processed_story["category"] = api_cats[0]
+                elif isinstance(api_cats, dict):
+                    # sometimes category may be an object with 'id' or 'name'
+                    processed_story["category"] = api_cats.get("id") or api_cats.get("name")
+                else:
+                    # assume string
+                    processed_story["category"] = api_cats
+
+            # Fallback to extra info từ HTML prefetched (nếu có and API didn't provide)
             if extra_info:
-                if "tags" in extra_info:
+                if not processed_story.get("tags") and "tags" in extra_info:
                     processed_story["tags"] = extra_info.get("tags", [])
-                if "categories" in extra_info:
-                    # Lấy category ID đầu tiên (nếu có)
+                if not processed_story.get("category") and "categories" in extra_info:
                     cats = extra_info.get("categories", [])
                     if cats and len(cats) > 0:
                         processed_story["category"] = cats[0]
+
+            # NOTE: do NOT persist `parts` inside story document.
+            # Chapters metadata should be handled separately by `ChapterScraper`.
             
             # ✅ Validate before return
             validated = validate_against_schema(processed_story, STORY_SCHEMA, strict=False)

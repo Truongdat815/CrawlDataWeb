@@ -33,6 +33,18 @@ DEFAULT_USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
+# Playwright settings
+# Directory to store persistent profile (cookies, localStorage)
+PLAYWRIGHT_PROFILE_DIR = os.path.join(DATA_DIR, "playwright_profile")
+# Playwright user agent override (defaults to DEFAULT_USER_AGENT)
+PLAYWRIGHT_USER_AGENT = DEFAULT_USER_AGENT
+# Use stealth-sync integration if available
+PLAYWRIGHT_USE_STEALTH = True
+
+# Optional list of proxy servers to rotate through (strings like 'http://user:pass@host:port')
+# If empty, will fallback to HTTP_PROXY / HTTPS_PROXY
+PROXIES = []
+
 # Optional proxy configuration (None để không dùng proxy)
 # Ví dụ: "http://user:pass@proxy.example.com:3128"
 HTTP_PROXY = None
