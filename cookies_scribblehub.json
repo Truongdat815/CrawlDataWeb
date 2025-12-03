@@ -1,0 +1,34 @@
+[
+  {
+    "name": "_ga",
+    "value": "GA1.1.2015289380.1764790130",
+    "domain": ".scribblehub.com",
+    "path": "/",
+    "expires": 1799358266.638467,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "cf_clearance",
+    "value": "MJ6pOCSg3ovsI19mAWt.I0FpYB4boCpm7.hYdusZnk4-1764797583-1.2.1.1-yq5ktvb4.dYWXMISd6YRqlsZlmMXyqIpXkxYNjdUoCuUdiygyhNiF9ubC7.Hfvpg9W3BBI3SHeuPUqIRNGdSxHLc0d68NEtRVEJNg6ME0oLoKGRGx9rxAzsFhtEqPnbg0HKZiTqnlb5Y.qyrKsli4vDhwnXpCofaCk0PWJLatGF50aW_Othi0nHoJ9Tq1LampdGEv_7PMRt5obBEQIRvi47cXrEzvrtzTAAzj67VBuE",
+    "domain": ".scribblehub.com",
+    "path": "/",
+    "expires": 1796333573.680364,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None",
+    "partitionKey": "https://scribblehub.com",
+    "_crHasCrossSiteAncestor": false
+  },
+  {
+    "name": "_ga_Q8YJYMFD7L",
+    "value": "GS2.1.s1764796813$o2$g1$t1764798266$j52$l0$h0",
+    "domain": ".scribblehub.com",
+    "path": "/",
+    "expires": 1799358266.638129,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  }
+]

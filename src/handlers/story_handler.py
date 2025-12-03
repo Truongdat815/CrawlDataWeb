@@ -113,7 +113,7 @@ class StoryHandler:
             # Lấy story_id đã có từ DB
             existing_story = self.mongo.get_story_by_web_id(web_story_id)
             if existing_story:
-                story_id = existing_story.get("id")
+                story_id = existing_story.get("story_id")  # Đổi từ "id" thành "story_id"
             else:
                 story_id = generate_id()
             return None, story_id  # Không cần cào metadata nữa
@@ -165,7 +165,7 @@ class StoryHandler:
                             if numbers:
                                 favorites = numbers[0]
                         elif "fa-list-alt" in icon_class:
-                            # Chapters
+                            # Chapters (total_chapters)
                             numbers = re.findall(r'\d+', text)
                             if numbers:
                                 total_chapters = numbers[0]
@@ -175,7 +175,7 @@ class StoryHandler:
                             if numbers:
                                 release_rate = numbers[0]
                         elif "fa-user-o" in icon_class:
-                            # Readers
+                            # Readers (number_of_reader)
                             numbers = re.findall(r'[\d.]+[kmKM]?', text)
                             if numbers:
                                 number_of_reader = numbers[0]
@@ -184,7 +184,11 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy stats từ fic_stats: {e}")
         
-        # Lấy stats từ table_pro_overview (total_views, average_views, total_word, average_words, page_views, total_views_chapters)
+        # Lấy stats từ .table_pro_overview (cần truy cập trang Statistics trước)
+        # HTML: <div class="n_fic_buttons">
+        #   <a class="fic_nav-link" href=".../stats"><span class="nficbutton">Statistics</span></a>
+        # </div>
+        # Sau đó mới có: <table class="table_pro_overview">...</table>
         total_views = ""
         average_views = ""
         total_word = ""
@@ -193,49 +197,116 @@ class StoryHandler:
         total_views_chapters = ""
         
         try:
-            table = self.page.locator(".table_pro_overview").first
-            if table.count() > 0:
-                rows = table.locator("tbody tr").all()
-                for row in rows:
+            # 1. Tìm link Statistics từ trang chính
+            stats_url = None
+            try:
+                stats_link = self.page.locator('.n_fic_buttons a.fic_nav-link:has-text("Statistics"), .n_fic_buttons a.fic_nav-link[href*="/stats"]').first
+                if stats_link.count() > 0:
+                    stats_href = stats_link.get_attribute("href")
+                    if stats_href:
+                        if stats_href.startswith("/"):
+                            stats_url = config.BASE_URL + stats_href
+                        elif stats_href.startswith("http"):
+                            stats_url = stats_href
+                        else:
+                            stats_url = config.BASE_URL + "/" + stats_href
+            except Exception as e:
+                safe_print(f"      ⚠️ Không tìm thấy link Statistics: {e}")
+            
+            # 2. Nếu tìm thấy link Statistics, truy cập vào đó
+            if stats_url:
+                safe_print("      📊 Đang truy cập trang Statistics để lấy stats...")
+                try:
+                    self.page.goto(stats_url, timeout=config.TIMEOUT, wait_until="domcontentloaded")
+                    time.sleep(2)  # Đợi page load
+                    
+                    # Đợi table load
                     try:
-                        th_text = row.locator("th").first.inner_text().strip()
-                        td_text = row.locator("td").first.inner_text().strip()
-                        
-                        if "Total Views (All):" in th_text:
-                            # Xóa dấu phẩy và lấy số
-                            total_views = td_text.replace(",", "")
-                        elif "Total Views (Chapters):" in th_text:
-                            # Xóa dấu phẩy và lấy số
-                            total_views_chapters = td_text.replace(",", "")
-                        elif "Average Views:" in th_text:
-                            average_views = td_text.replace(",", "")
-                        elif "Word Count:" in th_text:
-                            total_word = td_text.replace(",", "")
-                        elif "Average Words:" in th_text:
-                            average_words = td_text.replace(",", "")
-                        elif "Pages:" in th_text:
-                            pages = td_text.replace(",", "")
+                        self.page.wait_for_selector(".table_pro_overview", timeout=10000)
                     except:
-                        continue
+                        safe_print("      ⚠️ Không tìm thấy .table_pro_overview sau 10s")
+                    
+                    # 3. Lấy data từ table_pro_overview
+                    table = self.page.locator(".table_pro_overview").first
+                    if table.count() > 0:
+                        rows = table.locator("tbody tr").all()
+                        safe_print(f"      ✅ Tìm thấy {len(rows)} rows trong table_pro_overview")
+                        
+                        for row in rows:
+                            try:
+                                th_text = row.locator("th").first.inner_text().strip()
+                                td_text = row.locator("td").first.inner_text().strip()
+                                
+                                if "Total Views (All):" in th_text:
+                                    # Mapping: Total Views (All) → total_views (ví dụ: 10,136 → "10136")
+                                    total_views = td_text.replace(",", "")
+                                    safe_print(f"      ✅ total_views: {total_views}")
+                                elif "Total Views (Chapters):" in th_text:
+                                    # Mapping: Total Views (Chapters) → total_views_chapters (ví dụ: 8,074 → "8074")
+                                    total_views_chapters = td_text.replace(",", "")
+                                    safe_print(f"      ✅ total_views_chapters: {total_views_chapters}")
+                                elif "Average Views:" in th_text:
+                                    # Mapping: Average Views → average_views (ví dụ: 105 → "105")
+                                    average_views = td_text.replace(",", "")
+                                    safe_print(f"      ✅ average_views: {average_views}")
+                                elif "Word Count:" in th_text:
+                                    # Mapping: Word Count → total_word (ví dụ: 125,055 → "125055")
+                                    total_word = td_text.replace(",", "")
+                                    safe_print(f"      ✅ total_word: {total_word}")
+                                elif "Average Words:" in th_text:
+                                    # Mapping: Average Words → average_words (ví dụ: 1,624 → "1624")
+                                    average_words = td_text.replace(",", "")
+                                    safe_print(f"      ✅ average_words: {average_words}")
+                                elif "Pages:" in th_text:
+                                    # Mapping: Pages → page_views (ví dụ: 455 → "455")
+                                    pages = td_text.replace(",", "")
+                                    safe_print(f"      ✅ page_views: {pages}")
+                            except Exception as row_error:
+                                safe_print(f"      ⚠️ Lỗi khi parse row: {row_error}")
+                                continue
+                    else:
+                        safe_print("      ⚠️ Không tìm thấy .table_pro_overview trong trang Statistics")
+                    
+                    # 4. Quay lại trang chính
+                    safe_print("      🔄 Quay lại trang story chính...")
+                    self.page.goto(story_url, timeout=config.TIMEOUT, wait_until="domcontentloaded")
+                    time.sleep(2)
+                    
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi khi truy cập trang Statistics: {e}")
+                    # Quay lại trang chính nếu lỗi
+                    try:
+                        self.page.goto(story_url, timeout=config.TIMEOUT, wait_until="domcontentloaded")
+                    except:
+                        pass
+            else:
+                safe_print("      ⚠️ Không tìm thấy link Statistics, bỏ qua stats từ table_pro_overview")
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy stats từ table_pro_overview: {e}")
         
-        # Lấy overall_score (từ rating_average) và rating_total từ fic_rate
+        # Lấy overall_score và rating_total từ #ratefic_user
+        # overall_score: số kế bên ngôi sao (ví dụ 4.3)
+        # rating_total: số ratings trong ngoặc (ví dụ "4 ratings" → "4")
         overall_score = ""
         rating_total = ""
         try:
-            fic_rate = self.page.locator(".fic_rate").first
-            if fic_rate.count() > 0:
-                # Lấy overall_score từ số cạnh phần sao (rating_average)
-                rating_span = fic_rate.locator("span span").first
-                if rating_span.count() > 0:
-                    rating_text = rating_span.inner_text().strip()
-                    numbers = re.findall(r'\d+\.?\d*', rating_text)
+            ratefic_user = self.page.locator("#ratefic_user").first
+            if ratefic_user.count() > 0:
+                # Lấy overall_score từ số kế bên ngôi sao
+                # Tìm span chứa số (ví dụ: <span>4.3</span>)
+                rating_spans = ratefic_user.locator("span span").all()
+                for span in rating_spans:
+                    span_text = span.inner_text().strip()
+                    # Tìm số thập phân (ví dụ: 4.3)
+                    numbers = re.findall(r'\d+\.?\d*', span_text)
                     if numbers:
-                        overall_score = numbers[0]
+                        # Lấy số đầu tiên tìm thấy (không phải số trong ngoặc)
+                        if "(" not in span_text and "rating" not in span_text.lower():
+                            overall_score = numbers[0]
+                            break
                 
-                # Lấy rating_total (số trong ngoặc, ví dụ "81 ratings")
-                rate_more = fic_rate.locator(".rate_more").first
+                # Lấy rating_total từ .rate_more (ví dụ: "4 ratings" → "4")
+                rate_more = ratefic_user.locator(".rate_more").first
                 if rate_more.count() > 0:
                     rate_text = rate_more.inner_text().strip()
                     numbers = re.findall(r'\d+', rate_text)
@@ -245,6 +316,7 @@ class StoryHandler:
             safe_print(f"⚠️ Lỗi khi lấy rating: {e}")
         
         # Lấy total_reviews từ phần Reviews
+        # HTML: <div class="wi_novel_title tags pedit_body nreview">Reviews <span class="cnt_toc">0</span></div>
         total_reviews = ""
         try:
             reviews_section = self.page.locator(".wi_novel_title.tags.pedit_body.nreview").first
@@ -255,7 +327,18 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy total_reviews: {e}")
         
-        # Lấy user stats từ statUser
+        # Lấy user stats từ .statUser
+        # HTML: <ul class="statUser">
+        #   <li class="stat2">
+        #     <span class="sucnt">54</span>
+        #     <span class="sulabel">reading</span>
+        #   </li>
+        #   <li class="stat2">
+        #     <span class="sucnt">15</span>
+        #     <span class="sulabel">plan to read</span>
+        #   </li>
+        #   ...
+        # </ul>
         user_reading = ""
         user_plan_to_read = ""
         user_completed = ""
@@ -286,18 +369,21 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy user stats: {e}")
         
-        # Lấy description từ wi_fic_desc
+        # Lấy description từ .wi_fic_desc (có property="description")
+        # HTML: <div class="wi_fic_desc" property="description"><p>...</p></div>
         description = ""
         try:
-            desc_container = self.page.locator(".wi_fic_desc").first
+            desc_container = self.page.locator(".wi_fic_desc[property='description'], .wi_fic_desc").first
             if desc_container.count() > 0:
                 html_content = desc_container.inner_html()
+                # convert_html_to_formatted_text sẽ giữ đúng format (xuống dòng, đoạn văn)
                 description = convert_html_to_formatted_text(html_content)
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy description: {e}")
             description = ""
         
-        # Lấy genres từ wi_fic_genre
+        # Lấy genres từ .wi_fic_genre .fic_genre
+        # HTML: <span class="wi_fic_genre"><span property="genre"><a class="fic_genre" ...>Action</a></span>...</span>
         genres = []
         try:
             genre_links = self.page.locator(".wi_fic_genre .fic_genre").all()
@@ -311,7 +397,8 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy genres: {e}")
         
-        # Lấy tags từ wi_fic_showtags
+        # Lấy tags từ .wi_fic_showtags a.stag
+        # HTML: <span class="wi_fic_showtags"><span class="wi_fic_showtags_inner"><a class="stag odd" ...>Game Elements</a> <a class="stag" ...>...</a></span></span>
         tags = []
         try:
             tag_links = self.page.locator(".wi_fic_showtags a.stag").all()
@@ -341,41 +428,88 @@ class StoryHandler:
                         break
                 
                 # Lấy last_updated từ phần có title="Last updated: ..."
+                # HTML: <span>Ongoing - Updated <span title="Last updated: 7 hours ago">7 hours ago</span></span>
                 try:
                     date_elem = similar_widget.locator('span[title*="Last updated"]').first
                     if date_elem.count() > 0:
                         date_text = date_elem.inner_text().strip()
-                        # Extract date từ text như "Nov 28, 2025"
-                        date_match = re.search(r'([A-Za-z]+ \d{1,2}, \d{4})', date_text)
-                        if date_match:
-                            last_updated = date_match.group(1)
+                        # Lấy text bên trong span (ví dụ: "7 hours ago" hoặc "Nov 28, 2025")
+                        if date_text:
+                            last_updated = date_text
+                        else:
+                            # Fallback: Lấy từ title attribute nếu inner_text rỗng
+                            title_attr = date_elem.get_attribute("title") or ""
+                            if "Last updated:" in title_attr:
+                                last_updated = title_attr.split("Last updated:")[-1].strip()
                 except:
                     pass
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy status và last_updated: {e}")
         
+        # Lấy ranking data từ .rank-icon
+        # HTML: <div class="rank-icon">
+        #   <a class="rank-link" href="...">
+        #     <i class="ranktype">Rankings</i>
+        #     <span class="catname">#1 in Pokémon Elemental</span>
+        #   </a>
+        # </div>
+        rankings_list = []
+        try:
+            rank_icons = self.page.locator(".rank-icon").all()
+            for rank_icon in rank_icons:
+                try:
+                    catname_elem = rank_icon.locator(".catname").first
+                    if catname_elem.count() > 0:
+                        catname_text = catname_elem.inner_text().strip()
+                        # Parse: "#1 in Pokémon Elemental" → rank_number="1", rank_name="Pokémon Elemental"
+                        import re
+                        match = re.match(r'#(\d+)\s+in\s+(.+)', catname_text)
+                        if match:
+                            rank_number = match.group(1)
+                            rank_name = match.group(2).strip()
+                            
+                            # Tạo ranking data
+                            rank_id = generate_id()
+                            website_id = self.mongo.scribblehub_website_id if self.mongo.scribblehub_website_id else ""
+                            
+                            ranking_data = {
+                                "rank_id": rank_id,
+                                "rank_name": rank_name,
+                                "rank_number": rank_number,
+                                "website_id": website_id,
+                                "story_id": story_id
+                            }
+                            
+                            rankings_list.append(ranking_data)
+                            # Lưu vào MongoDB
+                            self.mongo.save_ranking(ranking_data)
+                except Exception as e:
+                    safe_print(f"⚠️ Lỗi khi parse ranking: {e}")
+                    continue
+            
+            if rankings_list:
+                safe_print(f"✅ Đã lấy được {len(rankings_list)} rankings")
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy rankings: {e}")
+        
         # Các field khác chưa có trong HTML này, để trống
         author_id = None
         
-        # Tạo story_data (chỉ các field cơ bản)
+        # Tạo story_data theo thứ tự và tên fields mới
         story_data = {
-            "id": story_id,
-            "web_story_id": web_story_id,
-            "name": title,
-            "url": story_url,
-            "cover_image": local_img_path,
-            "category": "",  # Để trống
-            "status": status,
-            "genres": genres,
-            "tags": tags,
-            "description": description
+            "story_id": story_id,  # 1. story id
+            "web_story_id": web_story_id,  # 2. web story id
+            "story_name": title,  # 3. story name
+            "story_url": story_url,  # 4. story url
+            "cover_image": local_img_path,  # 5. cover image
+            "category": "",  # 6. category (Để trống)
+            "status": status,  # 7. status
+            "genres": genres,  # 8. genres
+            "tags": tags,  # 9. tags
+            "description": description,  # 10. description
+            "user_id": author_id if author_id else "",  # 11. user id
+            "total_chapters": total_chapters if total_chapters else ""  # 12. total chapters
         }
-        
-        if author_id:
-            story_data["user_id"] = author_id
-        
-        if total_chapters:
-            story_data["total_chapters"] = total_chapters
         
         # Tạo story_info_data (tất cả các field stats và info)
         info_id = generate_id()
@@ -395,7 +529,7 @@ class StoryHandler:
             "story_score": "",  # Để null
             "grammar_score": "",  # Để null
             "character_score": "",  # Để null
-            "stability_of_updates": "",  # Chưa có scraping
+            # "stability_of_updates" đã bị xóa theo yêu cầu
             "voted": "",  # Chưa có scraping
             "freeChapter": "",  # Chưa có scraping
             "time": "",  # Chưa có scraping
@@ -430,8 +564,33 @@ class StoryHandler:
         
         try:
             safe_print(f"    📄 Đang lấy chapters từ trang 1 (trang story chính)...")
-            self.page.goto(story_url, timeout=config.TIMEOUT)
-            time.sleep(2)
+            # Goto với xử lý Cloudflare
+            # Note: StoryHandler không kế thừa BaseHandler, nên cần import hoặc dùng trực tiếp
+            self.page.goto(story_url, timeout=config.TIMEOUT, wait_until="networkidle")
+            time.sleep(3)  # Delay để đợi Cloudflare
+            
+            # Kiểm tra Cloudflare challenge
+            try:
+                page_content = self.page.content()
+                if "challenges.cloudflare.com" in page_content.lower():
+                    safe_print("      ⏳ Phát hiện Cloudflare challenge, đợi...")
+                    time.sleep(10)  # Đợi thêm để pass challenge
+            except:
+                pass
+            
+            # Đợi chapters table load (nếu có)
+            try:
+                # Thử đợi một trong các selector
+                self.page.wait_for_selector("ol.toc_ol, .wi_fic_table.toc, li.toc_w", timeout=15000)
+            except:
+                # Nếu không tìm thấy, vẫn tiếp tục
+                pass
+            
+            # Scroll để đảm bảo lazy load
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)
+            self.page.evaluate("window.scrollTo(0, 0)")
+            time.sleep(1)
             
             page_chapters = self.get_chapters_from_current_page()
             all_chapter_info.extend(page_chapters)
@@ -465,8 +624,8 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"    ⚠️ Lỗi khi lấy chapters từ pagination: {e}")
             try:
-                self.page.goto(story_url, timeout=config.TIMEOUT)
-                time.sleep(2)
+                self.page.goto(story_url, timeout=config.TIMEOUT, wait_until="networkidle")
+                time.sleep(3)
                 return self.get_chapters_from_current_page()
             except:
                 return []
@@ -638,8 +797,41 @@ class StoryHandler:
         chapter_info_list = []
         
         try:
-            # Lấy chapters từ HTML mới: .wi_fic_table.toc ol.toc_ol li.toc_w
-            chapter_items = self.page.locator(".wi_fic_table.toc ol.toc_ol li.toc_w").all()
+            # Scroll xuống để đảm bảo chapters được load (lazy load)
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
+            
+            # Thử nhiều selector khác nhau (fallback)
+            chapter_items = []
+            selectors = [
+                "ol.toc_ol li.toc_w",  # Selector đơn giản nhất
+                ".wi_fic_table.toc ol.toc_ol li.toc_w",  # Selector đầy đủ
+                "li.toc_w",  # Chỉ class toc_w
+                ".toc_ol li",  # Chỉ toc_ol
+            ]
+            
+            for selector in selectors:
+                try:
+                    items = self.page.locator(selector).all()
+                    if items and len(items) > 0:
+                        chapter_items = items
+                        safe_print(f"        ✅ Tìm thấy {len(items)} chapters với selector: {selector}")
+                        break
+                except Exception as e:
+                    continue
+            
+            if not chapter_items:
+                safe_print(f"        ⚠️ Không tìm thấy chapters với bất kỳ selector nào!")
+                # Debug: In ra HTML để xem cấu trúc
+                try:
+                    toc_html = self.page.locator("ol.toc_ol").first
+                    if toc_html.count() > 0:
+                        safe_print(f"        🔍 Tìm thấy ol.toc_ol nhưng không có li.toc_w")
+                    else:
+                        safe_print(f"        🔍 Không tìm thấy ol.toc_ol")
+                except:
+                    pass
+                return chapter_info_list
             
             for item in chapter_items:
                 try:

@@ -28,6 +28,7 @@ class MongoHandler:
         self.mongo_collection_scores = None
         self.mongo_collection_chapter_contents = None
         self.mongo_collection_websites = None
+        self.mongo_collection_rankings = None
         self.scribblehub_website_id = None  # Lưu website_id của ScribbleHub
         
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
@@ -43,13 +44,14 @@ class MongoHandler:
                 self.mongo_collection_scores = self.mongo_db["scores"]
                 self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
                 self.mongo_collection_websites = self.mongo_db["websites"]
+                self.mongo_collection_rankings = self.mongo_db["rankings"]
                 
                 # Kiểm tra và tạo ScribbleHub website nếu chưa có
                 scribblehub_id = self.ensure_scribblehub_website()
                 if scribblehub_id:
                     self.scribblehub_website_id = scribblehub_id
                 
-                safe_print("✅ Đã kết nối MongoDB với 9 collections")
+                safe_print("✅ Đã kết nối MongoDB với 10 collections")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -150,11 +152,15 @@ class MongoHandler:
             safe_print(f"⚠️ Lỗi khi lưu story info vào MongoDB: {e}")
     
     def save_chapter(self, chapter_data):
-        """Lưu chapter vào MongoDB ngay khi cào xong chapter và comments"""
+        """
+        Lưu chapter vào MongoDB ngay khi cào xong chapter và comments
+        ✅ Khóa chính: chapter_id (không phải "id")
+        """
         if not chapter_data or not self.mongo_collection_chapters:
             return
         
         try:
+            # Tìm theo web_chapter_id (unique identifier từ web)
             existing = self.mongo_collection_chapters.find_one({"web_chapter_id": chapter_data.get("web_chapter_id")})
             if existing:
                 self.mongo_collection_chapters.update_one(
@@ -169,8 +175,19 @@ class MongoHandler:
             safe_print(f"      ⚠️ Lỗi khi lưu chapter vào MongoDB: {e}")
     
     def save_comment(self, comment_data):
-        """Lưu comment vào MongoDB ngay khi cào xong"""
+        """
+        Lưu comment vào MongoDB ngay khi cào xong
+        ✅ Schema mới: comment_id (PK), web_comment_id, comment_text, time, chapter_id, user_id, 
+        reply_to_user_id, parent_id, is_root, react, website_id
+        ✅ Chỉ lưu khi có comment_text (có comment thật sự)
+        """
         if not comment_data or not self.mongo_collection_comments:
+            return
+        
+        # ✅ Kiểm tra xem có comment_text không (có comment thật sự)
+        comment_text = comment_data.get("comment_text", "")
+        if not comment_text or not comment_text.strip():
+            # Không có comment text, không lưu
             return
         
         try:
@@ -180,14 +197,25 @@ class MongoHandler:
                     {"web_comment_id": comment_data.get("web_comment_id")},
                     {"$set": comment_data}
                 )
+                safe_print(f"        🔄 Đã cập nhật comment {comment_data.get('web_comment_id')} trong MongoDB")
             else:
                 self.mongo_collection_comments.insert_one(comment_data)
+                safe_print(f"        ✅ Đã lưu comment {comment_data.get('web_comment_id')} vào MongoDB")
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu comment vào MongoDB: {e}")
     
     def save_review(self, review_data):
-        """Lưu review vào MongoDB ngay khi cào xong"""
+        """
+        Lưu review vào MongoDB ngay khi cào xong
+        ✅ Schema mới: review_id (PK), web_review_id, title, time, content, user_id, 
+        chapter_id, story_id, score_id, is_review_swap, website_id
+        """
         if not review_data or not self.mongo_collection_reviews:
+            return
+        
+        # ✅ Kiểm tra xem review_data có dữ liệu hợp lệ không
+        # Nếu không có web_review_id hoặc các field quan trọng, không lưu
+        if not review_data.get("web_review_id") and not review_data.get("review_id"):
             return
         
         try:
@@ -197,19 +225,34 @@ class MongoHandler:
                     {"web_review_id": review_data.get("web_review_id")},
                     {"$set": review_data}
                 )
+                safe_print(f"        🔄 Đã cập nhật review {review_data.get('web_review_id')} trong MongoDB")
             else:
                 self.mongo_collection_reviews.insert_one(review_data)
+                safe_print(f"        ✅ Đã lưu review {review_data.get('web_review_id')} vào MongoDB")
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu review vào MongoDB: {e}")
     
-    def save_user(self, web_user_id, username):
+    def save_user(self, web_user_id, username, user_url="", created_date="", gender="", location="", 
+                  followers="", following="", comments="", bio="", favorites="", ratings=""):
         """
         Lưu user vào MongoDB ngay khi gặp web_user_id và username
+        ✅ Schema mới: user_id (PK), web_user_id, username, user_url, created_date, gender, 
+        location, followers, following, comments, bio, favorites, ratings
         Args:
             web_user_id: User ID lấy từ web (URL)
             username: Tên người dùng
+            user_url: URL của user profile
+            created_date: Ngày tạo tài khoản
+            gender: Giới tính
+            location: Địa điểm
+            followers: Số lượng followers
+            following: Số lượng following
+            comments: Số lượng comments
+            bio: Tiểu sử
+            favorites: Số lượng favorites
+            ratings: Số lượng ratings
         Returns:
-            user_id: ID được gen (rr_{uuid}) để dùng làm FK
+            user_id: ID được gen (sh_{uuid}) để dùng làm FK
         """
         from src.utils import generate_id
         
@@ -220,107 +263,106 @@ class MongoHandler:
             # Tìm user theo web_user_id
             existing = self.mongo_collection_users.find_one({"web_user_id": web_user_id})
             if existing:
-                # Update nếu username thay đổi
+                # Update nếu có thay đổi
+                update_data = {}
                 if existing.get("username") != username:
+                    update_data["username"] = username
+                if user_url and existing.get("user_url") != user_url:
+                    update_data["user_url"] = user_url
+                if created_date and existing.get("created_date") != created_date:
+                    update_data["created_date"] = created_date
+                if gender and existing.get("gender") != gender:
+                    update_data["gender"] = gender
+                if location and existing.get("location") != location:
+                    update_data["location"] = location
+                if followers and existing.get("followers") != followers:
+                    update_data["followers"] = followers
+                if following and existing.get("following") != following:
+                    update_data["following"] = following
+                if comments and existing.get("comments") != comments:
+                    update_data["comments"] = comments
+                if bio and existing.get("bio") != bio:
+                    update_data["bio"] = bio
+                if favorites and existing.get("favorites") != favorites:
+                    update_data["favorites"] = favorites
+                if ratings and existing.get("ratings") != ratings:
+                    update_data["ratings"] = ratings
+                
+                if update_data:
                     self.mongo_collection_users.update_one(
                         {"web_user_id": web_user_id},
-                        {"$set": {"username": username}}
+                        {"$set": update_data}
                     )
-                return existing.get("id")  # Trả về id đã có
+                return existing.get("user_id") or existing.get("id")  # Trả về user_id (tương thích với cả cũ và mới)
             else:
                 # Tạo id mới
                 user_id = generate_id()
                 user_data = {
-                    "id": user_id,  # Schema: id (khóa chính, format rr_{uuid})
-                    "web_user_id": web_user_id,  # Schema: web_user_id (lấy từ URL)
-                    "username": username  # Schema: username
+                    "user_id": user_id,  # Khóa chính (không phải "id")
+                    "web_user_id": web_user_id,
+                    "username": username,
+                    "user_url": user_url,
+                    "created_date": created_date,
+                    "gender": gender,
+                    "location": location,
+                    "followers": followers,
+                    "following": following,
+                    "comments": comments,
+                    "bio": bio,
+                    "favorites": favorites,
+                    "ratings": ratings
                 }
                 self.mongo_collection_users.insert_one(user_data)
-                return user_id  # Trả về id mới để dùng làm FK
+                return user_id  # Trả về user_id mới để dùng làm FK
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu user vào MongoDB: {e}")
             return None
     
-    def save_score(self, score_id, overall_score="", style_score="", story_score="", grammar_score="", character_score="", review_id=None):
+    def save_score(self, score_id, overall_score="", style_score="", story_score="", grammar_score="", character_score=""):
         """
-        Lưu tất cả 5 scores vào MongoDB trong 1 document duy nhất (chỉ cho review)
-        
-        Args:
-            score_id: ID được gen (rr_{uuid}) - khóa chính
-            overall_score: Giá trị overall score
-            style_score: Giá trị style score
-            story_score: Giá trị story score
-            grammar_score: Giá trị grammar score
-            character_score: Giá trị character score
-            review_id: FK to reviews (rr_{uuid})
+        Lưu score vào MongoDB
+        ✅ Schema: score_id (PK), overall_score, style_score, story_score, grammar_score, character_score
+        ✅ Chỉ lưu khi có ít nhất 1 score không rỗng (có review)
         """
         if not score_id or not self.mongo_collection_scores:
             return
         
+        # ✅ Kiểm tra xem có ít nhất 1 score không rỗng không
+        has_score = any([
+            overall_score and overall_score.strip(),
+            style_score and style_score.strip(),
+            story_score and story_score.strip(),
+            grammar_score and grammar_score.strip(),
+            character_score and character_score.strip()
+        ])
+        
+        if not has_score:
+            # Không có score nào, không lưu
+            return
+        
         try:
             score_data = {
-                "id": score_id,  # Schema: id (khóa chính, format rr_{uuid})
-                "overall_score": overall_score,  # Schema: overall score
-                "style_score": style_score,  # Schema: style score
-                "story_score": story_score,  # Schema: story score
-                "grammar_score": grammar_score,  # Schema: grammar score
-                "character_score": character_score  # Schema: character score
+                "score_id": score_id,  # Khóa chính (không phải "id")
+                "overall_score": overall_score,
+                "style_score": style_score,
+                "story_score": story_score,
+                "grammar_score": grammar_score,
+                "character_score": character_score
             }
             
-            # Thêm FK review_id
-            if review_id:
-                score_data["review_id"] = review_id  # FK to reviews (rr_{uuid})
-            
-            # So sánh theo web_review_id: Tìm review theo review_id, lấy web_review_id, rồi tìm score
-            web_review_id = None
-            if review_id and self.mongo_collection_reviews:
-                try:
-                    review = self.mongo_collection_reviews.find_one({"id": review_id})
-                    if review:
-                        web_review_id = review.get("web_review_id")
-                except:
-                    pass
-            
-            # Nếu có web_review_id, tìm review theo web_review_id rồi lấy review_id để so sánh score
-            if web_review_id and self.mongo_collection_reviews:
-                try:
-                    review_by_web_id = self.mongo_collection_reviews.find_one({"web_review_id": web_review_id})
-                    if review_by_web_id:
-                        existing_review_id = review_by_web_id.get("id")
-                        # Tìm score theo review_id
-                        existing = self.mongo_collection_scores.find_one({"review_id": existing_review_id})
-                        if existing:
-                            # Update nếu đã có
-                            self.mongo_collection_scores.update_one(
-                                {"review_id": existing_review_id},
-                                {"$set": score_data}
-                            )
-                        else:
-                            # Insert mới
-                            self.mongo_collection_scores.insert_one(score_data)
-                    else:
-                        # Insert mới nếu không tìm thấy review
-                        self.mongo_collection_scores.insert_one(score_data)
-                except:
-                    # Fallback: so sánh theo score_id nếu lỗi
-                    existing = self.mongo_collection_scores.find_one({"id": score_id})
-                    if existing:
-                        self.mongo_collection_scores.update_one(
-                            {"id": score_id},
-                            {"$set": score_data}
-                        )
-                    else:
-                        self.mongo_collection_scores.insert_one(score_data)
+            # Tìm score theo score_id
+            existing = self.mongo_collection_scores.find_one({"score_id": score_id})
+            if existing:
+                # Update nếu đã có
+                self.mongo_collection_scores.update_one(
+                    {"score_id": score_id},
+                    {"$set": score_data}
+                )
+                safe_print(f"        🔄 Đã cập nhật score {score_id} trong MongoDB")
             else:
-                # Fallback: so sánh theo score_id nếu không có web_review_id
-                existing = self.mongo_collection_scores.find_one({"id": score_id})
-                if existing:
-                    self.mongo_collection_scores.update_one(
-                        {"id": score_id},
-                        {"$set": score_data}
-                    )
-                else:
-                    self.mongo_collection_scores.insert_one(score_data)
+                # Insert mới
+                self.mongo_collection_scores.insert_one(score_data)
+                safe_print(f"        ✅ Đã lưu score {score_id} vào MongoDB")
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu score vào MongoDB: {e}")
     
@@ -337,16 +379,16 @@ class MongoHandler:
         
         try:
             content_data = {
-                "id": content_id,  # Schema: id (khóa chính, format rr_{uuid}, tự gen)
+                "id": content_id,  # Schema: id (khóa chính, format sh_{uuid}, tự gen)
                 "content": content,  # Schema: content
-                "chapter_id": chapter_id  # Schema: chapter id (FK - rr_{uuid})
+                "chapter_id": chapter_id  # Schema: chapter id (FK - sh_{uuid})
             }
             
             # So sánh theo web_chapter_id: Tìm chapter theo chapter_id, lấy web_chapter_id, rồi tìm content
             web_chapter_id = None
             if chapter_id and self.mongo_collection_chapters:
                 try:
-                    chapter = self.mongo_collection_chapters.find_one({"id": chapter_id})
+                    chapter = self.mongo_collection_chapters.find_one({"chapter_id": chapter_id})
                     if chapter:
                         web_chapter_id = chapter.get("web_chapter_id")
                 except:
@@ -357,7 +399,7 @@ class MongoHandler:
                 try:
                     chapter_by_web_id = self.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
                     if chapter_by_web_id:
-                        existing_chapter_id = chapter_by_web_id.get("id")
+                        existing_chapter_id = chapter_by_web_id.get("chapter_id")
                         # Tìm content theo chapter_id
                         existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": existing_chapter_id})
                         if existing:

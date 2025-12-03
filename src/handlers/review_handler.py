@@ -28,8 +28,17 @@ class ReviewHandler:
         try:
             safe_print("      📝 Đang lấy reviews từ trang story...")
             
-            self.page.goto(story_url, timeout=config.TIMEOUT)
-            time.sleep(2)
+            self.page.goto(story_url, timeout=config.TIMEOUT, wait_until="networkidle")
+            time.sleep(3)
+            
+            # Kiểm tra Cloudflare challenge
+            try:
+                page_content = self.page.content()
+                if "challenges.cloudflare.com" in page_content.lower():
+                    safe_print("      ⏳ Phát hiện Cloudflare challenge, đợi...")
+                    time.sleep(10)
+            except:
+                pass
             
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
@@ -83,12 +92,17 @@ class ReviewHandler:
                     review_data = self.parse_single_review(review_elem, story_id)
                     if review_data:
                         reviews.append(review_data)
+                        # ✅ Chỉ lưu review nếu có dữ liệu hợp lệ
                         self.mongo.save_review(review_data)
                 except Exception as e:
                     safe_print(f"        ⚠️ Lỗi khi parse review: {e}")
                     continue
             
-            safe_print(f"      ✅ Đã lấy được {len(reviews)} reviews")
+            # ✅ Chỉ in log nếu có reviews
+            if reviews:
+                safe_print(f"      ✅ Đã lấy được {len(reviews)} reviews")
+            else:
+                safe_print(f"      ℹ️ Không có reviews để lưu")
             return reviews
             
         except Exception as e:
@@ -244,8 +258,11 @@ class ReviewHandler:
             except:
                 pass
             
+            # Lấy website_id từ mongo handler
+            website_id = self.mongo.scribblehub_website_id if self.mongo.scribblehub_website_id else ""
+            
             review_data = {
-                "id": review_id,
+                "review_id": review_id,  # Khóa chính (không phải "id")
                 "web_review_id": web_review_id,
                 "title": title,
                 "time": time_str,
@@ -254,18 +271,27 @@ class ReviewHandler:
                 "chapter_id": chapter_id,
                 "story_id": story_id,
                 "score_id": score_id,
-                "is_review_swap": is_review_swap
+                "is_review_swap": is_review_swap,
+                "website_id": website_id
             }
             
-            if score_id:
+            # ✅ Chỉ lưu score khi có ít nhất 1 score không rỗng
+            has_any_score = any([
+                scores.get("overall_score", "").strip(),
+                scores.get("style_score", "").strip(),
+                scores.get("story_score", "").strip(),
+                scores.get("grammar_score", "").strip(),
+                scores.get("character_score", "").strip()
+            ])
+            
+            if score_id and has_any_score:
                 self.mongo.save_score(
                     score_id=score_id,
                     overall_score=scores.get("overall_score", ""),
                     style_score=scores.get("style_score", ""),
                     story_score=scores.get("story_score", ""),
                     grammar_score=scores.get("grammar_score", ""),
-                    character_score=scores.get("character_score", ""),
-                    review_id=review_id
+                    character_score=scores.get("character_score", "")
                 )
             
             return review_data

@@ -49,11 +49,11 @@ def safe_print(*args, **kwargs):
 
 def generate_id():
     """
-    Tạo ID theo format rr_{uuid}
+    Tạo ID theo format sh_{uuid} (cho tất cả khóa chính)
     Sử dụng UUID v7 (có timestamp, sortable theo thời gian)
-    Returns: string với format "rr_{uuid}"
+    Returns: string với format "sh_{uuid}"
     """
-    return f"rr_{uuid6.uuid7().hex}"
+    return f"sh_{uuid6.uuid7().hex}"
 
 def convert_html_to_formatted_text(html_content):
     """
