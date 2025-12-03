@@ -135,15 +135,25 @@ class ReviewHandler:
             if web_user_id and username:
                 user_id = self.mongo.save_user(web_user_id, username)
             
+            # Lấy web_chapter_id từ URL (Ví dụ: từ https://www.scribblehub.com/read/123456-story-name/chapter/789012/ lấy 789012)
             web_chapter_id = ""
             try:
+                import re
                 chapter_elem = review_elem.locator("a[href*='/chapter/'], .chapter-link, [class*='chapter']").first
                 if chapter_elem.count() > 0:
                     href = chapter_elem.get_attribute("href") or ""
-                    if "/chapter/" in href:
-                        web_chapter_id = href.split("/chapter/")[1].split("/")[0]
-            except:
-                pass
+                    if href:
+                        # Tìm pattern /chapter/789012
+                        match = re.search(r'/chapter/(\d+)', href)
+                        if match:
+                            web_chapter_id = match.group(1)
+                        else:
+                            # Fallback: split theo /chapter/
+                            if "/chapter/" in href:
+                                web_chapter_id = href.split("/chapter/")[1].split("/")[0]
+            except Exception as e:
+                safe_print(f"      ⚠️ Lỗi khi lấy web_chapter_id từ URL: {e}")
+                web_chapter_id = ""
             
             chapter_id = None
             if web_chapter_id:

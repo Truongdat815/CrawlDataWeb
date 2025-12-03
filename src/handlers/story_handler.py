@@ -22,8 +22,7 @@ class StoryHandler:
     
     def get_story_urls_from_best_rated(self, num_stories=10, start_from=0):
         """
-        Lấy danh sách URL của các bộ truyện từ trang best-rated
-        Selector: h2.fiction-title a
+        Lấy danh sách URL của các bộ truyện từ trang series-ranking của ScribbleHub
         Args:
             num_stories: Số lượng bộ truyện muốn lấy
             start_from: Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên)
@@ -31,12 +30,44 @@ class StoryHandler:
         story_urls = []
         
         try:
+            # Đợi trang load xong
+            self.page.wait_for_load_state("networkidle", timeout=30000)
+            time.sleep(3)
+            
             # Scroll xuống để load thêm nội dung nếu cần
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
             
-            # Lấy tất cả các link truyện từ thẻ h2.fiction-title a
-            fiction_links = self.page.locator("h2.fiction-title a").all()
+            # Thử nhiều selector khác nhau
+            fiction_links = []
+            selectors_to_try = [
+                ".search_title a",
+                ".search_title a[href*='/series/']",
+                "a[href*='/series/']",
+                ".search_title",
+                ".toc_ol a",
+                ".wi_fic_table a"
+            ]
+            
+            for selector in selectors_to_try:
+                try:
+                    links = self.page.locator(selector).all()
+                    if links and len(links) > 0:
+                        safe_print(f"✅ Tìm thấy {len(links)} links với selector: {selector}")
+                        fiction_links = links
+                        break
+                except:
+                    continue
+            
+            if not fiction_links:
+                safe_print("⚠️ Không tìm thấy link nào với bất kỳ selector nào!")
+                # Debug: In ra HTML để kiểm tra
+                try:
+                    body_html = self.page.locator("body").inner_html()
+                    safe_print(f"📄 Độ dài HTML body: {len(body_html)}")
+                except:
+                    pass
+                return []
             
             # Tính toán vị trí bắt đầu và kết thúc
             start_index = start_from
@@ -55,7 +86,8 @@ class StoryHandler:
                         else:
                             full_url = config.BASE_URL + "/" + href
                         
-                        if full_url not in story_urls:
+                        # Chỉ lấy link có chứa /series/ (link truyện từ series-ranking)
+                        if "/series/" in full_url and full_url not in story_urls:
                             story_urls.append(full_url)
                 except Exception as e:
                     safe_print(f"⚠️ Lỗi khi lấy URL truyện: {e}")
@@ -64,7 +96,7 @@ class StoryHandler:
             return story_urls
             
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lấy danh sách truyện từ best-rated: {e}")
+            safe_print(f"⚠️ Lỗi khi lấy danh sách truyện từ series-ranking: {e}")
             return []
     
     def scrape_story_metadata(self, story_url, web_story_id):
@@ -90,35 +122,174 @@ class StoryHandler:
         story_id = generate_id()
         safe_print("... Đang lấy thông tin chung")
         
-        # Lấy title
-        title = self.page.locator("h1").first.inner_text()
+        # ========== SCRIBBLEHUB FORMAT ==========
+        # Lấy title từ class fic_title
+        title = ""
+        try:
+            title_elem = self.page.locator(".fic_title").first
+            if title_elem.count() > 0:
+                title = title_elem.inner_text().strip()
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy title: {e}")
         
-        # Lấy URL ảnh bìa rồi tải về luôn
-        img_url_raw = self.page.locator(".cover-art-container img").get_attribute("src")
+        # Lấy URL ảnh bìa từ fic_image img
+        img_url_raw = ""
+        try:
+            img_elem = self.page.locator(".fic_image img").first
+            if img_elem.count() > 0:
+                img_url_raw = img_elem.get_attribute("src") or ""
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy cover image URL: {e}")
+        
         local_img_path = utils.download_image(img_url_raw, web_story_id)
         
-        # Lấy author (web_user_id từ profile URL)
-        web_author_id = self.page.locator(".fic-title h4 a").first.get_attribute("href").split("/")[2]
-        author_name = self.page.locator(".fic-title h4 a").first.inner_text()
+        # Lấy stats từ fic_stats (favorites, total_chapters, release_rate, number_of_reader)
+        favorites = ""
+        total_chapters = ""
+        release_rate = ""
+        number_of_reader = ""
         
-        # Lưu user (author) ngay vào MongoDB và lấy author_id (rr_{uuid}) để dùng làm FK
-        author_id = None
-        if web_author_id and author_name:
-            author_id = self.mongo.save_user(web_author_id, author_name)
+        try:
+            stats_items = self.page.locator(".fic_stats .st_item").all()
+            for item in stats_items:
+                try:
+                    text = item.inner_text()
+                    # Tìm icon để xác định loại stat
+                    icon_elem = item.locator("i").first
+                    if icon_elem.count() > 0:
+                        icon_class = icon_elem.get_attribute("class") or ""
+                        
+                        if "fa-heart" in icon_class:
+                            # Favorites
+                            numbers = re.findall(r'[\d.]+[kmKM]?', text)
+                            if numbers:
+                                favorites = numbers[0]
+                        elif "fa-list-alt" in icon_class:
+                            # Chapters
+                            numbers = re.findall(r'\d+', text)
+                            if numbers:
+                                total_chapters = numbers[0]
+                        elif "fa-calendar" in icon_class:
+                            # Chapters/Week (release_rate)
+                            numbers = re.findall(r'\d+', text)
+                            if numbers:
+                                release_rate = numbers[0]
+                        elif "fa-user-o" in icon_class:
+                            # Readers
+                            numbers = re.findall(r'[\d.]+[kmKM]?', text)
+                            if numbers:
+                                number_of_reader = numbers[0]
+                except:
+                    continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy stats từ fic_stats: {e}")
         
-        # Lấy category
-        category = self.page.locator(".fiction-info span").first.inner_text()
+        # Lấy stats từ table_pro_overview (total_views, average_views, total_word, average_words, page_views, total_views_chapters)
+        total_views = ""
+        average_views = ""
+        total_word = ""
+        average_words = ""
+        pages = ""
+        total_views_chapters = ""
         
-        # Lấy status
-        status = self.page.locator(".fiction-info span:nth-child(2)").first.inner_text()
+        try:
+            table = self.page.locator(".table_pro_overview").first
+            if table.count() > 0:
+                rows = table.locator("tbody tr").all()
+                for row in rows:
+                    try:
+                        th_text = row.locator("th").first.inner_text().strip()
+                        td_text = row.locator("td").first.inner_text().strip()
+                        
+                        if "Total Views (All):" in th_text:
+                            # Xóa dấu phẩy và lấy số
+                            total_views = td_text.replace(",", "")
+                        elif "Total Views (Chapters):" in th_text:
+                            # Xóa dấu phẩy và lấy số
+                            total_views_chapters = td_text.replace(",", "")
+                        elif "Average Views:" in th_text:
+                            average_views = td_text.replace(",", "")
+                        elif "Word Count:" in th_text:
+                            total_word = td_text.replace(",", "")
+                        elif "Average Words:" in th_text:
+                            average_words = td_text.replace(",", "")
+                        elif "Pages:" in th_text:
+                            pages = td_text.replace(",", "")
+                    except:
+                        continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy stats từ table_pro_overview: {e}")
         
-        # Lấy tags
-        tags = self.page.locator(".tags a").all_inner_texts()
+        # Lấy overall_score (từ rating_average) và rating_total từ fic_rate
+        overall_score = ""
+        rating_total = ""
+        try:
+            fic_rate = self.page.locator(".fic_rate").first
+            if fic_rate.count() > 0:
+                # Lấy overall_score từ số cạnh phần sao (rating_average)
+                rating_span = fic_rate.locator("span span").first
+                if rating_span.count() > 0:
+                    rating_text = rating_span.inner_text().strip()
+                    numbers = re.findall(r'\d+\.?\d*', rating_text)
+                    if numbers:
+                        overall_score = numbers[0]
+                
+                # Lấy rating_total (số trong ngoặc, ví dụ "81 ratings")
+                rate_more = fic_rate.locator(".rate_more").first
+                if rate_more.count() > 0:
+                    rate_text = rate_more.inner_text().strip()
+                    numbers = re.findall(r'\d+', rate_text)
+                    if numbers:
+                        rating_total = numbers[0]
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy rating: {e}")
         
-        # Lấy description - giữ nguyên định dạng như trong UI
+        # Lấy total_reviews từ phần Reviews
+        total_reviews = ""
+        try:
+            reviews_section = self.page.locator(".wi_novel_title.tags.pedit_body.nreview").first
+            if reviews_section.count() > 0:
+                cnt_toc = reviews_section.locator(".cnt_toc").first
+                if cnt_toc.count() > 0:
+                    total_reviews = cnt_toc.inner_text().strip()
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy total_reviews: {e}")
+        
+        # Lấy user stats từ statUser
+        user_reading = ""
+        user_plan_to_read = ""
+        user_completed = ""
+        user_paused = ""
+        user_dropped = ""
+        
+        try:
+            stat_user = self.page.locator(".statUser").first
+            if stat_user.count() > 0:
+                stat_items = stat_user.locator("li").all()
+                for item in stat_items:
+                    try:
+                        label = item.locator(".sulabel").first.inner_text().strip().lower()
+                        count = item.locator(".sucnt").first.inner_text().strip()
+                        
+                        if "reading" in label:
+                            user_reading = count
+                        elif "plan to read" in label:
+                            user_plan_to_read = count
+                        elif "completed" in label:
+                            user_completed = count
+                        elif "paused" in label:
+                            user_paused = count
+                        elif "dropped" in label:
+                            user_dropped = count
+                    except:
+                        continue
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy user stats: {e}")
+        
+        # Lấy description từ wi_fic_desc
         description = ""
         try:
-            desc_container = self.page.locator(".description").first
+            desc_container = self.page.locator(".wi_fic_desc").first
             if desc_container.count() > 0:
                 html_content = desc_container.inner_html()
                 description = convert_html_to_formatted_text(html_content)
@@ -126,123 +297,126 @@ class StoryHandler:
             safe_print(f"⚠️ Lỗi khi lấy description: {e}")
             description = ""
         
-        # Lấy stats - Scores từ aria-label
-        overall_score = ""
-        style_score = ""
-        story_score = ""
-        grammar_score = ""
-        character_score = ""
-        
+        # Lấy genres từ wi_fic_genre
+        genres = []
         try:
-            stats_col = self.page.locator(".stats-content .col-sm-6").first
-            if stats_col.count() > 0:
-                score_spans = stats_col.locator("ul.list-unstyled li.list-item span[aria-label*='stars']").all()
-                
-                if len(score_spans) >= 1:
-                    try:
-                        aria_label = score_spans[0].get_attribute("aria-label") or ""
-                        if aria_label:
-                            numbers = re.findall(r'\d+\.?\d*', aria_label)
-                            if numbers:
-                                overall_score = numbers[0]
-                    except:
-                        pass
-                
-                if len(score_spans) >= 2:
-                    try:
-                        aria_label = score_spans[1].get_attribute("aria-label") or ""
-                        if aria_label:
-                            numbers = re.findall(r'\d+\.?\d*', aria_label)
-                            if numbers:
-                                style_score = numbers[0]
-                    except:
-                        pass
-                
-                if len(score_spans) >= 3:
-                    try:
-                        aria_label = score_spans[2].get_attribute("aria-label") or ""
-                        if aria_label:
-                            numbers = re.findall(r'\d+\.?\d*', aria_label)
-                            if numbers:
-                                story_score = numbers[0]
-                    except:
-                        pass
-                
-                if len(score_spans) >= 4:
-                    try:
-                        aria_label = score_spans[3].get_attribute("aria-label") or ""
-                        if aria_label:
-                            numbers = re.findall(r'\d+\.?\d*', aria_label)
-                            if numbers:
-                                grammar_score = numbers[0]
-                    except:
-                        pass
-                
-                if len(score_spans) >= 5:
-                    try:
-                        aria_label = score_spans[4].get_attribute("aria-label") or ""
-                        if aria_label:
-                            numbers = re.findall(r'\d+\.?\d*', aria_label)
-                            if numbers:
-                                character_score = numbers[0]
-                    except:
-                        pass
+            genre_links = self.page.locator(".wi_fic_genre .fic_genre").all()
+            for link in genre_links:
+                try:
+                    genre_text = link.inner_text().strip()
+                    if genre_text:
+                        genres.append(genre_text)
+                except:
+                    continue
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lấy scores từ story: {e}")
+            safe_print(f"⚠️ Lỗi khi lấy genres: {e}")
         
-        # Lấy stats values
-        stats_values_locator = self.page.locator("div.col-sm-6 li.font-red-sunglo")
-        total_views = stats_values_locator.nth(0).inner_text()
-        average_views = stats_values_locator.nth(1).inner_text()
-        followers = stats_values_locator.nth(2).inner_text()
-        favorites = stats_values_locator.nth(3).inner_text()
-        ratings = stats_values_locator.nth(4).inner_text()
-        pages = stats_values_locator.nth(5).inner_text()
-        
-        # Lấy total chapters
-        total_chapters = ""
+        # Lấy tags từ wi_fic_showtags
+        tags = []
         try:
-            chapters_label = self.page.locator(".portlet-title .actions span.label.label-default.pull-right").first
-            if chapters_label.count() > 0:
-                chapters_text = chapters_label.inner_text().strip()
-                numbers = re.findall(r'\d+', chapters_text)
-                if numbers:
-                    total_chapters = numbers[0]
+            tag_links = self.page.locator(".wi_fic_showtags a.stag").all()
+            for link in tag_links:
+                try:
+                    tag_text = link.inner_text().strip()
+                    if tag_text:
+                        tags.append(tag_text)
+                except:
+                    continue
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lấy total chapters: {e}")
+            safe_print(f"⚠️ Lỗi khi lấy tags: {e}")
         
-        # Tạo story_data
+        # Lấy status và last_updated từ widget_fic_similar
+        status = ""
+        last_updated = ""
+        try:
+            similar_widget = self.page.locator(".widget_fic_similar").first
+            if similar_widget.count() > 0:
+                # Lấy status (ví dụ: "Ongoing", "Completed", etc.)
+                status_text = similar_widget.inner_text()
+                # Tìm pattern như "Ongoing", "Completed", "Hiatus", etc.
+                status_patterns = ["Ongoing", "Completed", "Hiatus", "Dropped", "Stubbed"]
+                for pattern in status_patterns:
+                    if pattern in status_text:
+                        status = pattern
+                        break
+                
+                # Lấy last_updated từ phần có title="Last updated: ..."
+                try:
+                    date_elem = similar_widget.locator('span[title*="Last updated"]').first
+                    if date_elem.count() > 0:
+                        date_text = date_elem.inner_text().strip()
+                        # Extract date từ text như "Nov 28, 2025"
+                        date_match = re.search(r'([A-Za-z]+ \d{1,2}, \d{4})', date_text)
+                        if date_match:
+                            last_updated = date_match.group(1)
+                except:
+                    pass
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy status và last_updated: {e}")
+        
+        # Các field khác chưa có trong HTML này, để trống
+        author_id = None
+        
+        # Tạo story_data (chỉ các field cơ bản)
         story_data = {
             "id": story_id,
             "web_story_id": web_story_id,
             "name": title,
             "url": story_url,
             "cover_image": local_img_path,
-            "category": category,
+            "category": "",  # Để trống
             "status": status,
+            "genres": genres,
             "tags": tags,
-            "description": description,
-            "total_views": total_views,
-            "average_views": average_views,
-            "followers": followers,
-            "favorites": favorites,
-            "ratings": ratings,
-            "page_views": pages,
-            "overall_score": overall_score,
-            "style_score": style_score,
-            "story_score": story_score,
-            "grammar_score": grammar_score,
-            "character_score": character_score
+            "description": description
         }
         
         if author_id:
-            story_data["author_id"] = author_id
+            story_data["user_id"] = author_id
         
         if total_chapters:
             story_data["total_chapters"] = total_chapters
         
-        # Lưu story ngay khi cào xong metadata
+        # Tạo story_info_data (tất cả các field stats và info)
+        info_id = generate_id()
+        # Lấy website_id của ScribbleHub từ mongo handler
+        website_id = self.mongo.scribblehub_website_id if self.mongo.scribblehub_website_id else ""
+        story_info_data = {
+            "info_id": info_id,
+            "story_id": story_id,
+            "website_id": website_id,  # Reference đến websites collection
+            "total_views": total_views,
+            "average_views": average_views,
+            "followers": "",  # Để null
+            "favorites": favorites,
+            "page_views": pages,
+            "overall_score": overall_score,
+            "style_score": "",  # Để null
+            "story_score": "",  # Để null
+            "grammar_score": "",  # Để null
+            "character_score": "",  # Để null
+            "stability_of_updates": "",  # Chưa có scraping
+            "voted": "",  # Chưa có scraping
+            "freeChapter": "",  # Chưa có scraping
+            "time": "",  # Chưa có scraping
+            "release_rate": release_rate,
+            "number_of_reader": number_of_reader,
+            "rating_total": rating_total,
+            "total_views_chapters": total_views_chapters,
+            "total_word": total_word,
+            "average_words": average_words,
+            "last_updated": last_updated,
+            "total_reviews": total_reviews,
+            "user_reading": user_reading,
+            "user_plan_to_read": user_plan_to_read,
+            "user_completed": user_completed,
+            "user_paused": user_paused,
+            "user_dropped": user_dropped
+        }
+        
+        # Lưu story và story_info ngay khi cào xong metadata
         self.mongo.save_story(story_data)
+        self.mongo.save_story_info(story_info_data)
         
         return story_data, story_id
     
@@ -460,15 +634,26 @@ class StoryHandler:
             return False
     
     def get_chapters_from_current_page(self):
-        """Lấy danh sách chapters từ trang hiện tại, trả về list dict với url và published_time"""
+        """Lấy danh sách chapters từ trang hiện tại, trả về list dict với url, order và published_time"""
         chapter_info_list = []
         
         try:
-            chapter_rows = self.page.locator("table#chapters tbody tr").all()
+            # Lấy chapters từ HTML mới: .wi_fic_table.toc ol.toc_ol li.toc_w
+            chapter_items = self.page.locator(".wi_fic_table.toc ol.toc_ol li.toc_w").all()
             
-            for row in chapter_rows:
+            for item in chapter_items:
                 try:
-                    link_el = row.locator("td").first.locator("a")
+                    # Lấy order từ attribute order
+                    order = ""
+                    try:
+                        order_attr = item.get_attribute("order")
+                        if order_attr:
+                            order = order_attr
+                    except:
+                        pass
+                    
+                    # Lấy URL từ a.toc_a
+                    link_el = item.locator("a.toc_a").first
                     if link_el.count() > 0:
                         url = link_el.get_attribute("href")
                         if url:
@@ -479,20 +664,30 @@ class StoryHandler:
                             else:
                                 full_url = config.BASE_URL + "/" + url
                             
+                            # Lấy published_time từ span.fic_date_pub title attribute
                             published_time = ""
                             try:
-                                time_elem = row.locator("time[datetime]").first
+                                time_elem = item.locator("span.fic_date_pub").first
                                 if time_elem.count() > 0:
-                                    published_time = time_elem.get_attribute("datetime") or ""
+                                    # Lấy từ title attribute (ví dụ: "Nov 28, 2025 12:13 PM")
+                                    title_attr = time_elem.get_attribute("title")
+                                    if title_attr:
+                                        published_time = title_attr
+                                    else:
+                                        # Fallback: lấy từ inner text
+                                        published_time = time_elem.inner_text().strip()
                             except:
                                 pass
                             
+                            # Chỉ thêm nếu chưa có trong list (tránh trùng)
                             if not any(ch["url"] == full_url for ch in chapter_info_list):
                                 chapter_info_list.append({
                                     "url": full_url,
+                                    "order": order,
                                     "published_time": published_time
                                 })
-                except:
+                except Exception as e:
+                    safe_print(f"        ⚠️ Lỗi khi parse chapter item: {e}")
                     continue
             
             return chapter_info_list

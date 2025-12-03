@@ -1,5 +1,5 @@
 """
-RoyalRoad Scraper Engine - Main orchestrator
+ScribbleHub Scraper Engine - Main orchestrator
 Sử dụng các handlers để thực hiện scraping
 """
 import time
@@ -16,7 +16,7 @@ from src.handlers.comment_handler import CommentHandler
 from src.handlers.review_handler import ReviewHandler
 
 
-class RoyalRoadScraper(BaseHandler):
+class ScribbleHubScraper(BaseHandler):
     """Main scraper class - orchestrator cho tất cả handlers"""
     
     def __init__(self, max_workers=None):
@@ -55,17 +55,17 @@ class RoyalRoadScraper(BaseHandler):
     
     def scrape_best_rated_stories(self, best_rated_url, num_stories=10, start_from=0):
         """
-        Cào nhiều bộ truyện từ trang best-rated
+        Cào nhiều bộ truyện từ trang series-ranking của ScribbleHub
         Args:
-            best_rated_url: URL trang best-rated
+            best_rated_url: URL trang series-ranking (ví dụ: https://www.scribblehub.com/series-ranking/?pg=50)
             num_stories: Số lượng bộ truyện muốn cào (mặc định 10)
             start_from: Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên, 5 = bỏ qua 5 bộ đầu)
         """
-        safe_print(f"📚 Đang truy cập trang best-rated: {best_rated_url}")
+        safe_print(f"📚 Đang truy cập trang series-ranking: {best_rated_url}")
         self.page.goto(best_rated_url, timeout=config.TIMEOUT)
         time.sleep(2)
         
-        # Lấy danh sách các bộ truyện từ trang best-rated
+        # Lấy danh sách các bộ truyện từ trang series-ranking
         if start_from > 0:
             safe_print(f"🔍 Đang lấy danh sách {num_stories} bộ truyện (bắt đầu từ vị trí {start_from + 1})...")
         else:
@@ -109,8 +109,22 @@ class RoyalRoadScraper(BaseHandler):
         safe_print(f"🌍 Đang truy cập truyện: {story_url}")
         self.page.goto(story_url, timeout=config.TIMEOUT)
         
-        # 1. Lấy web_story_id từ URL (Ví dụ: 21220)
-        web_story_id = story_url.split("/")[4]
+        # 1. Lấy web_story_id từ URL (Ví dụ: từ https://www.scribblehub.com/series/123456-story-name/ lấy 123456)
+        web_story_id = ""
+        try:
+            import re
+            # Tìm pattern /series/123456-... hoặc /read/123456-...
+            match = re.search(r'/(?:series|read)/(\d+)', story_url)
+            if match:
+                web_story_id = match.group(1)
+            else:
+                # Fallback: lấy số từ URL
+                numbers = re.findall(r'\d+', story_url)
+                if numbers:
+                    web_story_id = numbers[0]
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy web_story_id từ URL: {e}")
+            web_story_id = ""
         
         # 2. Cào metadata của story (hoặc lấy story_id nếu đã có)
         story_data, story_id = self.story_handler.scrape_story_metadata(story_url, web_story_id)
@@ -141,14 +155,22 @@ class RoyalRoadScraper(BaseHandler):
         chapters_to_scrape = []
         for index, chapter_info in enumerate(chapter_info_list):
             chap_url = chapter_info["url"]
-            # Lấy web_chapter_id từ URL
+            # Lấy web_chapter_id từ URL (Ví dụ: từ https://www.scribblehub.com/read/123456-story-name/chapter/789012/ lấy 789012)
             web_chapter_id = ""
             try:
-                url_parts = chap_url.split("/chapter/")
-                if len(url_parts) > 1:
-                    web_chapter_id = url_parts[1].split("/")[0]
-            except:
-                pass
+                import re
+                # Tìm pattern /chapter/789012
+                match = re.search(r'/chapter/(\d+)', chap_url)
+                if match:
+                    web_chapter_id = match.group(1)
+                else:
+                    # Fallback: split theo /chapter/
+                    url_parts = chap_url.split("/chapter/")
+                    if len(url_parts) > 1:
+                        web_chapter_id = url_parts[1].split("/")[0]
+            except Exception as e:
+                safe_print(f"    ⚠️ Lỗi khi lấy web_chapter_id từ URL: {e}")
+                web_chapter_id = ""
             
             # Kiểm tra chapter đã có chưa (check theo web_chapter_id)
             if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
@@ -168,8 +190,10 @@ class RoyalRoadScraper(BaseHandler):
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit chỉ các chapters chưa được cào
             for index, chapter_info in chapters_to_scrape:
-                # order = index + 1 (số thứ tự bắt đầu từ 1)
-                order = index + 1
+                # Lấy order từ HTML attribute, nếu không có thì dùng index + 1
+                order = chapter_info.get("order", "")
+                if not order:
+                    order = str(index + 1)
                 chap_url = chapter_info["url"]
                 published_time_from_table = chapter_info.get("published_time", "")
                 future = executor.submit(

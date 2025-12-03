@@ -1,7 +1,7 @@
 import os
 
 # --- CẤU HÌNH HỆ THỐNG ---
-BASE_URL = "https://www.royalroad.com"
+BASE_URL = "https://www.scribblehub.com"
 
 # Thư mục lưu trữ
 DATA_DIR = "data"
@@ -28,12 +28,13 @@ CLUSTER_URL = "royalroad.2aq2mp6.mongodb.net"
 
 MONGODB_DB_NAME = "RoyalRoadData"
 MONGODB_COLLECTION_STORIES = "stories"
+MONGODB_COLLECTION_STORY_INFO = "story_info"
 
 # Connection string đầy đủ với các options chuẩn
 # Dùng password trực tiếp, KHÔNG encode
 MONGODB_URI = (
     f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
-    f"@{CLUSTER_URL}/?rappName=RoyalRoad"
+    f"@{CLUSTER_URL}/?retryWrites=true&w=majority"
 )
 
 # Cho phép override bằng environment variable (ưu tiên)

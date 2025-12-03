@@ -2,6 +2,7 @@
 Chapter handler - xử lý chapter content scraping
 """
 import time
+import re
 from playwright.sync_api import sync_playwright
 from src import config
 from src.utils import safe_print, generate_id, convert_html_to_formatted_text
@@ -74,12 +75,20 @@ class ChapterHandler:
             
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
             
+            # Lấy web_chapter_id từ URL (Ví dụ: từ https://www.scribblehub.com/read/123456-story-name/chapter/789012/ lấy 789012)
             web_chapter_id = ""
             try:
-                url_parts = url.split("/chapter/")
-                if len(url_parts) > 1:
-                    web_chapter_id = url_parts[1].split("/")[0]
-            except:
+                # Tìm pattern /chapter/789012
+                match = re.search(r'/chapter/(\d+)', url)
+                if match:
+                    web_chapter_id = match.group(1)
+                else:
+                    # Fallback: split theo /chapter/
+                    url_parts = url.split("/chapter/")
+                    if len(url_parts) > 1:
+                        web_chapter_id = url_parts[1].split("/")[0]
+            except Exception as e:
+                safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy web_chapter_id từ URL: {e}")
                 web_chapter_id = ""
             
             if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
@@ -87,13 +96,21 @@ class ChapterHandler:
                 existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
                 existing_chapter_id = existing_chapter.get("id") if existing_chapter else None
                 if existing_chapter_id:
-                    self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", existing_chapter_id)
+                    comments_list = self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", existing_chapter_id)
+                    total_comments = len(comments_list) if comments_list else 0
+                    # Cập nhật total_comments cho chapter đã có
+                    if existing_chapter:
+                        self.mongo.mongo_collection_chapters.update_one(
+                            {"id": existing_chapter_id},
+                            {"$set": {"total_comments": str(total_comments)}}
+                        )
                 return None
             
             chapter_id = generate_id()
             
             safe_print(f"      💬 Thread-{index}: Đang lấy comments cho chương")
-            self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
+            comments_list = self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
+            total_comments = len(comments_list) if comments_list else 0
             
             time.sleep(config.DELAY_BETWEEN_CHAPTERS)
             
@@ -104,14 +121,63 @@ class ChapterHandler:
                 else:
                     safe_print(f"      ⏭️  Thread-{index}: Bỏ qua content chapter {web_chapter_id} (đã có trong DB)")
             
+            # Lấy views và voted từ chapter page
+            views = ""
+            voted = ""
+            try:
+                # Tìm views từ các selector có thể có
+                views_selectors = [
+                    ".chapter-stats .views",
+                    ".stats .views",
+                    "[class*='view']",
+                    ".chapter-meta [class*='view']"
+                ]
+                for selector in views_selectors:
+                    try:
+                        views_elem = worker_page.locator(selector).first
+                        if views_elem.count() > 0:
+                            views_text = views_elem.inner_text().strip()
+                            # Extract số từ text (có thể có format như "1.2k", "500", etc.)
+                            numbers = re.findall(r'[\d.]+[kmKM]?', views_text)
+                            if numbers:
+                                views = numbers[0].replace(",", "")
+                            break
+                    except:
+                        continue
+                
+                # Tìm voted từ các selector có thể có
+                voted_selectors = [
+                    ".chapter-stats .votes",
+                    ".stats .votes",
+                    "[class*='vote']",
+                    ".chapter-meta [class*='vote']"
+                ]
+                for selector in voted_selectors:
+                    try:
+                        voted_elem = worker_page.locator(selector).first
+                        if voted_elem.count() > 0:
+                            voted_text = voted_elem.inner_text().strip()
+                            # Extract số từ text
+                            numbers = re.findall(r'[\d.]+[kmKM]?', voted_text)
+                            if numbers:
+                                voted = numbers[0].replace(",", "")
+                            break
+                    except:
+                        continue
+            except Exception as e:
+                safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy views/voted: {e}")
+            
             chapter_data = {
                 "id": chapter_id,
                 "web_chapter_id": web_chapter_id,
+                "order": order,
                 "name": title,
                 "url": url,
                 "published_time": published_time,
-                "order": order,
-                "story_id": story_id
+                "story_id": story_id,
+                "voted": voted,
+                "views": views,
+                "total_comments": str(total_comments)
             }
             
             self.mongo.save_chapter(chapter_data)

@@ -20,25 +20,36 @@ class MongoHandler:
         self.mongo_client = None
         self.mongo_db = None
         self.mongo_collection_stories = None
+        self.mongo_collection_story_info = None
         self.mongo_collection_chapters = None
         self.mongo_collection_comments = None
         self.mongo_collection_reviews = None
         self.mongo_collection_users = None
         self.mongo_collection_scores = None
         self.mongo_collection_chapter_contents = None
+        self.mongo_collection_websites = None
+        self.scribblehub_website_id = None  # Lưu website_id của ScribbleHub
         
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
             try:
                 self.mongo_client = MongoClient(config.MONGODB_URI)
                 self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
                 self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
+                self.mongo_collection_story_info = self.mongo_db[config.MONGODB_COLLECTION_STORY_INFO]
                 self.mongo_collection_chapters = self.mongo_db["chapters"]
                 self.mongo_collection_comments = self.mongo_db["comments"]
                 self.mongo_collection_reviews = self.mongo_db["reviews"]
                 self.mongo_collection_users = self.mongo_db["users"]
                 self.mongo_collection_scores = self.mongo_db["scores"]
                 self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
-                safe_print("✅ Đã kết nối MongoDB với 7 collections")
+                self.mongo_collection_websites = self.mongo_db["websites"]
+                
+                # Kiểm tra và tạo ScribbleHub website nếu chưa có
+                scribblehub_id = self.ensure_scribblehub_website()
+                if scribblehub_id:
+                    self.scribblehub_website_id = scribblehub_id
+                
+                safe_print("✅ Đã kết nối MongoDB với 9 collections")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -120,6 +131,23 @@ class MongoHandler:
                 self.mongo_collection_stories.insert_one(story_data)
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
+    
+    def save_story_info(self, story_info_data):
+        """Lưu story info vào MongoDB"""
+        if not story_info_data or not self.mongo_collection_story_info:
+            return
+        
+        try:
+            existing = self.mongo_collection_story_info.find_one({"story_id": story_info_data.get("story_id")})
+            if existing:
+                self.mongo_collection_story_info.update_one(
+                    {"story_id": story_info_data.get("story_id")},
+                    {"$set": story_info_data}
+                )
+            else:
+                self.mongo_collection_story_info.insert_one(story_info_data)
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lưu story info vào MongoDB: {e}")
     
     def save_chapter(self, chapter_data):
         """Lưu chapter vào MongoDB ngay khi cào xong chapter và comments"""
@@ -386,6 +414,64 @@ class MongoHandler:
             return self.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
         except:
             return None
+    
+    def ensure_scribblehub_website(self):
+        """Kiểm tra và tạo ScribbleHub website nếu chưa có, trả về website_id"""
+        if not self.mongo_collection_websites:
+            return None
+        
+        try:
+            from src.utils import generate_id
+            
+            # Tìm website theo tên
+            existing = self.mongo_collection_websites.find_one({"website_name": "ScribbleHub"})
+            if existing:
+                # Đã có, trả về website_id
+                website_id = existing.get("website_id")
+                return website_id
+            else:
+                # Chưa có, tạo mới với id tự tạo (uuid)
+                website_id = generate_id()
+                website_data = {
+                    "website_id": website_id,
+                    "website_name": "ScribbleHub"
+                }
+                self.mongo_collection_websites.insert_one(website_data)
+                safe_print(f"✅ Đã tạo website ScribbleHub với website_id = {website_id}")
+                return website_id
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi đảm bảo ScribbleHub website: {e}")
+            return None
+    
+    def save_website(self, website_id, website_name):
+        """Lưu website vào MongoDB (update nếu đã có, insert nếu chưa)"""
+        if not website_id or not website_name or not self.mongo_collection_websites:
+            return None
+        
+        try:
+            existing = self.mongo_collection_websites.find_one({"website_id": website_id})
+            if existing:
+                self.mongo_collection_websites.update_one(
+                    {"website_id": website_id},
+                    {"$set": {"website_name": website_name}}
+                )
+            else:
+                website_data = {
+                    "website_id": website_id,
+                    "website_name": website_name
+                }
+                self.mongo_collection_websites.insert_one(website_data)
+            return website_id
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lưu website vào MongoDB: {e}")
+            return None
+    
+    def get_website_by_id(self, website_id):
+        """Lấy website theo website_id"""
+        if not website_id or not self.mongo_collection_websites:
+            return None
+        
+        return self.mongo_collection_websites.find_one({"website_id": website_id})
     
     def get_comment_by_web_id(self, web_comment_id):
         """Lấy comment theo web_comment_id"""
