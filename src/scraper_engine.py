@@ -489,6 +489,47 @@ class WattpadScraper:
         safe_print(f"\n🎉 Hoàn thành cào {len(stories_data)}/{len(story_ids)} bộ truyện")
         return stories_data
 
+    def check_paid_content(self, story_id):
+        """
+        Kiểm tra xem story có yêu cầu trả phí hay không
+        Sử dụng API: /v5/story/{story_id}/paid-content/metadata
+        
+        Args:
+            story_id: Story ID
+        
+        Returns:
+            dict with 'has_full_access' and 'is_paid' or None if error
+        """
+        if not self.page:
+            safe_print("⚠️ Playwright page not available for paid content check")
+            return None
+        
+        try:
+            # Use Playwright to call API (cần cookies/auth)
+            url = f"{config.BASE_URL}/v5/story/{story_id}/paid-content/metadata"
+            
+            self.rate_limiter.wait_if_needed()
+            response = self.page.request.get(url)
+            
+            if response.status == 200:
+                data = response.json()
+                story_info = data.get("story", {})
+                has_full_access = story_info.get("has_full_access", True)
+                is_paid = bool(story_info.get("price"))
+                
+                return {
+                    "has_full_access": has_full_access,
+                    "is_paid": is_paid,
+                    "price": story_info.get("price", [])
+                }
+            else:
+                safe_print(f"⚠️ Paid content API returned status {response.status}")
+                return None
+                
+        except Exception as e:
+            safe_print(f"⚠️ Error checking paid content: {e}")
+            return None
+
     def fetch_story_from_api(self, story_id, fields=None):
         """
         Lấy dữ liệu 1 bộ truyện từ Wattpad API
@@ -871,7 +912,19 @@ class WattpadScraper:
             safe_print(f"❌ Lỗi khi xử lý story metadata")
             return None
         
-        # 4. Optionally fetch chapters
+        # 4. CHECK PAID CONTENT trước khi fetch chapters
+        if fetch_chapters:
+            safe_print(f"   💰 Đang kiểm tra paid content...")
+            paid_info = self.check_paid_content(story_id)
+            
+            if paid_info and not paid_info.get("has_full_access", True):
+                safe_print(f"   ⛔ TRUYỆN NÀY CẦN TRẢ PHÍ ĐỂ XEM - Bỏ qua tất cả chapters")
+                safe_print(f"      💵 Price: {paid_info.get('price', 'Unknown')}")
+                safe_print(f"      🔒 Has full access: False")
+                # Vẫn lưu story metadata nhưng không cào chapters
+                fetch_chapters = False
+        
+        # 5. Optionally fetch chapters
         if fetch_chapters:
             safe_print(f"   📚 Đang lấy danh sách chapters...")
             chapters = []
