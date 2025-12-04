@@ -4,8 +4,8 @@ Stores all stats/metrics separate from core story data
 """
 
 STORY_INFO_SCHEMA = {
-    "infoId": None,                       # Auto-generated info ID
-    "storyId": "id",                      # Reference to story
+    "infoId": None,                       # Auto-generated wp_uuid_v7 (unique per story)
+    "storyId": "id",                      # Reference to story (wp_uuid_v7 format)
     "websiteId": None,                    # Reference to website
     "totalViews": "readCount",            # Total story views
     "averageViews": None,                 # Average views per chapter

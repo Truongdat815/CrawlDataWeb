@@ -62,30 +62,52 @@ class UserScraper(BaseScraper):
         }
         
         try:
-            # User info thường nằm trong prefetched['user.metadata']
+            # User info có thể nằm trong nhiều keys khác nhau
             for key, value in prefetched_data.items():
+                # Case 1: user.metadata (user profile page)
                 if key == "user.metadata" and "data" in value:
                     user_data = value["data"]
                     
-                    user_info["userId"] = user_data.get("name")
-                    user_info["userName"] = user_data.get("name")
+                    user_info["userId"] = user_data.get("name") or user_data.get("username")
+                    user_info["userName"] = user_data.get("name") or user_data.get("username")
                     user_info["avatar"] = user_data.get("avatar")
                     
-                    safe_print(f"✅ Trích xuất user: {user_info['userName']}")
-                    return user_info
+                    if user_info["userName"]:
+                        safe_print(f"      📌 User từ user.metadata: {user_info['userName']}")
+                        return user_info
+                
+                # Case 2: part.XXXXX.metadata -> group.user (story author)
+                if key.startswith("part.") and key.endswith(".metadata") and "data" in value:
+                    part_data = value.get("data", {})
+                    
+                    # User info nằm trong part.data.group.user
+                    if "group" in part_data and isinstance(part_data["group"], dict):
+                        group_data = part_data["group"]
+                        
+                        if "user" in group_data and isinstance(group_data["user"], dict):
+                            user_data = group_data["user"]
+                            
+                            user_info["userId"] = user_data.get("username") or user_data.get("name")
+                            user_info["userName"] = user_data.get("username") or user_data.get("name")
+                            user_info["avatar"] = user_data.get("avatar")
+                            
+                            if user_info["userName"]:
+                                safe_print(f"      📌 User từ part.group.user: {user_info['userName']}")
+                                return user_info
             
             return user_info
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi trích xuất user info: {e}")
             return user_info
     
-    def save_user_to_mongo(self, user_id, user_name):
+    def save_user_to_mongo(self, user_id, user_name, avatar=None):
         """
         Lưu user/author vào MongoDB
         
         Args:
             user_id: ID của user
             user_name: Tên hiển thị của user
+            avatar: Avatar URL (optional)
         """
         if not user_id or not user_name or not self.collection_exists("users"):
             return
@@ -101,6 +123,10 @@ class UserScraper(BaseScraper):
                 "userId": user_id,
                 "userName": user_name
             }
+            
+            # Add avatar if provided
+            if avatar:
+                user_data["avatar"] = avatar
             
             if existing:
                 # Update nếu user đã tồn tại

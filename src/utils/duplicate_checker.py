@@ -23,7 +23,7 @@ class DuplicateChecker:
         """Check if story already scraped and log result
         
         Args:
-            story_id: Story ID to check
+            story_id: Story ID to check (wp_uuid_v7 format)
             story_name: Optional story name for logging
         
         Returns:

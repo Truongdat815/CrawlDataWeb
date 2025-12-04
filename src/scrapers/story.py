@@ -8,6 +8,7 @@ from src import config
 from src.utils.validation import validate_against_schema
 from src.utils import download_image
 from src.schemas.story_schema import STORY_SCHEMA
+from src.scrapers.website import WebsiteScraper
 
 
 class StoryScraper(BaseScraper):
@@ -31,21 +32,22 @@ class StoryScraper(BaseScraper):
             story_data dict với đầy đủ thông tin story
         """
         try:
-            story_id = story_data.get("id")
+            web_story_id = str(story_data.get("id"))  # Original Wattpad ID
+            story_id = WebsiteScraper.generate_story_id(web_story_id, prefix="wp")
             cover_url = story_data.get("cover")
             
             # Download cover image nếu có URL
             cover_img_path = None
             if cover_url:
                 safe_print(f"   📥 Đang download ảnh cover...")
-                cover_img_path = download_image(cover_url, story_id)
+                cover_img_path = download_image(cover_url, web_story_id)  # Use web_story_id for filename
                 if cover_img_path:
                     safe_print(f"   ✅ Ảnh cover: {cover_img_path}")
             
             # Mapping from API response to new schema
             processed_story = {
-                "storyId": story_id,
-                "webStoryId": None,                  # Wattpad doesn't have separate web ID
+                "storyId": story_id,                  # wp_uuid_v7 (generated)
+                "webStoryId": web_story_id,          # Original Wattpad ID
                 "storyName": story_data.get("title"),
                 "storyUrl": story_data.get("url"),
                 "coverImage": cover_img_path if cover_img_path else cover_url,  # Use local path if available

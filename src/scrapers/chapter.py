@@ -20,6 +20,9 @@ from src.scrapers.base import BaseScraper, safe_print
 from src import config
 from src.utils.validation import validate_against_schema
 from src.schemas.chapter_schema import CHAPTER_SCHEMA
+from src.scrapers.website import WebsiteScraper
+from bs4 import BeautifulSoup
+import re
 
 
 class ChapterScraper(BaseScraper):
@@ -42,14 +45,17 @@ class ChapterScraper(BaseScraper):
             dict formatted according to new chapter schema, or None if invalid
         """
         try:
+            web_chapter_id = str(prefetched_data.get("id"))
+            chapter_id = WebsiteScraper.generate_chapter_id(web_chapter_id, prefix="wp")
+            
             mapped = {
-                "chapterId": str(prefetched_data.get("id")),
-                "webChapterId": None,                # Wattpad doesn't have separate web ID
+                "chapterId": chapter_id,              # wp_uuid_v7 (generated)
+                "webChapterId": web_chapter_id,      # Original Wattpad chapter ID
                 "order": prefetched_data.get("order", 0),
                 "chapterName": prefetched_data.get("title"),
                 "chapterUrl": prefetched_data.get("url"),
                 "publishedTime": prefetched_data.get("createDate"),
-                "storyId": str(story_id),
+                "storyId": str(story_id),            # Parent story ID (wp_uuid_v7)
                 "voted": prefetched_data.get("voteCount", 0),
                 "views": prefetched_data.get("readCount", 0),
                 "totalComments": prefetched_data.get("commentCount", 0),
@@ -61,6 +67,72 @@ class ChapterScraper(BaseScraper):
         except Exception as e:
             safe_print(f"⚠️  Chapter validation failed: {e}")
             return None
+    
+    @staticmethod
+    def extract_chapter_urls_from_html(page_html, story_id, max_chapters=None):
+        """
+        Extract chapter URLs from HTML page (table of contents)
+        Looks for links that are actual chapter pages, not stories
+        
+        Args:
+            page_html: HTML content of story page
+            story_id: Story ID (for building URLs)
+            max_chapters: Max chapters to extract (from config if None)
+        
+        Returns:
+            List of chapter URLs
+        """
+        if max_chapters is None:
+            max_chapters = config.MAX_CHAPTERS_PER_STORY
+        
+        try:
+            soup = BeautifulSoup(page_html, 'html.parser')
+            chapter_urls = []
+            
+            # Find chapter links - looking for links in table of contents
+            # Usually they are in a list or table of chapters
+            for link in soup.find_all('a', href=True):
+                href_raw = link.get('href')
+                if not href_raw:
+                    continue
+                
+                href = str(href_raw) if href_raw else ''
+                if not href:
+                    continue
+                
+                # Chapter URLs typically have pattern: /123456-chapter-name
+                # NOT /story/123 (that's a story ID)
+                # Look for patterns like:
+                # - /123456-chapter-name (part number followed by dash and name)
+                # - /story/123/part/456 (story part format)
+                
+                if re.search(r'/\d+-', href) or re.search(r'/part/\d+', href) or re.search(r'/story/\d+/\d+', href):
+                    # Make sure it's full URL
+                    if not href.startswith('http'):
+                        href = config.BASE_URL + href
+                    
+                    # Extract chapter ID to avoid duplicates
+                    # Match either /123456 or /part/123456
+                    chapter_id_match = re.search(r'/(\d+)(?:-|/|$)', href)
+                    if chapter_id_match:
+                        chapter_id = chapter_id_match.group(1)
+                        # Skip if chapter ID is likely a story ID (too small range typically)
+                        if chapter_id == story_id:
+                            continue
+                        
+                        # Check if already added
+                        if not any(chapter_id in url for url in chapter_urls):
+                            chapter_urls.append(href)
+                            
+                            # Check limit
+                            if max_chapters and len(chapter_urls) >= max_chapters:
+                                break
+            
+            safe_print(f"   ✅ Extract {len(chapter_urls)} chapter URLs từ HTML")
+            return chapter_urls
+        except Exception as e:
+            safe_print(f"   ⚠️ Lỗi khi extract chapter URLs: {e}")
+            return []
     
     @staticmethod
     def extract_chapters_from_prefetched(prefetched_data, story_id):

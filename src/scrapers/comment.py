@@ -16,6 +16,7 @@ from src.scrapers.base import BaseScraper, safe_print
 from src import config
 from src.utils.validation import validate_against_schema
 from src.schemas.comment_schema import COMMENT_SCHEMA
+from src.scrapers.website import WebsiteScraper
 import uuid
 
 
@@ -36,14 +37,20 @@ class CommentScraper(BaseScraper):
         Returns validated dict or None
         """
         try:
-            # Extract commentId
-            cid = None
+            # Extract web commentId
+            web_comment_id = None
             try:
-                cid = api_comment.get("commentId", {}).get("resourceId")
+                web_comment_id = api_comment.get("commentId", {}).get("resourceId")
             except Exception:
-                cid = None
-            if not cid:
-                cid = str(uuid.uuid4())
+                web_comment_id = None
+            
+            # Generate UUID v7 for commentId
+            if web_comment_id:
+                comment_id = WebsiteScraper.generate_comment_id(web_comment_id, prefix="wp")
+            else:
+                # Fallback: generate random UUID if no web ID
+                comment_id = f"wp_{uuid.uuid4()}"
+                web_comment_id = str(uuid.uuid4())  # Random web ID as placeholder
 
             # Extract resource info
             res = api_comment.get("resource") or {}
@@ -58,8 +65,8 @@ class CommentScraper(BaseScraper):
             user_avatar = user_data.get("avatar")
 
             mapped = {
-                "commentId": cid,
-                "webCommentId": None,                # Wattpad doesn't have separate web ID
+                "commentId": comment_id,             # wp_uuid_v7
+                "webCommentId": web_comment_id,      # Original Wattpad comment ID
                 "commentText": api_comment.get("text", ""),
                 "time": api_comment.get("created"),
                 "chapterId": str(chapter_id),

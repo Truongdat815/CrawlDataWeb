@@ -27,7 +27,7 @@ except ImportError:
 # Import scrapers
 from src.scrapers import (
     StoryScraper, ChapterScraper, CommentScraper, 
-    UserScraper, ChapterContentScraper, safe_print
+    UserScraper, ChapterContentScraper, WebsiteScraper, safe_print
 )
 
 # Import duplicate checker
@@ -43,30 +43,41 @@ except ImportError:
 
 
 class RateLimiter:
-    """Rate limiter để tránh ban IP"""
+    """Thread-safe rate limiter để tránh ban IP"""
     
     def __init__(self, max_requests=None, time_window=60):
         self.max_requests = max_requests or config.MAX_REQUESTS_PER_MINUTE
         self.time_window = time_window  # seconds
         self.request_times = deque()
+        self._lock = threading.Lock()  # Thread-safe
     
     def wait_if_needed(self):
-        """Wait nếu vượt quá rate limit"""
-        now = datetime.now()
+        """Wait nếu vượt quá rate limit (thread-safe)"""
+        # ✅ FIX: Tách logic tính toán (trong lock) và sleep (ngoài lock)
+        sleep_time = 0
         
-        # Remove requests ngoài time window
-        while self.request_times and self.request_times[0] < now - timedelta(seconds=self.time_window):
-            self.request_times.popleft()
+        with self._lock:
+            now = datetime.now()
+            
+            # Remove requests ngoài time window
+            while self.request_times and self.request_times[0] < now - timedelta(seconds=self.time_window):
+                self.request_times.popleft()
+            
+            # Nếu đã max requests, tính sleep time
+            if len(self.request_times) >= self.max_requests:
+                sleep_time = (self.request_times[0] + timedelta(seconds=self.time_window) - now).total_seconds()
+            
+            # Record this request TRƯỚC khi sleep (reserve slot)
+            self.request_times.append(datetime.now())
         
-        # Nếu đã max requests, wait
-        if len(self.request_times) >= self.max_requests:
-            sleep_time = (self.request_times[0] + timedelta(seconds=self.time_window) - now).total_seconds()
-            if sleep_time > 0:
-                safe_print(f"⏳ Rate limit reached. Waiting {sleep_time:.1f}s...")
-                time.sleep(sleep_time)
+        # ✅ Sleep NGOÀI lock để không block threads khác
+        if sleep_time > 0:
+            safe_print(f"⏳ [Thread {threading.current_thread().name}] Rate limit reached. Waiting {sleep_time:.1f}s...")
+            time.sleep(sleep_time)
         
-        # Record this request
-        self.request_times.append(datetime.now())
+        # Random delay cũng ngoài lock
+        delay = random.uniform(0.5, 2.0)
+        time.sleep(delay)
 
 
 def retry_request(func, max_retries=None, backoff=None):
@@ -222,8 +233,14 @@ class WattpadScraper:
         except Exception as e:
             safe_print(f"⚠️ Human behavior simulation failed: {e}")
 
-    def start(self, username=None, password=None):
-        """Khởi động scrapers, Playwright browser, và login"""
+    def start(self, username=None, password=None, worker_id=None):
+        """Khởi động scrapers, Playwright browser, và login
+        
+        Args:
+            username: Wattpad username (optional)
+            password: Wattpad password (optional)
+            worker_id: Worker ID for parallel crawling (to create unique profile dir)
+        """
         try:
             # Khởi tạo Playwright persistent context (simulate real browser)
             from playwright.sync_api import sync_playwright
@@ -231,10 +248,15 @@ class WattpadScraper:
 
             self.playwright = sync_playwright().start()
 
-            # Ensure profile dir exists
+            # Ensure profile dir exists - UNIQUE per worker to avoid conflicts
             profile_dir = getattr(config, 'PLAYWRIGHT_PROFILE_DIR', None)
             if not profile_dir:
                 profile_dir = os.path.join(os.getcwd(), '.pw-profile')
+            
+            # Add worker_id suffix if provided (for parallel crawling)
+            if worker_id is not None:
+                profile_dir = f"{profile_dir}_worker_{worker_id}"
+            
             os.makedirs(profile_dir, exist_ok=True)
 
             # Setup proxy using helper
@@ -314,6 +336,15 @@ class WattpadScraper:
         self.comment_scraper = CommentScraper(self.page, self.mongo_db)
         self.user_scraper = UserScraper(self.page, self.mongo_db)
         self.chapter_content_scraper = ChapterContentScraper(self.page, self.mongo_db)
+        self.website_scraper = WebsiteScraper(self.page, self.mongo_db)
+        
+        # Tạo Wattpad website entry nếu chưa có (1 lần duy nhất)
+        if self.mongo_collection_websites is not None:
+            self.wattpad_website = WebsiteScraper.get_or_create_wattpad_website(
+                self.mongo_collection_websites
+            )
+        else:
+            self.wattpad_website = None
         
         safe_print("✅ Bot đã khởi động! (Wattpad API crawler + Playwright + Login)")
 
@@ -471,7 +502,8 @@ class WattpadScraper:
             API response dict or None
         """
         if fields is None:
-            fields = "id,title,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description"
+            # Include tags and categories in default fields
+            fields = "id,title,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description,tags,categories"
         
         url = f"{config.BASE_URL}/api/v3/stories/{story_id}"
         params = {"fields": fields}
@@ -653,71 +685,6 @@ class WattpadScraper:
             safe_print(f"⚠️ Lỗi khi lấy comments: {e}")
             return []
 
-    def extract_chapter_urls_from_html(self, page_html, story_id, max_chapters=None):
-        """
-        Extract chapter URLs from HTML page (table of contents)
-        Looks for links that are actual chapter pages, not stories
-        
-        Args:
-            page_html: HTML content of story page
-            story_id: Story ID (for building URLs)
-            max_chapters: Max chapters to extract (from config if None)
-        
-        Returns:
-            List of chapter URLs
-        """
-        if max_chapters is None:
-            max_chapters = config.MAX_CHAPTERS_PER_STORY
-        
-        try:
-            soup = BeautifulSoup(page_html, 'html.parser')
-            chapter_urls = []
-            
-            # Find chapter links - looking for links in table of contents
-            # Usually they are in a list or table of chapters
-            for link in soup.find_all('a', href=True):
-                href_raw = link.get('href')
-                if not href_raw:
-                    continue
-                
-                href = str(href_raw) if href_raw else ''
-                if not href:
-                    continue
-                
-                # Chapter URLs typically have pattern: /123456-chapter-name
-                # NOT /story/123 (that's a story ID)
-                # Look for patterns like:
-                # - /123456-chapter-name (part number followed by dash and name)
-                # - /story/123/part/456 (story part format)
-                
-                if re.search(r'/\d+-', href) or re.search(r'/part/\d+', href) or re.search(r'/story/\d+/\d+', href):
-                    # Make sure it's full URL
-                    if not href.startswith('http'):
-                        href = config.BASE_URL + href
-                    
-                    # Extract chapter ID to avoid duplicates
-                    # Match either /123456 or /part/123456
-                    chapter_id_match = re.search(r'/(\d+)(?:-|/|$)', href)
-                    if chapter_id_match:
-                        chapter_id = chapter_id_match.group(1)
-                        # Skip if chapter ID is likely a story ID (too small range typically)
-                        if chapter_id == story_id:
-                            continue
-                        
-                        # Check if already added
-                        if not any(chapter_id in url for url in chapter_urls):
-                            chapter_urls.append(href)
-                            
-                            # Check limit
-                            if max_chapters and len(chapter_urls) >= max_chapters:
-                                break
-            
-            safe_print(f"   ✅ Extract {len(chapter_urls)} chapter URLs từ HTML")
-            return chapter_urls
-        except Exception as e:
-            safe_print(f"   ⚠️ Lỗi khi extract chapter URLs: {e}")
-            return []
-
     def fetch_chapters_from_api(self, story_id):
         """
         Lấy danh sách tất cả chapters từ Wattpad API
@@ -868,7 +835,31 @@ class WattpadScraper:
             prefetched_data = self.fetch_html_prefetched_data(chapter_url_for_prefetch)
             if prefetched_data:
                 extra_info = StoryScraper.extract_story_info_from_prefetched(prefetched_data, story_id)
-                user_info = UserScraper.extract_user_info_from_prefetched(prefetched_data)
+                
+                # 2a. Extract author from prefetched data (cho truyện free/premium có prefetched)
+                user_info_from_prefetch = UserScraper.extract_user_info_from_prefetched(prefetched_data)
+                if user_info_from_prefetch and user_info_from_prefetch.get("userName"):
+                    if self.user_scraper:
+                        self.user_scraper.save_user_to_mongo(
+                            user_info_from_prefetch["userName"],
+                            user_info_from_prefetch["userName"],
+                            user_info_from_prefetch.get("avatar")
+                        )
+                        safe_print(f"   ✅ Saved author from prefetched: {user_info_from_prefetch['userName']}")
+        
+        # 2b. Extract and save author/user info from API response (fallback + bổ sung)
+        if story_data.get("user"):
+            user_data = story_data["user"]
+            user_name = user_data.get("name")
+            avatar = user_data.get("avatar")
+            
+            if user_name and self.user_scraper:
+                self.user_scraper.save_user_to_mongo(
+                    user_name,  # Use username as userId
+                    user_name,
+                    avatar
+                )
+                safe_print(f"   ✅ Saved author from API: {user_name}")
         
         # 3. Process story metadata (kèm tags + categories)
         if self.story_scraper is None:
@@ -891,14 +882,17 @@ class WattpadScraper:
             if parts_from_api and isinstance(parts_from_api, list):
                 safe_print(f"   ℹ️ Sử dụng `parts[]` từ API làm nguồn chapters ({len(parts_from_api)})")
                 for idx_p, p in enumerate(parts_from_api, 1):
+                    web_chapter_id = str(p.get("id"))
+                    chapter_id = WebsiteScraper.generate_chapter_id(web_chapter_id, prefix="wp")
+                    
                     chapter_obj = {
-                        "chapterId": str(p.get("id")),
-                        "webChapterId": None,
+                        "chapterId": chapter_id,              # wp_uuid_v7
+                        "webChapterId": web_chapter_id,      # Original Wattpad ID
                         "order": idx_p - 1,
                         "chapterName": p.get("title"),
                         "chapterUrl": p.get("url") if p.get("url") and p.get("url").startswith("http") else (config.BASE_URL + str(p.get("url")) if p.get("url") else f"{config.BASE_URL}/{p.get('id')}"),
                         "publishedTime": p.get("createDate"),
-                        "storyId": str(story_id),
+                        "storyId": story_id,                 # Parent wp_uuid_v7
                         "voted": p.get("voteCount", 0),
                         "views": p.get("readCount", 0),
                         "totalComments": p.get("commentCount", 0),
@@ -921,7 +915,7 @@ class WattpadScraper:
                         self._simulate_human_behavior(self.page)
                         
                         page_html = self.page.content()
-                        chapter_urls = self.extract_chapter_urls_from_html(page_html, story_id, config.MAX_CHAPTERS_PER_STORY)
+                        chapter_urls = ChapterScraper.extract_chapter_urls_from_html(page_html, story_id, config.MAX_CHAPTERS_PER_STORY)
                         
                         if chapter_urls:
                             safe_print(f"   ✅ Tìm được {len(chapter_urls)} chapters từ HTML")
@@ -943,10 +937,13 @@ class WattpadScraper:
                         # URL format: https://www.wattpad.com/1234567-chapter-name
                         chapter_id_match = re.search(r'/([0-9]+)(?:-|/|$)', url)
                         if chapter_id_match:
-                            chapter_id = chapter_id_match.group(1)
+                            web_chapter_id = chapter_id_match.group(1)
+                            chapter_id = WebsiteScraper.generate_chapter_id(web_chapter_id, prefix="wp")
+                            
                             chapter_obj = {
-                                "chapterId": chapter_id,
-                                "storyId": story_id,
+                                "chapterId": chapter_id,         # wp_uuid_v7
+                                "webChapterId": web_chapter_id,  # Original Wattpad ID
+                                "storyId": story_id,             # Parent wp_uuid_v7
                                 "chapterUrl": url,
                                 "chapterName": f"Chapter {len(chapters) + 1}",
                             }
@@ -1066,12 +1063,16 @@ class WattpadScraper:
                         import traceback
                         traceback.print_exc()
                 
-                processed_story["chapters"] = chapters
+                # Don't add chapters to story document - they're stored separately
+                # processed_story["chapters"] = chapters  # REMOVED - chapters in separate collection
                 safe_print(f"\n   ✅ Hoàn thành cào {len(chapters)} chapters")
         
-        # Save story to MongoDB (CUỐI CÙNG)
+        # Save story to MongoDB (WITHOUT chapters array)
         if self.story_scraper:
             safe_print(f"   💾 Đang lưu story vào MongoDB...")
+            # Make sure no chapters array in story document
+            if "chapters" in processed_story:
+                del processed_story["chapters"]
             self.story_scraper.save_story_to_mongo(processed_story)
             
             # Also save story info (stats/metrics)
@@ -1086,9 +1087,10 @@ class WattpadScraper:
 
     # ==================== PAGE SCRAPING METHODS ====================
     
-    def fetch_story_links_from_page(self, page_url, max_stories=None):
+    @staticmethod
+    def fetch_story_links_from_page(page_url, max_stories=None):
         """
-        Quét trang Wattpad để lấy danh sách story links
+        Quét trang Wattpad để lấy danh sách story links (STATIC - không cần rate limiter)
         
         Args:
             page_url: URL trang danh sách stories
@@ -1100,11 +1102,12 @@ class WattpadScraper:
         if max_stories is None:
             max_stories = config.MAX_STORIES_PER_BATCH
         
-        # Apply rate limiting
-        self.rate_limiter.wait_if_needed()
-        
         def make_request():
-            response = self.http.get(page_url, timeout=config.REQUEST_TIMEOUT)
+            response = requests.get(
+                page_url,
+                timeout=config.REQUEST_TIMEOUT,
+                headers={"User-Agent": config.DEFAULT_USER_AGENT}
+            )
             response.raise_for_status()
             return response.content
         
@@ -1268,17 +1271,24 @@ class WattpadScraper:
 
     def _save_to_json(self, data):
         """
-        Lưu dữ liệu vào file JSON
+        Lưu dữ liệu vào file JSON (WITHOUT chapters array)
         """
+        # Remove chapters array if present (chapters stored separately in DB)
+        data_to_save = data.copy()
+        if "chapters" in data_to_save:
+            del data_to_save["chapters"]
+        
         # Sanitize filename
-        story_name = data.get('storyName', 'unknown')
+        story_name = data_to_save.get('storyName', 'unknown')
         safe_name = story_name.replace('/', '_').replace('\\', '_').replace('|', '_').replace('?', '_').replace('*', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace(':', '_')[:50]
-        filename = f"{data['storyId']}_{safe_name}.json"
+        # Use webStoryId for filename (original Wattpad ID is more readable)
+        web_story_id = data_to_save.get('webStoryId', data_to_save.get('storyId', 'unknown'))
+        filename = f"{web_story_id}_{safe_name}.json"
         save_path = os.path.join(config.JSON_DIR, filename)
         
         try:
             with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
+                json.dump(data_to_save, f, ensure_ascii=False, indent=4)
             safe_print(f"💾 Đã lưu dữ liệu vào file: {save_path}")
 
         except Exception as e:

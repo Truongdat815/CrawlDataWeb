@@ -63,6 +63,22 @@ DELAY_THREAD_START = 0.5 # Giây - Delay để stagger các thread khi bắt đ�
 MAX_WORKERS = 3  # Số thread để cào chapters song song (có thể tăng lên 6-10 nếu CPU/RAM cho phép)
 MAX_FICTION_WORKERS = 2  # Số fiction crawl song song cùng lúc (có thể tăng lên 3-5)
 
+# Multi-Threading Parallel Crawling (NEW)
+MAX_STORY_WORKERS = 3  # Số stories cào song song (3-5 recommended)
+MAX_CHAPTER_WORKERS = 2  # Số chapters cào song song mỗi story (2-3 recommended)
+USE_PARALLEL_CRAWLING = True  # Enable/disable parallel crawling
+PARALLEL_RANDOM_DELAY_MIN = 1.0  # Min delay giữa requests (seconds)
+PARALLEL_RANDOM_DELAY_MAX = 3.0  # Max delay giữa requests (seconds)
+
+# Retry & Recovery Configuration
+MAX_STORY_RETRIES = 2  # Số lần retry cho failed stories (0 = no retry)
+RETRY_DELAY = 5.0  # Delay trước khi retry (seconds)
+
+# Progress Checkpoint Configuration
+ENABLE_CHECKPOINTS = True  # Enable progress checkpoints
+CHECKPOINT_INTERVAL = 10  # Save checkpoint mỗi N stories
+CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")  # Checkpoint file path
+
 # ========== CẤU HÌNH TỐI ƯU (Uncomment để dùng) ==========
 # DELAY_BETWEEN_CHAPTERS = 0.5  # Tăng tốc 4x
 # DELAY_BETWEEN_REQUESTS = 1   # Tăng tốc 5x
@@ -79,7 +95,7 @@ MAX_STORIES_PER_BATCH = 5  # Tối đa 100 stories khi scrape batch
 # Thêm credentials để tự động đăng nhập
 # Để trống nếu muốn dùng cookies từ file
 WATTPAD_USERNAME = "buonnguqua"
-WATTPAD_PASSWORD = "goodbyenha123"
+WATTPAD_PASSWORD = "Abcdefgh123@"
 
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True

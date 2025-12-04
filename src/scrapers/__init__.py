@@ -7,6 +7,7 @@ Each module handles one collection:
 - comment: Chapter comments
 - user: User/author information
 - content: Chapter content (separate from metadata)
+- website: Website source management (multi-source support)
 """
 
 from src.scrapers.story import StoryScraper
@@ -14,6 +15,7 @@ from src.scrapers.chapter import ChapterScraper
 from src.scrapers.comment import CommentScraper
 from src.scrapers.user import UserScraper
 from src.scrapers.chapter_content import ChapterContentScraper
+from src.scrapers.website import WebsiteScraper
 from src.scrapers.base import BaseScraper, safe_print
 
 __all__ = [
@@ -22,6 +24,7 @@ __all__ = [
     'CommentScraper',
     'UserScraper',
     'ChapterContentScraper',
+    'WebsiteScraper',
     'BaseScraper',
     'safe_print'
 ]

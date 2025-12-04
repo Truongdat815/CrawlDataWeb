@@ -68,21 +68,112 @@ class WattpadLoginService:
             
             # Navigate to login page
             page.goto("https://www.wattpad.com/login", timeout=30000)
-            time.sleep(2)
+            time.sleep(3)
             
-            # Fill username/email
+            # Step 1: Click "Đăng nhập với email" button to show email/password form
+            safe_print(f"   🖱️ Click 'Đăng nhập với email'...")
+            email_login_clicked = False
+            email_button_selectors = [
+                'button.btn-block.btn-primary.submit-btn-new',  # From screenshot
+                'button:has-text("Đăng nhập với email")',
+                'button:has-text("Log in with email")',
+                'button:has-text("Sign in with email")',
+                '.submit-btn-new',
+                'button.submit-btn-new'
+            ]
+            
+            for selector in email_button_selectors:
+                try:
+                    if page.locator(selector).count() > 0:
+                        page.click(selector, timeout=5000)
+                        email_login_clicked = True
+                        safe_print(f"      ✓ Clicked: {selector}")
+                        time.sleep(2)  # Wait for form to appear
+                        break
+                except Exception as e:
+                    continue
+            
+            if not email_login_clicked:
+                safe_print(f"   ⚠️ Không tìm thấy button 'Đăng nhập với email', thử tiếp form trực tiếp...")
+            
+            # Step 2: Fill username/email input
             safe_print(f"   📝 Nhập email/username...")
-            page.fill('input[name="login"]', username)
+            
+            # Try different selectors for username field
+            username_filled = False
+            username_selectors = [
+                'input[name="username"]',
+                'input[name="email"]', 
+                'input[type="text"]',
+                'input[type="email"]',
+                '#username',
+                '#email'
+            ]
+            
+            for selector in username_selectors:
+                try:
+                    if page.locator(selector).count() > 0:
+                        page.fill(selector, username, timeout=5000)
+                        username_filled = True
+                        safe_print(f"      ✓ Used selector: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not username_filled:
+                safe_print(f"   ❌ Không tìm thấy username/email input field")
+                return False
+            
             time.sleep(0.5)
             
             # Fill password
             safe_print(f"   🔐 Nhập password...")
-            page.fill('input[name="password"]', password)
+            password_filled = False
+            password_selectors = [
+                'input[name="password"]',
+                'input[type="password"]',
+                '#password'
+            ]
+            
+            for selector in password_selectors:
+                try:
+                    if page.locator(selector).count() > 0:
+                        page.fill(selector, password, timeout=5000)
+                        password_filled = True
+                        safe_print(f"      ✓ Used selector: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not password_filled:
+                safe_print(f"   ❌ Không tìm thấy password input field")
+                return False
+            
             time.sleep(0.5)
             
             # Click login button
             safe_print(f"   ⬆️ Submit form...")
-            page.click('button[type="submit"]')
+            button_clicked = False
+            button_selectors = [
+                'button[type="submit"]',
+                'button:has-text("Log in"):not(:has-text("Google")):not(:has-text("Facebook"))',
+                'input[type="submit"]',
+                '.submit-button'
+            ]
+            
+            for selector in button_selectors:
+                try:
+                    if page.locator(selector).count() > 0:
+                        page.click(selector, timeout=5000)
+                        button_clicked = True
+                        safe_print(f"      ✓ Used selector: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not button_clicked:
+                safe_print(f"   ⚠️ Không tìm thấy submit button, thử enter key...")
+                page.keyboard.press("Enter")
             
             # Wait for login to complete (redirect to home or profile)
             try:

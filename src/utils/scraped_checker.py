@@ -58,7 +58,7 @@ class ScrapedChecker:
         """Check if story đã được cào (check cache, NOT query DB)
         
         Args:
-            story_id: Story ID to check
+            story_id: Story ID to check (wp_uuid_v7 format)
         
         Returns:
             True nếu story đã tồn tại, False nếu chưa

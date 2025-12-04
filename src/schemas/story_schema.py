@@ -4,8 +4,8 @@ Maps API response to Wattpad story schema
 """
 
 STORY_SCHEMA = {
-    "storyId": "id",                      # Unique story ID
-    "webStoryId": None,                   # Website-specific story ID (for other sites)
+    "storyId": None,                      # Auto-generated wp_uuid_v7 (primary key)
+    "webStoryId": "id",                  # Original story ID from website (e.g., Wattpad ID)
     "storyName": "title",                 # Story title
     "storyUrl": "url",                    # Story URL
     "coverImage": "cover",                # Cover image URL

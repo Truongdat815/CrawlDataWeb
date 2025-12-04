@@ -3,4 +3,6 @@
 # Each line = one page to scrape
 
 https://www.wattpad.com/stories/fantasy
+https://www.wattpad.com/stories/truy%E1%BB%87n-ng%E1%BA%AFn
+
 

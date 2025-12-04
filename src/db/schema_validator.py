@@ -11,9 +11,10 @@ def get_comment_validator():
     return {
         "$jsonSchema": {
             "bsonType": "object",
-            "required": ["commentId", "userId", "chapterId"],
+            "required": ["commentId", "webCommentId", "userId", "chapterId"],
             "properties": {
-                "commentId": {"bsonType": "string"},
+                "commentId": {"bsonType": "string"},        # wp_uuid_v7
+                "webCommentId": {"bsonType": "string"},    # Original web ID
                 "parentId": {"bsonType": ["string", "null"]},
                 "react": {"bsonType": "int"},
                 "userId": {"bsonType": "string"},
@@ -32,9 +33,10 @@ def get_story_validator():
     return {
         "$jsonSchema": {
             "bsonType": "object",
-            "required": ["storyId", "storyName"],
+            "required": ["storyId", "webStoryId", "storyName"],
             "properties": {
-                "storyId": {"bsonType": "string"},
+                "storyId": {"bsonType": "string"},          # wp_uuid_v7 format
+                "webStoryId": {"bsonType": "string"},      # Original website ID
                 "storyName": {"bsonType": "string"},
                 "storyUrl": {"bsonType": "string"},
                 "userId": {"bsonType": ["string", "null"]},
@@ -57,10 +59,11 @@ def get_chapter_validator():
     return {
         "$jsonSchema": {
             "bsonType": "object",
-            "required": ["chapterId", "storyId", "chapterName"],
+            "required": ["chapterId", "webChapterId", "storyId", "chapterName"],
             "properties": {
-                "chapterId": {"bsonType": ["string", "int"]},
-                "storyId": {"bsonType": "string"},
+                "chapterId": {"bsonType": "string"},        # wp_uuid_v7 format
+                "webChapterId": {"bsonType": "string"},    # Original website ID
+                "storyId": {"bsonType": "string"},         # Parent wp_uuid_v7
                 "chapterName": {"bsonType": "string"},
                 "voted": {"bsonType": "int"},
                 "views": {"bsonType": "int"},

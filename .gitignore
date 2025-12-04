@@ -11,12 +11,22 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Test data
-tests/test_data/
+# Test files and data
+tests/
+test_*.py
+test_*.json
+test_*.txt
 
 # Data outputs (production)
 data/json/*.json
 data/images/
+
+# Playwright browser profiles and logs
+data/playwright_profile/
+data/playwright_profile_worker_*/
+*.log
+*.log.old
+wattpad_cookies.json
 
 # Debug outputs
 debug/

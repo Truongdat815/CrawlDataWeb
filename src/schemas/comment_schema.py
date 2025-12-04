@@ -4,8 +4,8 @@ Maps API response to Wattpad comment schema
 """
 
 COMMENT_SCHEMA = {
-    "commentId": "id",                    # Unique comment ID
-    "webCommentId": None,                 # Website-specific comment ID
+    "commentId": None,                    # Auto-generated wp_uuid_v7
+    "webCommentId": "id",                # Original comment ID from website
     "commentText": "body",                # Comment content
     "time": "createdAt",                  # Creation timestamp
     "chapterId": None,                    # Chapter being commented on
