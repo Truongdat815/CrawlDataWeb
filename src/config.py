@@ -89,7 +89,7 @@ CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")  # Checkpoint 
 # Giới hạn số lượng chapters và comments khi cào
 MAX_CHAPTERS_PER_STORY = None  # None = Lấy tất cả, số = Tối đa N chapters
 MAX_COMMENTS_PER_CHAPTER = None  # None = Lấy tất cả, số = Tối đa N comments
-MAX_STORIES_PER_BATCH = 5  # Tối đa 100 stories khi scrape batch
+MAX_STORIES_PER_BATCH = 20  # Tối đa 100 stories khi scrape batch
 
 # ========== WATTPAD LOGIN CREDENTIALS ==========
 # Thêm credentials để tự động đăng nhập

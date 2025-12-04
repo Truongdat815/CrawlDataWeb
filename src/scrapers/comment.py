@@ -63,6 +63,12 @@ class CommentScraper(BaseScraper):
             user_data = api_comment.get("user") or {}
             user_name = user_data.get("name", "Anonymous")
             user_avatar = user_data.get("avatar")
+            
+            # Debug log
+            if not user_name or user_name == "Anonymous":
+                safe_print(f"      ⚠️ No user data in comment! API keys: {list(api_comment.keys())}")
+                if "user" in api_comment:
+                    safe_print(f"         User object keys: {list(user_data.keys())}")
 
             mapped = {
                 "commentId": comment_id,             # wp_uuid_v7
@@ -71,13 +77,13 @@ class CommentScraper(BaseScraper):
                 "time": api_comment.get("created"),
                 "chapterId": str(chapter_id),
                 "userId": user_name,                 # Use real username as userId
+                "userName": user_name,               # Display name
                 "replyToUserId": None,               # Not available in v5 API
                 "parentId": None,                    # Will be set for reply comments in process_v5_comments_page
                 "isRoot": is_root,
                 "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0) if isinstance(api_comment.get("sentiments"), dict) else 0,
                 "websiteId": None,                   # To be set when website collection is implemented
                 # Keep extra fields for user scraper
-                "_userName": user_name,
                 "_userAvatar": user_avatar,
             }
 
@@ -89,12 +95,13 @@ class CommentScraper(BaseScraper):
             return None
 
     @staticmethod
-    def process_v5_comments_page(api_data, chapter_id, namespace='paragraphs', comment_scraper=None, parent_comment_id=None):
+    def process_v5_comments_page(api_data, chapter_id, namespace='paragraphs', comment_scraper=None, parent_comment_id=None, website_id=None):
         """
         Process a v5 comments page JSON: map & save comments, return (mapped_list, parent_ids_with_replies, next_cursor)
         
         Args:
             parent_comment_id: For namespace='comments', this is the parent comment ID for replies
+            website_id: Wattpad website ID to assign to comments
         """
         results = []
         parents = []
@@ -111,6 +118,10 @@ class CommentScraper(BaseScraper):
                 if namespace == 'comments' and parent_comment_id:
                     mapped['parentId'] = parent_comment_id
                     mapped['isRoot'] = False
+                
+                # Set websiteId if provided
+                if website_id:
+                    mapped['websiteId'] = website_id
 
                 # Save to DB via existing method
                 try:
@@ -179,10 +190,18 @@ class CommentScraper(BaseScraper):
             status = getattr(resp, 'status', None) or getattr(resp, 'status_code', None)
             if status is not None and int(status) >= 400:
                 safe_print(f"⚠️ Playwright request returned status {status}")
+                safe_print(f"   URL: {url}")
                 return None
 
             try:
-                return resp.json()
+                data = resp.json()
+                # Debug log
+                if data:
+                    comments_count = len(data.get('comments', []))
+                    safe_print(f"   🔍 API Response: {comments_count} comments, pagination: {bool(data.get('pagination'))}")
+                    if comments_count == 0:
+                        safe_print(f"   ⚠️ API returned 0 comments. Full response keys: {list(data.keys())}")
+                return data
             except Exception:
                 try:
                     text = resp.text()

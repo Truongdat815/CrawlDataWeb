@@ -10,6 +10,7 @@ COMMENT_SCHEMA = {
     "time": "createdAt",                  # Creation timestamp
     "chapterId": None,                    # Chapter being commented on
     "userId": "author.id",                # User ID
+    "userName": "author.name",            # User display name
     "replyToUserId": None,                # User ID being replied to
     "parentId": "parentId",               # Parent comment ID (for threading)
     "isRoot": None,                       # Whether this is a root comment

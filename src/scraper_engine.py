@@ -623,10 +623,13 @@ class WattpadScraper:
                 try:
                     # Pass parent_comment_id when fetching replies (namespace='comments')
                     parent_id = resource_id if namespace == 'comments' else None
+                    # Pass websiteId from wattpad_website (key is 'website_id' in DB)
+                    website_id = self.wattpad_website.get("website_id") if self.wattpad_website else None
                     mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(
                         data, chapter_id, namespace, 
                         comment_scraper=self.comment_scraper,
-                        parent_comment_id=parent_id
+                        parent_comment_id=parent_id,
+                        website_id=website_id
                     )
                 except Exception as e:
                     safe_print(f"      ⚠️ Error processing v5 page: {e}")
