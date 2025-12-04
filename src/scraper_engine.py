@@ -10,6 +10,7 @@ from src.utils import safe_print
 # Import handlers
 from src.handlers.base_handler import BaseHandler
 from src.handlers.mongo_handler import MongoHandler
+from src.handlers.user_handler import UserHandler
 from src.handlers.story_handler import StoryHandler
 from src.handlers.chapter_handler import ChapterHandler
 from src.handlers.comment_handler import CommentHandler
@@ -27,6 +28,9 @@ class RoyalRoadScraper(BaseHandler):
         # Khởi tạo MongoDB handler
         self.mongo = MongoHandler()
         
+        # Khởi tạo UserHandler (không cần page)
+        self.user_handler = UserHandler(self.mongo)
+        
         # Handlers sẽ được khởi tạo sau khi start() được gọi (khi có page)
         self.story_handler = None
         self.chapter_handler = None
@@ -39,9 +43,9 @@ class RoyalRoadScraper(BaseHandler):
         self.start_browser()
         
         # Khởi tạo handlers sau khi có page
-        self.comment_handler = CommentHandler(self.page, self.mongo)
-        self.review_handler = ReviewHandler(self.page, self.mongo)
-        self.story_handler = StoryHandler(self.page, self.mongo)
+        self.comment_handler = CommentHandler(self.page, self.mongo, self.user_handler)
+        self.review_handler = ReviewHandler(self.page, self.mongo, self.user_handler)
+        self.story_handler = StoryHandler(self.page, self.mongo, self.user_handler)
         self.chapter_handler = ChapterHandler(self.mongo, self.comment_handler)
     
     def stop(self):
@@ -120,7 +124,7 @@ class RoyalRoadScraper(BaseHandler):
             # Lấy story_id từ DB
             existing_story = self.mongo.get_story_by_web_id(web_story_id)
             if existing_story:
-                story_id = existing_story.get("id")
+                story_id = existing_story.get("story_id")
             else:
                 from src.utils import generate_id
                 story_id = generate_id()
@@ -130,11 +134,6 @@ class RoyalRoadScraper(BaseHandler):
         chapter_info_list = self.story_handler.get_all_chapters_from_pagination(story_url)
         
         safe_print(f"--> Tổng cộng tìm thấy {len(chapter_info_list)} chương từ tất cả các trang.")
-        
-        # 3.5. Lấy reviews cho toàn bộ truyện
-        safe_print("... Đang lấy reviews cho toàn bộ truyện")
-        reviews = self.review_handler.scrape_reviews(story_url, story_id)
-        safe_print(f"✅ Đã lấy được {len(reviews)} reviews")
         
         # 4. Cào các chương song song với ThreadPoolExecutor (GIỮ ĐÚNG THỨ TỰ)
         # Lọc ra các chapters chưa được cào (để tránh cào trùng)
@@ -198,6 +197,62 @@ class RoyalRoadScraper(BaseHandler):
         successful_chapters = sum(1 for ch in chapter_results if ch is not None)
         safe_print(f"✅ Đã hoàn thành {successful_chapters}/{len(chapter_info_list)} chương (theo đúng thứ tự)")
         
-        # 5. Cập nhật story trong MongoDB (chapters và reviews đã được lưu vào collections riêng)
+        # 5. Sau khi lưu tất cả chapters, quay lại URL của truyện để scrape reviews
+        safe_print("... Đang quay lại trang truyện để lấy reviews")
+        self.page.goto(story_url, timeout=config.TIMEOUT)
+        time.sleep(2)
+        
+        safe_print("... Đang lấy reviews cho toàn bộ truyện")
+        reviews = self.review_handler.scrape_reviews(story_url, story_id)
+        safe_print(f"✅ Đã lấy được {len(reviews)} reviews")
+        
+        # 6. Scrape profile của các users chưa có đầy đủ thông tin (song song với ThreadPoolExecutor)
+        safe_print("\n📋 Đang scrape profile của các users chưa có đầy đủ thông tin...")
+        users_to_scrape = list(self.mongo.mongo_collection_users.find({
+            "$or": [
+                {"created_date": ""},
+                {"followers": ""}
+            ],
+            "user_url": {"$ne": ""}
+        }))
+        
+        if users_to_scrape:
+            safe_print(f"   Tìm thấy {len(users_to_scrape)} users cần scrape profile")
+            safe_print(f"   🚀 Bắt đầu scrape với {self.max_workers} thread...")
+            
+            # Dictionary để map future -> user info
+            future_to_user = {}
+            
+            # Sử dụng ThreadPoolExecutor - mỗi worker có browser instance riêng
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit tất cả users cần scrape
+                for index, user in enumerate(users_to_scrape):
+                    user_url = user.get("user_url")
+                    web_user_id = user.get("web_user_id")
+                    
+                    if user_url:
+                        future = executor.submit(
+                            self.user_handler.scrape_user_profile_worker,
+                            user_url, web_user_id, index
+                        )
+                        future_to_user[future] = (web_user_id, index)
+                
+                # Thu thập kết quả
+                completed = 0
+                for future in as_completed(future_to_user):
+                    web_user_id, index = future_to_user[future]
+                    try:
+                        user_id = future.result()
+                        completed += 1
+                        status = "✅" if user_id else "⚠️"
+                        safe_print(f"    {status} Hoàn thành user {index + 1}/{len(users_to_scrape)}: {web_user_id} (đã xong {completed}/{len(users_to_scrape)})")
+                    except Exception as e:
+                        safe_print(f"    ❌ Lỗi khi scrape profile user {web_user_id}: {e}")
+            
+            safe_print(f"✅ Đã hoàn thành scrape profile của {completed}/{len(users_to_scrape)} users")
+        else:
+            safe_print("   ✅ Tất cả users đã có đầy đủ thông tin")
+        
+        # 7. Cập nhật story trong MongoDB (chapters và reviews đã được lưu vào collections riêng)
         if story_data:
             self.mongo.save_story(story_data)

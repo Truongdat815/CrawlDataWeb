@@ -44,6 +44,30 @@ class ChapterHandler:
             
             safe_print(f"    🔄 Thread-{index}: Đang cào chương {index + 1}")
             
+            # Lấy web_chapter_id từ URL TRƯỚC để kiểm tra chapter đã có chưa
+            web_chapter_id = ""
+            try:
+                url_parts = url.split("/chapter/")
+                if len(url_parts) > 1:
+                    web_chapter_id = url_parts[1].split("/")[0]
+            except:
+                web_chapter_id = ""
+            
+            # Kiểm tra chapter đã có trong DB chưa - nếu có rồi thì chỉ scrape comments
+            if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
+                safe_print(f"      ⏭️  Thread-{index}: Chapter {web_chapter_id} đã có trong DB, chỉ scrape comments")
+                existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
+                existing_chapter_id = existing_chapter.get("chapter_id") if existing_chapter else None
+                if existing_chapter_id:
+                    # Navigate đến chapter URL để scrape comments
+                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
+                    worker_page.goto(url, timeout=config.TIMEOUT)
+                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
+                    # Chỉ scrape comments, không scrape chapter content
+                    self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", existing_chapter_id)
+                return None
+            
+            # Chapter chưa có trong DB, scrape chapter content
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
             worker_page.goto(url, timeout=config.TIMEOUT)
             worker_page.wait_for_selector(".chapter-inner", timeout=10000)
@@ -74,29 +98,9 @@ class ChapterHandler:
             
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
             
-            web_chapter_id = ""
-            try:
-                url_parts = url.split("/chapter/")
-                if len(url_parts) > 1:
-                    web_chapter_id = url_parts[1].split("/")[0]
-            except:
-                web_chapter_id = ""
-            
-            if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
-                safe_print(f"      ⏭️  Thread-{index}: Bỏ qua chapter {web_chapter_id} (đã có trong DB)")
-                existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
-                existing_chapter_id = existing_chapter.get("id") if existing_chapter else None
-                if existing_chapter_id:
-                    self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", existing_chapter_id)
-                return None
-            
             chapter_id = generate_id()
             
-            safe_print(f"      💬 Thread-{index}: Đang lấy comments cho chương")
-            self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
-            
-            time.sleep(config.DELAY_BETWEEN_CHAPTERS)
-            
+            # Lưu chapter content trước
             if content and chapter_id:
                 if not self.mongo.is_chapter_content_scraped(chapter_id):
                     content_id = generate_id()
@@ -104,17 +108,28 @@ class ChapterHandler:
                 else:
                     safe_print(f"      ⏭️  Thread-{index}: Bỏ qua content chapter {web_chapter_id} (đã có trong DB)")
             
+            # Tạo và lưu chapter_data vào DB TRƯỚC khi scrape comments
             chapter_data = {
-                "id": chapter_id,
+                "chapter_id": chapter_id,
                 "web_chapter_id": web_chapter_id,
-                "name": title,
-                "url": url,
-                "published_time": published_time,
                 "order": order,
-                "story_id": story_id
+                "chapter_name": title,
+                "chapter_url": url,
+                "published_time": published_time,
+                "story_id": story_id,
+                "voted": "",
+                "views": "",
+                "total_comments": ""
             }
             
             self.mongo.save_chapter(chapter_data)
+            safe_print(f"      ✅ Thread-{index}: Đã lưu chapter {web_chapter_id} vào DB")
+            
+            # Sau khi lưu chapter vào DB, mới scrape comments
+            safe_print(f"      💬 Thread-{index}: Đang lấy comments cho chương")
+            self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
+            
+            time.sleep(config.DELAY_BETWEEN_CHAPTERS)
             
             return chapter_data
             

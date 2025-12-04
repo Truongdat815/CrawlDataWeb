@@ -9,14 +9,16 @@ from src.utils import safe_print, generate_id
 class CommentHandler:
     """Handler cho comment scraping"""
     
-    def __init__(self, page, mongo_handler):
+    def __init__(self, page, mongo_handler, user_handler):
         """
         Args:
             page: Playwright page object (có thể là None nếu chỉ dùng worker methods)
             mongo_handler: MongoHandler instance
+            user_handler: UserHandler instance
         """
         self.page = page
         self.mongo = mongo_handler
+        self.user_handler = user_handler
     
     def get_max_comment_page(self, url):
         """Lấy số trang comments tối đa từ pagination"""
@@ -178,7 +180,7 @@ class CommentHandler:
                     if is_in_subcomments:
                         continue
                     
-                    comment_list = self.scrape_single_comment_recursive(comment_elem, chapter_id, parent_id=None)
+                    comment_list = self.scrape_single_comment_recursive(comment_elem, chapter_id, parent_id=None, page=self.page)
                     if comment_list:
                         comments.extend(comment_list)
                 except Exception as e:
@@ -344,7 +346,7 @@ class CommentHandler:
             safe_print(f"      ⚠️ Lỗi khi lấy comments: {e}")
             return []
     
-    def scrape_single_comment_recursive(self, comment_elem, chapter_id="", parent_id=None, parent_user_id=None):
+    def scrape_single_comment_recursive(self, comment_elem, chapter_id="", parent_id=None, parent_user_id=None, page=None):
         """
         Hàm đệ quy để lấy một comment và tất cả replies của nó, trả về danh sách phẳng (flat)
         
@@ -353,6 +355,7 @@ class CommentHandler:
             chapter_id: ID của chapter
             parent_id: ID của parent comment (comment_id mà nó reply, None nếu là comment gốc)
             parent_user_id: User ID của parent comment (dùng để tạo reply_to_user_id)
+            page: Playwright page object (từ worker thread, nếu None thì dùng self.page)
         """
         result_list = []
         
@@ -371,9 +374,9 @@ class CommentHandler:
                     if subcomments_list.count() > 0:
                         reply_comments = subcomments_list.locator("div.comment").all()
                         existing_comment = self.mongo.get_comment_by_web_id(web_comment_id)
-                        existing_comment_id = existing_comment.get("id") if existing_comment else None
+                        existing_comment_id = existing_comment.get("comment_id") if existing_comment else None
                         for reply_elem in reply_comments:
-                            reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=existing_comment_id, parent_user_id=None)
+                            reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=existing_comment_id, parent_user_id=None, page=page)
                             if reply_list:
                                 result_list.extend(reply_list)
                 except:
@@ -382,50 +385,12 @@ class CommentHandler:
             
             comment_id = generate_id()
             
-            web_user_id = ""
-            username = ""
-            try:
-                username_selectors = [
-                    "h4.media-heading span.name a",
-                    "h4.media-heading .name a",
-                    ".media-heading span.name a",
-                    ".media-heading .name a[href*='/profile/']",
-                    "h4.media-heading a[href*='/profile/']",
-                    ".media-heading a[href*='/profile/']"
-                ]
-                
-                for selector in username_selectors:
-                    try:
-                        username_elem = media_elem.locator(selector).first
-                        if username_elem.count() > 0:
-                            username = username_elem.inner_text().strip()
-                            href = username_elem.get_attribute("href") or ""
-                            if "/profile/" in href:
-                                web_user_id = href.split("/profile/")[1].split("/")[0] if "/profile/" in href else ""
-                            if username:
-                                break
-                    except:
-                        continue
-                
-                if not username:
-                    try:
-                        username_elem = media_elem.locator(".media-heading a[href*='/profile/']").first
-                        if username_elem.count() > 0:
-                            username = username_elem.inner_text().strip()
-                            href = username_elem.get_attribute("href") or ""
-                            if "/profile/" in href:
-                                web_user_id = href.split("/profile/")[1].split("/")[0] if "/profile/" in href else ""
-                    except:
-                        pass
-                        
-                if not username:
-                    username = "[Unknown]"
-            except:
-                username = "[Unknown]"
-            
+            # Lấy user từ comment element
+            web_user_id, username, user_url = self.user_handler.scrape_user_from_element(media_elem)
             user_id = None
             if web_user_id and username:
-                user_id = self.mongo.save_user(web_user_id, username)
+                # Lưu user cơ bản trước (không scrape profile ngay - sẽ scrape sau khi xong tất cả comments)
+                user_id = self.user_handler.save_user(web_user_id, username, user_url, page=None)
             
             comment_text = ""
             try:
@@ -476,16 +441,21 @@ class CommentHandler:
             reply_to_user_id = parent_user_id if parent_user_id else None
             is_root = (parent_id is None or parent_id == "")
             
+            # lấy website_id của Royal Road
+            website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else ""
+
             comment_data = {
-                "id": comment_id,
+                "comment_id": comment_id,
                 "web_comment_id": web_comment_id,
                 "comment_text": comment_text,
                 "time": timestamp,
                 "chapter_id": chapter_id,
-                "parent_id": parent_id if parent_id else None,
                 "user_id": user_id,
+                "reply_to_user_id": reply_to_user_id if reply_to_user_id else None,
+                "parent_id": parent_id if parent_id else None,
                 "is_root": is_root,
-                "reply_to_user_id": reply_to_user_id if reply_to_user_id else None
+                "react": "",
+                "website_id": website_id
             }
             
             self.mongo.save_comment(comment_data)
@@ -497,7 +467,7 @@ class CommentHandler:
                     reply_comments = subcomments_list.locator("div.comment").all()
                     
                     for reply_elem in reply_comments:
-                        reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=comment_id, parent_user_id=user_id)
+                        reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=comment_id, parent_user_id=user_id, page=page)
                         if reply_list:
                             result_list.extend(reply_list)
             except Exception as e:

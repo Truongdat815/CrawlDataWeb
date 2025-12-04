@@ -10,14 +10,16 @@ from src.utils import safe_print, generate_id, convert_html_to_formatted_text
 class ReviewHandler:
     """Handler cho review scraping"""
     
-    def __init__(self, page, mongo_handler):
+    def __init__(self, page, mongo_handler, user_handler):
         """
         Args:
             page: Playwright page object
             mongo_handler: MongoHandler instance
+            user_handler: UserHandler instance
         """
         self.page = page
         self.mongo = mongo_handler
+        self.user_handler = user_handler
     
     def scrape_reviews(self, story_url, story_id):
         """
@@ -119,25 +121,22 @@ class ReviewHandler:
             except:
                 pass
             
-            web_user_id = ""
-            username = ""
-            try:
-                username_elem = review_elem.locator("a[href*='/profile/'], .username, .reviewer-name, [class*='username']").first
-                if username_elem.count() > 0:
-                    href = username_elem.get_attribute("href") or ""
-                    if "/profile/" in href:
-                        web_user_id = href.split("/profile/")[1].split("/")[0] if "/profile/" in href else ""
-                    username = username_elem.inner_text().strip()
-            except:
-                pass
-            
-            user_id = None
-            if web_user_id and username:
-                user_id = self.mongo.save_user(web_user_id, username)
+            # Lấy user từ review element
+            # Truyền page vào để tự động scrape profile
+            user_id = self.user_handler.scrape_and_save_user_from_element(
+                review_elem,
+                selectors=["a[href*='/profile/']", ".username", ".reviewer-name", "[class*='username']"],
+                page=self.page
+            )
             
             web_chapter_id = ""
             try:
-                chapter_elem = review_elem.locator("a[href*='/chapter/'], .chapter-link, [class*='chapter']").first
+                # Lấy chapter link từ review header - theo HTML mẫu: <a href="/fiction/chapter/371224">100. Sacrifice</a>
+                chapter_elem = review_elem.locator("h5.bold.font-red-sunglo a[href*='/chapter/']").first
+                if chapter_elem.count() == 0:
+                    # Fallback: thử các selector khác
+                    chapter_elem = review_elem.locator("a[href*='/chapter/'], .chapter-link, [class*='chapter']").first
+                
                 if chapter_elem.count() > 0:
                     href = chapter_elem.get_attribute("href") or ""
                     if "/chapter/" in href:
@@ -149,7 +148,8 @@ class ReviewHandler:
             if web_chapter_id:
                 existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
                 if existing_chapter:
-                    chapter_id = existing_chapter.get("id")
+                    # Sửa: Dùng "chapter_id" thay vì "id" (đây là khóa chính trong DB)
+                    chapter_id = existing_chapter.get("chapter_id")
             
             time_str = ""
             try:
@@ -234,8 +234,11 @@ class ReviewHandler:
             except:
                 pass
             
+            # lấy website_id của Royal Road
+            website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else ""
+            
             review_data = {
-                "id": review_id,
+                "review_id": review_id,
                 "web_review_id": web_review_id,
                 "title": title,
                 "time": time_str,
@@ -244,7 +247,8 @@ class ReviewHandler:
                 "chapter_id": chapter_id,
                 "story_id": story_id,
                 "score_id": score_id,
-                "is_review_swap": is_review_swap
+                "is_review_swap": is_review_swap,
+                "website_id": website_id
             }
             
             if score_id:

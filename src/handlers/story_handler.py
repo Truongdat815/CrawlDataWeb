@@ -11,14 +11,16 @@ from src import utils
 class StoryHandler:
     """Handler cho story metadata scraping và chapter list discovery"""
     
-    def __init__(self, page, mongo_handler):
+    def __init__(self, page, mongo_handler, user_handler):
         """
         Args:
             page: Playwright page object
             mongo_handler: MongoHandler instance
+            user_handler: UserHandler instance
         """
         self.page = page
         self.mongo = mongo_handler
+        self.user_handler = user_handler
     
     def get_story_urls_from_best_rated(self, num_stories=10, start_from=0):
         """
@@ -81,7 +83,7 @@ class StoryHandler:
             # Lấy story_id đã có từ DB
             existing_story = self.mongo.get_story_by_web_id(web_story_id)
             if existing_story:
-                story_id = existing_story.get("id")
+                story_id = existing_story.get("story_id")
             else:
                 story_id = generate_id()
             return None, story_id  # Không cần cào metadata nữa
@@ -98,13 +100,15 @@ class StoryHandler:
         local_img_path = utils.download_image(img_url_raw, web_story_id)
         
         # Lấy author (web_user_id từ profile URL)
-        web_author_id = self.page.locator(".fic-title h4 a").first.get_attribute("href").split("/")[2]
-        author_name = self.page.locator(".fic-title h4 a").first.inner_text()
+        author_link = self.page.locator(".fic-title h4 a").first
+        author_href = author_link.get_attribute("href")
+        author_name = author_link.inner_text()
         
-        # Lưu user (author) ngay vào MongoDB và lấy author_id (rr_{uuid}) để dùng làm FK
-        author_id = None
-        if web_author_id and author_name:
-            author_id = self.mongo.save_user(web_author_id, author_name)
+        # Lưu user (author) ngay vào MongoDB và lấy user_id (rr_{uuid}) để dùng làm FK
+        # Truyền page vào để tự động scrape profile
+        user_id = None
+        if author_href and author_name:
+            user_id = self.user_handler.scrape_and_save_user_from_href(author_href, author_name, self.page)
         
         # Lấy category
         category = self.page.locator(".fiction-info span").first.inner_text()
@@ -211,38 +215,60 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy total chapters: {e}")
         
-        # Tạo story_data
+        # Tạo story_data (chỉ các fields cơ bản)
         story_data = {
-            "id": story_id,
+            "story_id": story_id,
             "web_story_id": web_story_id,
-            "name": title,
-            "url": story_url,
+            "story_name": title,
+            "story_url": story_url,
             "cover_image": local_img_path,
             "category": category,
             "status": status,
-            "tags": tags,
+            "genres": tags,
+            "tags": [], # list tags để trống
             "description": description,
+            "user_id": user_id,  # FK to users
+            "total_chapters": total_chapters,  # Đảm bảo luôn có field
+        }
+        
+        # Tạo story_info_data (các fields thống kê/metrics)
+        info_id = generate_id()  # Tạo info_id mới
+        website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else ""
+        story_info_data = {
+            "info_id": info_id,
+            "story_id": story_id,  # FK to stories
+            "website_id": website_id,  # FK to websites
             "total_views": total_views,
             "average_views": average_views,
             "followers": followers,
             "favorites": favorites,
-            "ratings": ratings,
             "page_views": pages,
             "overall_score": overall_score,
             "style_score": style_score,
             "story_score": story_score,
             "grammar_score": grammar_score,
-            "character_score": character_score
+            "character_score": character_score,
+            "voted": "",  # Tổng vote của chap - để trống
+            "freeChapter": "",  # Để trống
+            "time": "",  # Thời gian đọc xong bộ - để trống
+            "release_rate": "",  # Để trống
+            "number_of_reader": "",  # Để trống
+            "rating_total": ratings,  # rating total
+            "total_views_chapters": "",  # Để trống
+            "total_word": "",  # Để trống
+            "average_words": "",  # Để trống
+            "last_updated": "",  # Để trống
+            "total_reviews": "",  # Để trống
+            "user_reading": "",  # Để trống
+            "user_plan_to_read": "",  # Để trống
+            "user_completed": "",  # Để trống
+            "user_paused": "",  # Để trống
+            "user_dropped": "",  # Để trống
         }
         
-        if author_id:
-            story_data["author_id"] = author_id
-        
-        if total_chapters:
-            story_data["total_chapters"] = total_chapters
-        
-        # Lưu story ngay khi cào xong metadata
+        # Lưu story và story_info ngay khi cào xong metadata
         self.mongo.save_story(story_data)
+        self.mongo.save_story_info(story_info_data)
         
         return story_data, story_id
     
