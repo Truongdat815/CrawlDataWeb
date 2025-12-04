@@ -32,11 +32,11 @@ class CommentScraper(BaseScraper):
     @staticmethod
     def map_v5_comment(api_comment, chapter_id):
         """
-        Map Wattpad v5 comment object to internal COMMENT_SCHEMA
+        Map Wattpad v5 comment object to new COMMENT_SCHEMA
         Returns validated dict or None
         """
         try:
-            # Normalize commentId
+            # Extract commentId
             cid = None
             try:
                 cid = api_comment.get("commentId", {}).get("resourceId")
@@ -45,34 +45,36 @@ class CommentScraper(BaseScraper):
             if not cid:
                 cid = str(uuid.uuid4())
 
+            # Extract resource info
             res = api_comment.get("resource") or {}
             resource_namespace = res.get("namespace")
-            resource_id = res.get("resourceId")
+            
+            # Determine if this is a root comment (namespace == 'parts' means chapter-level root)
+            is_root = resource_namespace == "parts"
+            
+            # Extract real user data
+            user_data = api_comment.get("user") or {}
+            user_name = user_data.get("name", "Anonymous")
+            user_avatar = user_data.get("avatar")
 
             mapped = {
                 "commentId": cid,
-                "parentId": None,
-                "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0) if isinstance(api_comment.get("sentiments"), dict) else 0,
-                "sentiments": api_comment.get("sentiments"),
-                "userId": str(uuid.uuid4()),
-                "userName": api_comment.get("user", {}).get("name", "Anonymous"),
-                "userAvatar": api_comment.get("user", {}).get("avatar"),
-                "chapterId": str(chapter_id),
-                "createdAt": api_comment.get("created"),
-                "modified": api_comment.get("modified"),
-                "deeplink": api_comment.get("deeplink"),
-                "replyCount": api_comment.get("replyCount", 0),
-                "resourceNamespace": resource_namespace,
-                "resourceId": resource_id,
-                "status": api_comment.get("status"),
+                "webCommentId": None,                # Wattpad doesn't have separate web ID
                 "commentText": api_comment.get("text", ""),
-                "paragraphIndex": None,
-                "type": "chapter_end" if resource_namespace == "parts" else "inline"
+                "time": api_comment.get("created"),
+                "chapterId": str(chapter_id),
+                "userId": user_name,                 # Use real username as userId
+                "replyToUserId": None,               # Not available in v5 API
+                "parentId": None,                    # Will be set for reply comments in process_v5_comments_page
+                "isRoot": is_root,
+                "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0) if isinstance(api_comment.get("sentiments"), dict) else 0,
+                "websiteId": None,                   # To be set when website collection is implemented
+                # Keep extra fields for user scraper
+                "_userName": user_name,
+                "_userAvatar": user_avatar,
             }
 
             # Validate
-            from src.schemas.comment_schema import COMMENT_SCHEMA
-            from src.utils.validation import validate_against_schema
             validated = validate_against_schema(mapped, COMMENT_SCHEMA, strict=False)
             return validated
         except Exception as e:
@@ -80,9 +82,12 @@ class CommentScraper(BaseScraper):
             return None
 
     @staticmethod
-    def process_v5_comments_page(api_data, chapter_id, namespace='paragraphs', comment_scraper=None):
+    def process_v5_comments_page(api_data, chapter_id, namespace='paragraphs', comment_scraper=None, parent_comment_id=None):
         """
         Process a v5 comments page JSON: map & save comments, return (mapped_list, parent_ids_with_replies, next_cursor)
+        
+        Args:
+            parent_comment_id: For namespace='comments', this is the parent comment ID for replies
         """
         results = []
         parents = []
@@ -94,6 +99,11 @@ class CommentScraper(BaseScraper):
                 mapped = CommentScraper.map_v5_comment(api_comment, chapter_id)
                 if not mapped:
                     continue
+                
+                # Set parentId for reply comments
+                if namespace == 'comments' and parent_comment_id:
+                    mapped['parentId'] = parent_comment_id
+                    mapped['isRoot'] = False
 
                 # Save to DB via existing method
                 try:

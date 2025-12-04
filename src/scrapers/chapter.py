@@ -32,30 +32,27 @@ class ChapterScraper(BaseScraper):
     @staticmethod
     def map_prefetched_to_chapter(prefetched_data, story_id):
         """
-        Map window.prefetched data to Wattpad chapter schema with validation
+        Map window.prefetched data to new chapter schema with validation
         
         Args:
-            prefetched_data: dict từ window.prefetched (data field)
-            story_id: ID của story (parent)
+            prefetched_data: dict from window.prefetched (data field)
+            story_id: ID of parent story
         
         Returns:
-            dict formatted theo Wattpad chapter schema, or None if invalid
+            dict formatted according to new chapter schema, or None if invalid
         """
         try:
             mapped = {
                 "chapterId": str(prefetched_data.get("id")),
-                "storyId": str(story_id),
+                "webChapterId": None,                # Wattpad doesn't have separate web ID
+                "order": prefetched_data.get("order", 0),
                 "chapterName": prefetched_data.get("title"),
+                "chapterUrl": prefetched_data.get("url"),
+                "publishedTime": prefetched_data.get("createDate"),
+                "storyId": str(story_id),
                 "voted": prefetched_data.get("voteCount", 0),
                 "views": prefetched_data.get("readCount", 0),
-                "commentCount": prefetched_data.get("commentCount", 0),
-                "wordCount": prefetched_data.get("wordCount", 0),
-                "publishedTime": prefetched_data.get("createDate"),
-                "lastUpdated": prefetched_data.get("modifyDate"),
-                "chapterUrl": prefetched_data.get("url"),
-                "rating": prefetched_data.get("rating"),
-                "pages": prefetched_data.get("pages", 1),
-                "order": prefetched_data.get("order", 0),
+                "totalComments": prefetched_data.get("commentCount", 0),
             }
             
             # ✅ Validate before return

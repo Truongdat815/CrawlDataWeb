@@ -178,12 +178,15 @@ class WattpadScraper:
                 if MongoClient is not None:
                     self.mongo_client = MongoClient(config.MONGODB_URI)
                     self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
-                    # Keep for backward compatibility
+                    # Create all required collections
                     self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
+                    self.mongo_collection_story_info = self.mongo_db["story_info"]
                     self.mongo_collection_chapters = self.mongo_db["chapters"]
+                    self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
                     self.mongo_collection_comments = self.mongo_db["comments"]
                     self.mongo_collection_users = self.mongo_db["users"]
-                    safe_print("✅ Đã kết nối MongoDB với 4 collections (Wattpad schema)")
+                    self.mongo_collection_websites = self.mongo_db["websites"]
+                    safe_print("✅ Đã kết nối MongoDB với 7 collections (stories, story_info, chapters, chapter_contents, comments, users, websites)")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -304,7 +307,9 @@ class WattpadScraper:
             safe_print("   Tiếp tục mà không có Playwright (chỉ dùng API)")
 
         # Khởi tạo scrapers (dù có Playwright hay không)
+        from src.scrapers.story_info import StoryInfoScraper
         self.story_scraper = StoryScraper(self.page, self.mongo_db)
+        self.story_info_scraper = StoryInfoScraper(self.page, self.mongo_db)
         self.chapter_scraper = ChapterScraper(self.page, self.mongo_db)
         self.comment_scraper = CommentScraper(self.page, self.mongo_db)
         self.user_scraper = UserScraper(self.page, self.mongo_db)
@@ -537,7 +542,13 @@ class WattpadScraper:
 
                 # Delegate mapping & saving to CommentScraper
                 try:
-                    mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(data, chapter_id, namespace, comment_scraper=self.comment_scraper)
+                    # Pass parent_comment_id when fetching replies (namespace='comments')
+                    parent_id = resource_id if namespace == 'comments' else None
+                    mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(
+                        data, chapter_id, namespace, 
+                        comment_scraper=self.comment_scraper,
+                        parent_comment_id=parent_id
+                    )
                 except Exception as e:
                     safe_print(f"      ⚠️ Error processing v5 page: {e}")
                     mapped_list, parents, next_cursor = [], [], None
@@ -882,16 +893,15 @@ class WattpadScraper:
                 for idx_p, p in enumerate(parts_from_api, 1):
                     chapter_obj = {
                         "chapterId": str(p.get("id")),
-                        "storyId": str(story_id),
-                        "chapterUrl": p.get("url") if p.get("url") and p.get("url").startswith("http") else (config.BASE_URL + str(p.get("url")) if p.get("url") else f"{config.BASE_URL}/{p.get('id')}"),
+                        "webChapterId": None,
+                        "order": idx_p - 1,
                         "chapterName": p.get("title"),
-                        "views": p.get("readCount", 0),
-                        "voted": p.get("voteCount", 0),
-                        "commentCount": p.get("commentCount", 0),
-                        "wordCount": p.get("length") or p.get("wordCount"),
+                        "chapterUrl": p.get("url") if p.get("url") and p.get("url").startswith("http") else (config.BASE_URL + str(p.get("url")) if p.get("url") else f"{config.BASE_URL}/{p.get('id')}"),
                         "publishedTime": p.get("createDate"),
-                        "lastUpdated": p.get("modifyDate"),
-                        "order": idx_p - 1
+                        "storyId": str(story_id),
+                        "voted": p.get("voteCount", 0),
+                        "views": p.get("readCount", 0),
+                        "totalComments": p.get("commentCount", 0),
                     }
                     chapters.append(chapter_obj)
 
@@ -985,7 +995,7 @@ class WattpadScraper:
                         chapter_prefetched_data = self.page.evaluate("() => window.prefetched")
                         
                         if chapter_prefetched_data:
-                            # Extract metadata từ prefetched
+                            # Extract metadata từ prefetched (NEW SCHEMA)
                             for key, value in chapter_prefetched_data.items():
                                 if key.startswith("part.") and "metadata" in key:
                                     if "data" in value:
@@ -994,11 +1004,9 @@ class WattpadScraper:
                                         chapter["views"] = chapter_meta.get("readCount", 0)
                                         chapter["voted"] = chapter_meta.get("voteCount", 0)
                                         chapter["order"] = chapter_meta.get("order", idx - 1)
-                                        chapter["commentCount"] = chapter_meta.get("commentCount", 0)
-                                        chapter["wordCount"] = chapter_meta.get("wordCount", 0)
-                                        chapter["rating"] = chapter_meta.get("rating", 0)
+                                        chapter["totalComments"] = chapter_meta.get("commentCount", 0)
                                         chapter["publishedTime"] = chapter_meta.get("createDate")
-                                        chapter["lastUpdated"] = chapter_meta.get("modifyDate")
+                                        chapter["webChapterId"] = None
                                         safe_print(f"      ✅ Metadata: {chapter['chapterName']}")
                                         break
                         else:
@@ -1017,7 +1025,7 @@ class WattpadScraper:
                             safe_print(f"      ✅ Content: {content_len} bytes")
                             
                             # Save chapter_content to MongoDB (collection riêng)
-                            if self.chapter_content_scraper is not None and self.mongo_db is not None:
+                            if self.chapter_content_scraper:
                                 self.chapter_content_scraper.save_chapter_content_to_mongo(chapter_content)
                         else:
                             safe_print(f"      ⚠️ Không extract được content")
@@ -1040,11 +1048,11 @@ class WattpadScraper:
                                 safe_print(f"      ✅ Comments: {len(chapter_comments)} comments")
                         
                         # Step 3e: Save chapter to MongoDB (NGAY SAU KHI HOÀN THÀNH)
-                        if self.chapter_scraper is not None and self.mongo_db is not None:
+                        if self.chapter_scraper:
                             self.chapter_scraper.save_chapter_to_mongo(chapter)
                         
                         # Step 3f: Save comments to MongoDB (nếu có)
-                        if fetch_comments and chapter_comments and self.comment_scraper is not None and self.mongo_db is not None:
+                        if fetch_comments and chapter_comments and self.comment_scraper:
                             # If v5 fetcher already saved comments to DB, skip double-saving
                             if getattr(self, '_v5_saved_flag', False):
                                 safe_print(f"      ℹ️ Comments already saved by v5 fetcher; skipping duplicate save")
@@ -1062,9 +1070,16 @@ class WattpadScraper:
                 safe_print(f"\n   ✅ Hoàn thành cào {len(chapters)} chapters")
         
         # Save story to MongoDB (CUỐI CÙNG)
-        if self.story_scraper is not None and self.mongo_db is not None:
+        if self.story_scraper:
             safe_print(f"   💾 Đang lưu story vào MongoDB...")
             self.story_scraper.save_story_to_mongo(processed_story)
+            
+            # Also save story info (stats/metrics)
+            if self.story_info_scraper:
+                safe_print(f"   💾 Đang lưu story info vào MongoDB...")
+                story_info = self.story_info_scraper.map_api_to_story_info(story_data)
+                if story_info:
+                    self.story_info_scraper.save_story_info(story_info)
         
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")
         return processed_story

@@ -42,32 +42,20 @@ class StoryScraper(BaseScraper):
                 if cover_img_path:
                     safe_print(f"   ✅ Ảnh cover: {cover_img_path}")
             
-            # Mapping từ API response (prefer API values; fallback to extra_info)
-            # Note: intentionally NOT including these fields in `stories` collection:
-            #   readerBrowseEligibility, firstPublishedPart, lastPublishedPart,
-            #   copyright, firstPartId, language
+            # Mapping from API response to new schema
             processed_story = {
                 "storyId": story_id,
+                "webStoryId": None,                  # Wattpad doesn't have separate web ID
                 "storyName": story_data.get("title"),
                 "storyUrl": story_data.get("url"),
-                "coverImg": cover_img_path if cover_img_path else cover_url,  # Use local path if available, else URL
+                "coverImage": cover_img_path if cover_img_path else cover_url,  # Use local path if available
                 "category": None,
                 "status": "completed" if story_data.get("completed") else "ongoing",
+                "genres": None,                      # Wattpad uses tags instead of genres
                 "tags": [],
                 "description": story_data.get("description", ""),
-                "totalChapters": story_data.get("numParts", 0),
-                "totalViews": story_data.get("readCount", 0),
-                "voted": story_data.get("voteCount", 0),
-                "mature": story_data.get("mature", False),
-                "freeChapter": not story_data.get("isPaywalled", False),
-                "time": story_data.get("createDate"),
                 "userId": story_data.get("user", {}).get("name"),
-                # additional useful metadata to persist
-                "length": story_data.get("length"),
-                "modifyDate": story_data.get("modifyDate"),
-                "cover_timestamp": story_data.get("cover_timestamp"),
-                "commentCount": story_data.get("commentCount"),
-                "rating": story_data.get("rating")
+                "totalChapters": story_data.get("numParts", 0),
             }
             # Prefer tags/categories from API response if available
             api_tags = story_data.get("tags")

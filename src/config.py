@@ -14,7 +14,7 @@ os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # Cấu hình Bot
 TIMEOUT = 60  # 60 giây
-HEADLESS = True # True = Chạy ngầm, False = Hiện trình duyệt
+HEADLESS = False # True = Chạy ngầm, False = Hiện trình duyệt
 
 # ========== RATE LIMITING & ERROR HANDLING ==========
 # Rate limiting để tránh ban IP từ Wattpad
