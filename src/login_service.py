@@ -47,6 +47,59 @@ class WattpadLoginService:
             safe_print(f"❌ Lỗi lưu cookies: {e}")
             return False
     
+    def is_already_logged_in(self, page):
+        """
+        Kiểm tra xem đã đăng nhập hay chưa bằng cách check URL hoặc cookies
+        
+        Args:
+            page: Playwright page object
+        
+        Returns:
+            True nếu đã đăng nhập
+        """
+        if page is None:
+            return False
+        
+        try:
+            # Method 1: Check cookies có auth token không
+            cookies = page.context.cookies()
+            for cookie in cookies:
+                # Wattpad auth cookies thường có tên như 'token', 'auth', 'session', etc.
+                if cookie.get('name') in ['token', 'auth', 'wp_id', 'session_id', '_session_id']:
+                    if cookie.get('value'):
+                        safe_print("   ✅ Phát hiện auth cookie - Đã đăng nhập rồi")
+                        self.is_authenticated = True
+                        self.cookies = cookies
+                        return True
+            
+            # Method 2: Navigate to home and check if redirected to login
+            current_url = page.url
+            if 'wattpad.com' in current_url and '/login' not in current_url:
+                # If we're on Wattpad but not on login page, try checking if user menu exists
+                try:
+                    # Check for user avatar/menu (indicates logged in)
+                    user_menu_selectors = [
+                        '.avatar',
+                        '[data-test="user-menu"]',
+                        'button[aria-label*="user" i]',
+                        '.user-avatar',
+                        'img[alt*="avatar" i]'
+                    ]
+                    
+                    for selector in user_menu_selectors:
+                        if page.locator(selector).count() > 0:
+                            safe_print(f"   ✅ Phát hiện user menu - Đã đăng nhập rồi")
+                            self.is_authenticated = True
+                            self.cookies = cookies
+                            return True
+                except:
+                    pass
+            
+            return False
+        except Exception as e:
+            safe_print(f"   ⚠️ Lỗi khi check login status: {e}")
+            return False
+
     def login_with_playwright(self, page, username, password):
         """
         Đăng nhập vào Wattpad dùng Playwright

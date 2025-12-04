@@ -314,7 +314,13 @@ class WattpadScraper:
                 safe_print("\n" + "="*60)
                 safe_print("🔑 WATTPAD LOGIN")
                 safe_print("="*60)
-                self.login_service.login_with_playwright(self.page, username, password)
+                
+                # Kiểm tra xem đã đăng nhập chưa
+                if self.login_service.is_already_logged_in(self.page):
+                    safe_print("✅ Đã đăng nhập rồi - Bỏ qua bước login")
+                else:
+                    # Chưa đăng nhập -> Thực hiện login
+                    self.login_service.login_with_playwright(self.page, username, password)
             else:
                 # Load cookies từ file nếu có
                 if self.login_service.load_cookies_from_file():
