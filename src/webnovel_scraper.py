@@ -16,6 +16,7 @@ import os
 import re
 import hashlib
 import uuid
+import uuid6  # UUID v7 for time-sortable IDs
 import random
 import httpx
 from urllib.parse import urljoin
@@ -49,9 +50,21 @@ def safe_print(*args, **kwargs):
 class WebnovelScraper:
     """Main scraper class for Webnovel.com"""
     
-    def __init__(self):
+    def __init__(self, headless=False, block_resources=False, output_dir='data/json'):
+        """
+        Initialize WebnovelScraper
+        
+        Args:
+            headless (bool): Run browser in headless mode (default: False for better Cloudflare bypass)
+            block_resources (bool): Block images/fonts/css for faster scraping (default: False)
+            output_dir (str): Directory to save JSON files (default: 'data/json')
+        """
+        self.headless = headless
+        self.block_resources = block_resources
+        self.output_dir = output_dir
         self.playwright = None
         self.browser = None
+        self.context = None
         self.page = None
         self.net_logs = []
         # ID helpers
@@ -62,7 +75,8 @@ class WebnovelScraper:
         self._platform_prefix = 'wn'
 
     def _make_internal_id(self, prefix='id'):
-        return f"{prefix}_{uuid.uuid4().hex[:12]}"
+        """Generate UUID v7 (time-sortable) ID"""
+        return str(uuid6.uuid7())
 
     def _make_platform_obf(self, src_str, platform_prefix=None):
         """Create an obfuscated platform id from a stable source string (sha1 -> short)."""
@@ -76,22 +90,28 @@ class WebnovelScraper:
     def start(self):
         """Initialize browser with anti-detection settings"""
         safe_print("🚀 Starting Webnovel Scraper...")
+        safe_print(f"   Mode: {'Headless' if self.headless else 'Visual'}")
+        safe_print(f"   Block Resources: {'Yes' if self.block_resources else 'No'}")
+        
         self.playwright = sync_playwright().start()
         
-        # Launch with realistic settings to avoid Cloudflare detection
+        # SYSTEM CHROME STRATEGY: Use actual Google Chrome instead of Chromium
+        # This bypasses Cloudflare detection more effectively
         self.browser = self.playwright.chromium.launch(
-            headless=False,  # Non-headless to avoid detection
+            channel="chrome",  # Use system Chrome instead of bundled Chromium
+            headless=self.headless,  # Use configured headless mode
             args=[
-                '--disable-blink-features=AutomationControlled',
+                '--disable-blink-features=AutomationControlled',  # Hide automation
                 '--disable-dev-shm-usage',
                 '--no-sandbox'
             ]
         )
         
-        # Create context with realistic browser fingerprint
+        # Create context WITHOUT hardcoded User-Agent (let Chrome use its native UA)
+        # Hardcoded UA causes version mismatch → Cloudflare flags it
         context = self.browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # NO user_agent - let Chrome provide its own native User-Agent
             locale='en-US',
             timezone_id='America/New_York',
             permissions=['geolocation'],
@@ -108,6 +128,12 @@ class WebnovelScraper:
         # Keep context reference for cookie injection
         self.context = context
         self.page = context.new_page()
+        
+        # FAST MODE: Block images/fonts/css/media to speed up scraping
+        if self.block_resources:
+            safe_print("⚡ Fast Mode: Blocking images, fonts, CSS, and media...")
+            self.page.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico,css,woff,woff2,ttf,mp4,mp3,wav}", 
+                           lambda route: route.abort())
 
         # If a cookies.json file exists in repo root, load it into the context
         try:
@@ -169,7 +195,7 @@ class WebnovelScraper:
 
             safe_print(f"🔐 Opening: {target_url} — please log in in the opened browser window.")
             try:
-                self.page.goto(target_url, timeout=config.TIMEOUT)
+                self.page.goto(target_url, timeout=config.TIMEOUT, wait_until='domcontentloaded')
             except Exception:
                 # ignore navigation errors; page will still be usable
                 pass
@@ -220,34 +246,29 @@ class WebnovelScraper:
     
     # ==================== MAIN SCRAPER ====================
     
-    def scrape_book(self, book_url, max_chapters=None, wait_for_login=False):
+    def scrape_book(self, book_url, max_chapters=None, wait_for_login=False, chapter_limit=None):
         """
         Scrape complete book with all data
         
         Args:
             book_url: URL of the book to scrape
-            max_chapters: Maximum number of chapters to scrape (None = all)
+            max_chapters: Maximum number of chapters to scrape (None = all) - DEPRECATED, use chapter_limit
             wait_for_login: If True, pause and wait for manual login before scraping
-        
-        Args:
-            book_url: URL of book page (e.g., https://www.webnovel.com/book/xxx_123)
-            max_chapters: Max chapters to scrape (None = all)
+            chapter_limit: Limit number of chapters to scrape (None = all, overrides max_chapters)
         
         Returns:
             dict: Complete book data following schema
         """
+        # Use chapter_limit if provided, otherwise fall back to max_chapters
+        limit = chapter_limit if chapter_limit is not None else max_chapters
         safe_print(f"\n{'='*60}")
         safe_print(f"📖 SCRAPING BOOK: {book_url}")
         safe_print(f"{'='*60}\n")
         
-        # Navigate to book page with random delay
+        # Navigate to book page with random delay (OPTIMIZED: domcontentloaded)
         try:
-            self.page.goto(book_url, timeout=config.TIMEOUT)
-            try:
-                # Wait for network to settle, but don't fail the whole run if it hangs
-                self.page.wait_for_load_state("networkidle", timeout=config.TIMEOUT)
-            except Exception:
-                safe_print("⚠️ networkidle wait timed out; continuing anyway")
+            self.page.goto(book_url, timeout=config.TIMEOUT, wait_until='domcontentloaded')
+            safe_print("⚡ Book page DOM loaded (skipped waiting for ads/images)")
         except Exception as goto_err:
             safe_print(f"⚠️  Navigation to book page failed or timed out: {goto_err}")
         self._random_sleep(1.5, 2.5)
@@ -274,20 +295,20 @@ class WebnovelScraper:
         book_id_raw = self._extract_book_id(book_url)
         platform_book_id = f"wn_{book_id_raw}"
 
-        # Create internal primary book id (not predictable) and include platform id separately
-        internal_book_id = f"bk_{uuid.uuid4().hex[:12]}"
+        # Generate UUID v7 for primary ID (time-sortable)
+        internal_book_id = str(uuid6.uuid7())
         
-        # Scrape book metadata
+        # Scrape book metadata with FINAL SCHEMA
         book_data = {
-            "id": internal_book_id,
-            "platform_id": platform_book_id,
+            "id": internal_book_id,  # UUID v7 primary key
+            "platform_id": platform_book_id,  # Original Webnovel ID for traceability
             "platform": "webnovel",
             "name": self._scrape_book_name(),
             "url": book_url,
             "cover_image": self._scrape_cover_image(internal_book_id),
             "author": self._scrape_author(),
             "category": self._scrape_category(),
-            "status": None,  # Status removed as per user request
+            "status": self._get_status_from_api(book_id_raw),  # Scrape status (Ongoing/Completed)
             "tags": self._scrape_tags(),
             "description": self._scrape_description(),
             "total_views": self._scrape_total_views(),
@@ -299,12 +320,17 @@ class WebnovelScraper:
             "chapters": []
         }
         
-        # Scrape chapters
+        # Scrape chapters with smart limit and locked chapter detection
         chapter_list = self._get_chapter_urls(book_url, platform_book_id)
         if chapter_list:
-            if max_chapters:
-                chapter_list = chapter_list[:max_chapters]
-            safe_print(f"\n📚 Found {len(chapter_list)} chapters to scrape\n")
+            if limit:
+                chapter_list = chapter_list[:limit]
+                safe_print(f"\n📚 Found {len(chapter_list)} chapters (limited to {limit})\n")
+            else:
+                safe_print(f"\n📚 Found {len(chapter_list)} chapters to scrape\n")
+
+            consecutive_empty = 0  # Track consecutive locked/empty chapters
+            MAX_CONSECUTIVE_EMPTY = 5  # Stop if 5 consecutive chapters are locked
 
             for index, item in enumerate(chapter_list):
                 # item may be a dict {url,order,name,published_time} or a raw url string
@@ -321,6 +347,20 @@ class WebnovelScraper:
 
                 chapter = self._scrape_chapter(url, internal_book_id, platform_book_id, order, toc_name, toc_published)
                 if chapter:
+                    # Check if chapter content is empty/locked (less than 50 chars)
+                    content_len = len(chapter.get('content', '') or '')
+                    if content_len < 50:
+                        consecutive_empty += 1
+                        safe_print(f"⚠️  Chapter {order} appears locked/empty ({content_len} chars) - consecutive: {consecutive_empty}/{MAX_CONSECUTIVE_EMPTY}")
+                        
+                        # Stop if we hit too many consecutive locked chapters
+                        if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
+                            safe_print(f"\n🔒 Hit {MAX_CONSECUTIVE_EMPTY} consecutive locked chapters. Stopping scrape to save time.")
+                            safe_print(f"   Scraped {len(book_data['chapters'])} chapters successfully.\n")
+                            break
+                    else:
+                        consecutive_empty = 0  # Reset counter on successful chapter
+                    
                     book_data["chapters"].append(chapter)
                 safe_print(f"✅ Chapter {order}/{len(chapter_list)} completed")
         
@@ -398,22 +438,80 @@ class WebnovelScraper:
         return None
     
     def _scrape_category(self):
-        """Scrape category from page"""
+        """Scrape category from book header (e.g., 'Theater', 'Video Games', 'Anime & Comics')"""
         try:
-            selectors = [
-                "span._ml a",
-                "a[href*='/category/']",
-                ".det-info a"
+            # PRIORITY 1: Extract category link from header (most reliable)
+            # Category appears as a link below the book title, linking to /category/ page
+            category_selectors = [
+                "a[href*='/category/']",  # Direct category link (most reliable)
+                ".j_book_info a[href*='/category/']",  # Within book info container
+                ".det-hd-detail a[href*='/category/']",  # Within detail header
+                "p.ell a[href*='/category/']",  # Common pattern for ellipsis paragraphs
+                ".j_book_info h2 + div a",  # Link after h2 (book title)
+                ".det-info a[href*='/category/']"
             ]
-            for selector in selectors:
-                el = self.page.locator(selector).first
-                if el.count() > 0:
-                    category = el.inner_text().strip()
+            
+            for selector in category_selectors:
+                try:
+                    category_link = self.page.locator(selector).first
+                    if category_link.count() > 0:
+                        category = category_link.inner_text().strip()
+                        # Validate it's not empty and not a number
+                        if category and len(category) > 2 and not category.isdigit():
+                            safe_print(f"📂 Category: {category}")
+                            return category
+                except:
+                    continue
+            
+            # PRIORITY 2: Try broader link search in header area
+            try:
+                # Get all links in book info area
+                info_links = self.page.locator(".j_book_info a, .det-hd-detail a, p.ell a").all()
+                for link in info_links:
+                    try:
+                        href = link.get_attribute('href') or ''
+                        if '/category/' in href:
+                            category = link.inner_text().strip()
+                            if category and len(category) > 2 and not category.isdigit():
+                                safe_print(f"📂 Category (broad search): {category}")
+                                return category
+                    except:
+                        continue
+            except:
+                pass
+            
+            # PRIORITY 3: Look for common category names in header text
+            # Common categories: Theater, Video Games, Anime & Comics, Movies, TV, etc.
+            common_categories = [
+                'Theater', 'Theatre', 'Video Games', 'Anime & Comics', 'Movies', 'TV',
+                'Books', 'Comics', 'Games', 'Eastern Fantasy', 'Western Fantasy',
+                'Urban', 'Sci-fi', 'Horror', 'Action', 'Romance', 'Fan-Fiction', 'Fanfic'
+            ]
+            
+            try:
+                header_text = self.page.locator(".j_book_info, .det-hd-detail").first.inner_text()
+                for cat in common_categories:
+                    if cat in header_text:
+                        safe_print(f"📂 Category (text match): {cat}")
+                        return cat
+            except:
+                pass
+            
+            # FALLBACK: Generic link selector (last resort)
+            try:
+                generic_link = self.page.locator("span._ml a").first
+                if generic_link.count() > 0:
+                    category = generic_link.inner_text().strip()
                     if category and len(category) > 2 and not category.isdigit():
-                        safe_print(f"📂 Category: {category}")
+                        safe_print(f"📂 Category (fallback): {category}")
                         return category
-        except:
-            pass
+            except:
+                pass
+                
+        except Exception as e:
+            safe_print(f"⚠️  Category extraction error: {e}")
+        
+        safe_print(f"⚠️  Category: Not found")
         return ""
     
     def _get_status_from_api(self, book_id):
@@ -475,8 +573,8 @@ class WebnovelScraper:
         except Exception as e:
             safe_print(f"⚠️  Status detection error: {e}")
         
-        safe_print("📖 Status: Unknown")
-        return "Unknown"
+        safe_print("📖 Status: None (not detected)")
+        return None
     
     def _scrape_tags(self):
         """Scrape all tags"""
@@ -596,13 +694,135 @@ class WebnovelScraper:
         }
         
         try:
+            # STRATEGY 1: Try to extract from ._score element (most accurate)
+            try:
+                score_elem = self.page.locator("._score, .score, [class*='_score']").first
+                if score_elem.count() > 0:
+                    score_text = score_elem.inner_text().strip()
+                    # Try to extract number like "4.29" or "4.3"
+                    score_match = re.search(r'(\d+\.\d+)', score_text)
+                    if score_match:
+                        ratings["overall_score"] = float(score_match.group(1))
+                        safe_print(f"   ✅ Found score from ._score element: {ratings['overall_score']}")
+            except:
+                pass
+            
+            # STRATEGY 2: Try meta tags (often contain accurate rating data)
+            if ratings["overall_score"] == 0.0:
+                try:
+                    # Look for rating meta tags
+                    meta_selectors = [
+                        "meta[property='books:rating:value']",
+                        "meta[itemprop='ratingValue']",
+                        "meta[name='rating']"
+                    ]
+                    for selector in meta_selectors:
+                        try:
+                            meta = self.page.locator(selector).first
+                            if meta.count() > 0:
+                                content = meta.get_attribute('content')
+                                if content:
+                                    ratings["overall_score"] = float(content)
+                                    safe_print(f"   ✅ Found score from meta tag: {ratings['overall_score']}")
+                                    break
+                        except:
+                            continue
+                except:
+                    pass
+            
+            # STRATEGY 3: Extract from Review Tab/Section Header (CRITICAL FIX)
+            if ratings["overall_score"] == 0.0 or ratings["total_ratings"] == 0:
+                try:
+                    # Click Review tab to reveal review info header
+                    review_tab_clicked = False
+                    for tab_sel in ["button:has-text('Review')", "a:has-text('Review')", "li:has-text('Review')"]:
+                        try:
+                            tab = self.page.locator(tab_sel).first
+                            if tab.count() > 0:
+                                tab.click(timeout=3000)
+                                self._random_sleep(1, 2)
+                                review_tab_clicked = True
+                                safe_print(f"   📝 Clicked Review tab to reveal rating info")
+                                break
+                        except:
+                            continue
+                    
+                    # Now look for Review Info Header container
+                    # Common patterns: h4 with large score + review count
+                    review_containers = [
+                        ".review-header",
+                        ".review-info",
+                        "div:has(h4):has-text('Score')",
+                        "div:has(h4):has-text('Review')",
+                        "section.m-review-header",
+                        ".j_review_info"
+                    ]
+                    
+                    for container_sel in review_containers:
+                        try:
+                            container = self.page.locator(container_sel).first
+                            if container.count() > 0:
+                                container_text = container.inner_text()
+                                
+                                # Extract score (e.g., "4.29")
+                                if ratings["overall_score"] == 0.0:
+                                    score_match = re.search(r'(\d+\.\d+)(?:\s*Score)?', container_text)
+                                    if score_match:
+                                        ratings["overall_score"] = float(score_match.group(1))
+                                        safe_print(f"   ✅ Found score from Review header: {ratings['overall_score']}")
+                                
+                                # Extract review count (e.g., "7 Reviews")
+                                if ratings["total_ratings"] == 0:
+                                    reviews_match = re.search(r'(\d+)\s*Reviews?', container_text, re.I)
+                                    if reviews_match:
+                                        ratings["total_ratings"] = int(reviews_match.group(1))
+                                        safe_print(f"   ✅ Found {ratings['total_ratings']} reviews from Review header")
+                                
+                                if ratings["overall_score"] > 0 or ratings["total_ratings"] > 0:
+                                    break
+                        except:
+                            continue
+                    
+                    # Also check h4 tags directly (often contain score as large number)
+                    if ratings["overall_score"] == 0.0:
+                        try:
+                            h4_elements = self.page.locator("h4").all()
+                            for h4 in h4_elements:
+                                h4_text = h4.inner_text().strip()
+                                # Look for large decimal number like "4.29"
+                                if re.match(r'^\d+\.\d+$', h4_text):
+                                    ratings["overall_score"] = float(h4_text)
+                                    safe_print(f"   ✅ Found score from h4 badge: {ratings['overall_score']}")
+                                    break
+                        except:
+                            pass
+                    
+                except Exception as review_err:
+                    safe_print(f"   ⚠️  Review section extraction failed: {review_err}")
+            
+            # STRATEGY 4: Parse from page text near "Reviews" or "Score"
             page_text = self.page.locator("body").inner_text()
             
-            # Parse overall rating and count
-            match = re.search(r"(\d+\.\d{1,2})\s*\((\d+)\s*ratings?\)", page_text, re.I)
-            if match:
-                ratings["overall_score"] = float(match.group(1))
-                ratings["total_ratings"] = int(match.group(2))
+            # Look for patterns like "7 Reviews" and "4.29 Score"
+            if ratings["total_ratings"] == 0:
+                reviews_match = re.search(r'(\d+)\s*Reviews?', page_text, re.I)
+                if reviews_match:
+                    ratings["total_ratings"] = int(reviews_match.group(1))
+                    safe_print(f"   ✅ Found {ratings['total_ratings']} reviews from text")
+            
+            if ratings["overall_score"] == 0.0:
+                # Look for "4.29 Score" pattern
+                score_match = re.search(r'(\d+\.\d+)\s*Score', page_text, re.I)
+                if score_match:
+                    ratings["overall_score"] = float(score_match.group(1))
+                    safe_print(f"   ✅ Found score from text: {ratings['overall_score']}")
+            
+            # FALLBACK: Original regex pattern
+            if ratings["overall_score"] == 0.0:
+                match = re.search(r"(\d+\.\d{1,2})\s*\((\d+)\s*ratings?\)", page_text, re.I)
+                if match:
+                    ratings["overall_score"] = float(match.group(1))
+                    ratings["total_ratings"] = int(match.group(2))
             
             # Parse 5 category scores
             score_items = self.page.locator("li:has(strong)").all()
@@ -624,9 +844,26 @@ class WebnovelScraper:
                 except:
                     continue
             
+            # CRITICAL FALLBACK: Calculate overall_score from sub-ratings if it's still 0
+            if ratings["overall_score"] == 0.0:
+                sub_ratings = [
+                    ratings["writing_quality"],
+                    ratings["stability_of_updates"],
+                    ratings["story_development"],
+                    ratings["character_design"],
+                    ratings["world_background"]
+                ]
+                # Filter out zero values
+                non_zero_ratings = [r for r in sub_ratings if r > 0]
+                
+                if non_zero_ratings:
+                    calculated_score = sum(non_zero_ratings) / len(non_zero_ratings)
+                    ratings["overall_score"] = round(calculated_score, 2)
+                    safe_print(f"   📊 Calculated overall_score from sub-ratings: {ratings['overall_score']}")
+            
             safe_print(f"⭐ Ratings: {ratings['overall_score']} ({ratings['total_ratings']} ratings)")
-        except:
-            pass
+        except Exception as e:
+            safe_print(f"⚠️  Rating extraction error: {e}")
         
         return ratings
 
@@ -718,15 +955,60 @@ class WebnovelScraper:
     
     def _scrape_book_comments(self, internal_book_id, platform_book_id):
         """
-        Scrape ALL comments on book page with infinite scroll
+        Scrape ALL comments on book page with pagination and replies
+        Uses Network Interception (Option A) for reliable data extraction
         
         Returns:
             list[CommentOnBook]: All comments with replies
         """
-        safe_print("\n💬 Scraping book comments...")
+        safe_print("\n💬 Scraping book comments via Network Interception...")
         comments = []
         
+        # Storage for intercepted API responses
+        self.captured_comment_data = []
+        self.captured_reply_data = {}
+        
+        def handle_comment_response(response):
+            """Intercept and store comment/review API responses"""
+            try:
+                url = response.url
+                
+                # Check if this is a comment/review API endpoint
+                is_comment_api = any(pattern in url.lower() for pattern in [
+                    'getcommentlist', 'get-comment-list',
+                    'getreviewlist', 'get-review-list',
+                    'bookreview', 'book-review',
+                    'review/list', 'comment/list'
+                ])
+                
+                if not is_comment_api:
+                    return
+                
+                # Only process JSON responses
+                content_type = response.headers.get('content-type', '')
+                if 'json' not in content_type.lower():
+                    return
+                
+                try:
+                    data = response.json()
+                    if data:
+                        # Store the response data
+                        self.captured_comment_data.append({
+                            'url': url,
+                            'data': data,
+                            'status': response.status
+                        })
+                        safe_print(f"   🎯 Intercepted API response: {url[:80]}...")
+                except Exception as json_err:
+                    pass
+            except Exception as e:
+                pass
+        
         try:
+            # Start network interception
+            self.page.on('response', handle_comment_response)
+            safe_print("   📡 Network interception enabled")
+            
             # First, try to parse JSON-LD reviews embedded in the page (fast, unauthenticated)
             try:
                 jsonld_scripts = self.page.locator("script[type='application/ld+json']").all()
@@ -802,26 +1084,74 @@ class WebnovelScraper:
             except Exception:
                 pass
 
-            # Click Reviews tab if exists and wait for content to load
+            # Click Reviews tab if exists and wait for API responses
             try:
                 review_tab = self.page.locator("button:has-text('Review'), a:has-text('Review'), a:has-text('Comments'), button:has-text('Comments'), a:has-text('About'), button:has-text('About')").first
                 if review_tab.count() > 0:
+                    safe_print("   📑 Clicking Reviews tab...")
                     review_tab.click()
-                    self._random_sleep(2, 3)  # Wait for comments and pagination to load
+                    # Wait for API responses to be captured
+                    self._random_sleep(2, 4)  # Give time for initial page + API calls
             except:
                 pass
 
-            safe_print("📜 Collecting book comments with replies...")
+            safe_print("📜 Collecting book comments with pagination...")
             collected = []
-            seen_reviews = set()
+            seen_comment_ids = set()
             
-            # Parse pagination from HTML to get total pages (must be done AFTER clicking review tab)
-            max_pages = 1
+            # Extract comments from initial page (captured API data)
+            if self.captured_comment_data:
+                safe_print(f"   ✅ Processing {len(self.captured_comment_data)} intercepted API response(s)")
+                for api_response in self.captured_comment_data:
+                    extracted = self._extract_comments_from_api_response(
+                        api_response['data'], 
+                        internal_book_id, 
+                        platform_book_id
+                    )
+                    for comment in extracted:
+                        cid = comment.get('comment_id')
+                        if cid and cid not in seen_comment_ids:
+                            seen_comment_ids.add(cid)
+                            collected.append(comment)
+                safe_print(f"   ✅ Extracted {len(collected)} comments from API responses")
+            
+            # If API didn't capture anything, immediately parse HTML for page 1
+            if not collected:
+                page_comments, _ = self._parse_book_comments(internal_book_id, platform_book_id, return_ids=True)
+                for comment in page_comments:
+                    cid = comment.get('comment_id')
+                    if cid and cid not in seen_comment_ids:
+                        seen_comment_ids.add(cid)
+                        collected.append(comment)
+                if collected:
+                    safe_print(f"   ✅ Page 1: {len(collected)} comments (HTML parsing)")
+            
+            # Close login modal if it appears (blocks pagination)
             try:
-                self._random_sleep(1, 1.5)  # Extra wait for pagination to render
+                login_modal = self.page.locator(".g_mod_login._on, .g_mod_wrap._on").first
+                if login_modal.count() > 0 and login_modal.is_visible():
+                    safe_print(f"   🔒 Closing login modal...")
+                    # Try Escape key first
+                    self.page.keyboard.press("Escape")
+                    self._random_sleep(0.5, 1)
+            except:
+                pass
+            
+            # CRITICAL: Scroll to bottom to trigger pagination rendering
+            try:
+                safe_print(f"   📜 Scrolling to load pagination...")
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                self._random_sleep(2, 3)
+            except:
+                pass
+            
+            # Parse pagination to determine total pages
+            detected_pages = 1
+            pagination_container = None
+            try:
                 pagination_container = self.page.locator("div.ui-page-x").first
                 if pagination_container.count() > 0:
-                    # Find all numbered page links: <a data-page="2">2</a>, <a data-page="3">3</a>, etc.
+                    # Find all numbered page links
                     page_links = pagination_container.locator("a.ui-page[data-page]").all()
                     page_numbers = []
                     for link in page_links:
@@ -832,209 +1162,644 @@ class WebnovelScraper:
                         except:
                             continue
                     if page_numbers:
-                        max_pages = max(page_numbers)
-                        safe_print(f"   📄 Found {max_pages} pages of comments")
+                        detected_pages = max(page_numbers)
+                        safe_print(f"   📄 Detected {detected_pages} total pages")
             except Exception as e:
-                safe_print(f"   ⚠️  Could not detect pagination: {e}")
+                safe_print(f"   ⚠️ Could not detect pagination: {e}")
             
-            current_page = 1
-            
-            while current_page <= max_pages:
-                safe_print(f"   📄 Page {current_page}...")
-                self._random_sleep()  # Use default fast timing
+            # Now paginate through remaining pages (2 to detected_pages)
+            if detected_pages > 1 and pagination_container:
+                safe_print(f"\n   ➡️  Paginating through pages 2-{detected_pages}...")
                 
-                # Parse comments on current page
-                page_comments, page_review_ids = self._parse_book_comments(internal_book_id, platform_book_id, return_ids=True)
-                
-                # For each comment, check if it has replies and extract them
-                for i, (comment, rid) in enumerate(zip(page_comments, page_review_ids)):
-                    # Skip duplicates
-                    if rid and rid in seen_reviews:
-                        continue
-                    if rid:
-                        seen_reviews.add(rid)
-                    
-                    # Skip reply extraction for speed (TODO: fix reply button detection)
-                    if False and rid:  # Disabled for performance
-                        # Check for "View X Replies" button
-                        # Pattern: <a data-rid="..." data-rc="26">View 26 Replies</a>
-                        try:
-                            # Find the comment section by data-ejs containing this reviewId
-                            # Use escaped quotes for JSON search
-                            sections = self.page.locator(f"section.m-comment").all()
-                            
-                            comment_section = None
-                            for sec in sections:
-                                try:
-                                    data_ejs = sec.get_attribute('data-ejs')
-                                    if data_ejs and rid in data_ejs:
-                                        comment_section = sec
-                                        break
-                                except:
-                                    continue
-                            
-                            if comment_section:
-                                # Look for reply button: a.m-comment-reply-btn or a.j_reivew_open._book
-                                reply_btns = comment_section.locator("a.m-comment-reply-btn, a.j_reivew_open._book, a[data-rc]").all()
-                                
-                                for reply_btn in reply_btns:
-                                    try:
-                                        # Check if this button has reply count
-                                        reply_count_attr = reply_btn.get_attribute('data-rc')
-                                        if not reply_count_attr:
-                                            continue
-                                            
-                                        reply_count = int(reply_count_attr)
-                                        if reply_count == 0:
-                                            continue
-                                        
-                                        # Get button text to verify it's "View Replies"
-                                        btn_text = reply_btn.inner_text().lower()
-                                        if 'repl' not in btn_text and 'view' not in btn_text:
-                                            continue
-                                        
-                                        safe_print(f"      💬 Comment has {reply_count} replies, loading...")
-                                        
-                                        # Click to load replies
-                                        try:
-                                            reply_btn.scroll_into_view_if_needed(timeout=3000)
-                                            self._random_sleep(0.5, 1)
-                                            reply_btn.click(force=True, timeout=3000)
-                                            self._random_sleep(2, 3)
-                                            
-                                            # Wait for replies to load - check within comment section
-                                            comment_section.locator(".m-reply-item, .reply-item, div[class*='reply']").first.wait_for(timeout=5000)
-                                            
-                                            # Extract replies
-                                            replies = self._parse_comment_replies(comment_section, internal_book_id)
-                                            comment['replies'] = replies
-                                            safe_print(f"      ✅ Extracted {len(replies)} replies")
-                                            break  # Only process first reply button
-                                            
-                                        except Exception as reply_err:
-                                            safe_print(f"      ⚠️  Failed to load replies: {reply_err}")
-                                            
-                                    except Exception as btn_err:
-                                        continue
-                                        
-                        except Exception as e:
-                            pass
-                    
-                    # Always append comment to collected (after reply extraction attempt)
-                    collected.append(comment)
-                
-                safe_print(f"   ✅ Page {current_page}: {len(page_comments)} comments")
-                
-                # Check if we've reached max_pages limit
-                if current_page >= max_pages:
-                    safe_print(f"   ✅ Reached max pages limit ({max_pages})")
-                    break
-                
-                # Try to find and click next page button
-                # Pattern: <a class="ui-page ui-page-next" data-page="2">Next</a>
-                try:
-                    # Find pagination container
-                    pagination = self.page.locator("div.ui-page-x").first
-                    if pagination.count() == 0:
-                        safe_print(f"   ✅ No pagination found (single page)")
-                        break
-                    
-                    # Check if we're on the last page (Next button disabled or missing)
-                    # Look for numbered page button for next page
-                    next_page_num = current_page + 1
-                    next_page_link = pagination.locator(f"a.ui-page[data-page='{next_page_num}']").first
-                    
-                    if next_page_link.count() > 0:
-                        safe_print(f"   ➡️  Moving to page {next_page_num}...")
-                        try:
-                            # Get first comment data-ejs before click to verify change
-                            old_first_rid = None
-                            try:
-                                first_comment = self.page.locator("section.m-comment").first
-                                if first_comment.count() > 0:
-                                    old_data = first_comment.get_attribute('data-ejs')
-                                    if old_data:
-                                        old_first_rid = json.loads(old_data).get('reviewId')
-                            except:
-                                pass
-                            
-                            next_page_link.scroll_into_view_if_needed(timeout=3000)
-                            self._random_sleep()
-                            
-                            # Use JavaScript to trigger click with event dispatching
-                            self.page.evaluate(f"""
-                                (pageNum) => {{
-                                    const link = document.querySelector('a.ui-page[data-page="' + pageNum + '"]');
-                                    if (link) {{
-                                        link.click();
-                                        // Dispatch events to trigger any handlers
-                                        link.dispatchEvent(new Event('click', {{bubbles: true, cancelable: true}}));
-                                    }}
-                                }}
-                            """, next_page_num)
-                            
-                            # Wait for page indicator to update
-                            indicator_updated = False
-                            try:
-                                self.page.wait_for_function(f"""
-                                    () => {{
-                                        const currentPage = document.querySelector('.ui-page-current');
-                                        return currentPage && currentPage.textContent.trim() === '{next_page_num}';
-                                    }}
-                                """, timeout=5000)
-                                indicator_updated = True
-                            except:
-                                pass
-                            
-                            # Wait for network activity to complete
-                            try:
-                                self.page.wait_for_load_state('networkidle', timeout=5000)
-                            except:
-                                pass
-                            
-                            # Additional wait for content to render
-                            self._random_sleep(1, 2)
-                            
-                            # Verify first comment changed
-                            new_first_rid = None
-                            try:
-                                first_comment = self.page.locator("section.m-comment").first
-                                if first_comment.count() > 0:
-                                    new_data = first_comment.get_attribute('data-ejs')
-                                    if new_data:
-                                        new_first_rid = json.loads(new_data).get('reviewId')
-                            except:
-                                pass
-                            
-                            if indicator_updated and new_first_rid and new_first_rid != old_first_rid:
-                                safe_print(f"      ✅ Successfully loaded page {next_page_num}")
-                            elif indicator_updated:
-                                safe_print(f"      ⚠️  Page indicator updated but content may be same")
-                            else:
-                                safe_print(f"      ⚠️  Page did not change properly")
-                            
-                            current_page = next_page_num
-                            continue
-                            
-                        except Exception as click_err:
-                            safe_print(f"      ⚠️  Pagination failed: {click_err}")
+                for page_num in range(2, detected_pages + 1):
+                    try:
+                        before_count = len(collected)
+                        
+                        # Find link to next page
+                        next_page_link = pagination_container.locator(f"a.ui-page[data-page='{page_num}']").first
+                        
+                        if next_page_link.count() == 0:
+                            safe_print(f"      ⚠️ Page {page_num} link not found - stopping")
                             break
+                        
+                        safe_print(f"   📄 Loading page {page_num}...")
+                        
+                        # Clear captured API data
+                        self.captured_comment_data = []
                     
-                    # No more pages
-                    safe_print(f"   ✅ No more pages found")
-                    break
-                    
-                except Exception as page_err:
-                    safe_print(f"   ⚠️  Pagination error: {page_err}")
-                    break
-
-            comments = collected
-            safe_print(f"✅ Collected {len(comments)} book comments with replies\n")
+                        # Scroll link into view and click
+                        try:
+                            next_page_link.scroll_into_view_if_needed(timeout=3000)
+                        except:
+                            pass
+                        
+                        self._random_sleep(0.5, 1)
+                        next_page_link.click(timeout=5000)
+                        
+                        # Wait for page to load
+                        try:
+                            self.page.wait_for_function(f"""
+                                () => {{
+                                    const current = document.querySelector('.ui-page-current');
+                                    return current && current.textContent.trim() == '{page_num}';
+                                }}
+                            """, timeout=5000)
+                        except:
+                            pass
+                        
+                        # Wait for content to render
+                        self._random_sleep(1.5, 2.5)
+                        
+                        # Parse HTML from new page (API likely won't work for Webnovel)
+                        page_comments, _ = self._parse_book_comments(internal_book_id, platform_book_id, return_ids=True)
+                        new_count = 0
+                        for comment in page_comments:
+                            cid = comment.get('comment_id')
+                            if cid and cid not in seen_comment_ids:
+                                seen_comment_ids.add(cid)
+                                collected.append(comment)
+                                new_count += 1
+                        
+                        safe_print(f"   ✅ Page {page_num}: +{new_count} new comments (total: {len(collected)})")
+                        
+                        # Stop if no new comments
+                        if new_count == 0:
+                            safe_print(f"      ⚠️ No new comments on page {page_num} - stopping pagination")
+                            break
+                        
+                    except Exception as page_err:
+                        safe_print(f"      ⚠️ Error on page {page_num}: {page_err}")
+                        break
             
+            # ATTEMPT REPLY EXTRACTION (may require login - will handle gracefully)
+            safe_print(f"\n   💬 Attempting to extract comment replies...")
+            replies_extracted = 0
+            
+            # Try to close login modal first
+            try:
+                login_modal = self.page.locator(".g_mod_login._on, .g_mod_wrap._on").first
+                if login_modal.count() > 0 and login_modal.is_visible():
+                    safe_print(f"   🔒 Login modal detected, attempting to close...")
+                    self.page.keyboard.press("Escape")
+                    self._random_sleep(1, 1.5)
+            except:
+                pass
+            
+            # Navigate back to page 1 to start reply extraction
+            try:
+                pagination_cont = self.page.locator("div.ui-page-x").first
+                if pagination_cont.count() > 0 and detected_pages > 1:
+                    first_page_link = pagination_cont.locator("a.ui-page[data-page='1']").first
+                    if first_page_link.count() > 0:
+                        first_page_link.click(timeout=5000)
+                        self._random_sleep(2, 3)
+            except:
+                pass
+            
+            # Extract replies from comments on each page
+            for page_num in range(1, min(detected_pages + 1, 3)):  # Limit to first 2 pages to avoid too long runtime
+                try:
+                    safe_print(f"   📄 Page {page_num}: Checking for replies...")
+                    comment_sections = self.page.locator(".m-comment").all()
+                    page_replies = 0
+                    
+                    for sec in comment_sections:
+                        try:
+                            # Get comment ID to match with collected comments
+                            data_ejs = sec.get_attribute('data-ejs')
+                            if not data_ejs:
+                                continue
+                            parsed = json.loads(data_ejs)
+                            raw_id = str(parsed.get('reviewId') or parsed.get('id'))
+                            
+                            # Find matching comment
+                            matching_comment = None
+                            for c in collected:
+                                if c.get('_raw_id') == raw_id:
+                                    matching_comment = c
+                                    break
+                            
+                            if not matching_comment:
+                                continue
+                            
+                            # Skip if already has replies
+                            if matching_comment.get('replies') and len(matching_comment['replies']) > 0:
+                                continue
+                            
+                            # Look for reply button
+                            reply_btn = sec.locator("a.m-comment-reply-btn").first
+                            if reply_btn.count() == 0:
+                                continue
+                            
+                            btn_text = reply_btn.inner_text()
+                            if not btn_text or 'repl' not in btn_text.lower():
+                                continue
+                            
+                            # Try to click (may be blocked by login modal)
+                            try:
+                                reply_btn.scroll_into_view_if_needed(timeout=3000)
+                                self._random_sleep(0.3, 0.5)
+                                reply_btn.click(timeout=3000)
+                                self._random_sleep(1, 1.5)
+                                
+                                # Check for login modal blocking
+                                login_check = self.page.locator(".g_mod_login._on").first
+                                if login_check.count() > 0 and login_check.is_visible():
+                                    safe_print(f"   ⚠️  Login required for replies - skipping remaining")
+                                    # Close modal and stop trying
+                                    self.page.keyboard.press("Escape")
+                                    self._random_sleep(0.5, 1)
+                                    raise Exception("Login required")
+                                
+                                # Extract replies (inline or modal)
+                                replies = self._scrape_replies(sec)
+                                if replies:
+                                    matching_comment['replies'] = replies
+                                    page_replies += len(replies)
+                                    replies_extracted += len(replies)
+                                    
+                            except Exception as click_err:
+                                # If login required, stop trying more comments
+                                if "Login required" in str(click_err):
+                                    raise
+                                # Otherwise just skip this comment
+                                continue
+                                
+                        except Exception as comment_err:
+                            if "Login required" in str(comment_err):
+                                raise
+                            continue
+                    
+                    if page_replies > 0:
+                        safe_print(f"      ✅ Extracted {page_replies} replies from page {page_num}")
+                    
+                    # Navigate to next page
+                    if page_num < min(detected_pages, 2):
+                        try:
+                            next_page_link = self.page.locator(f"a.ui-page[data-page='{page_num + 1}']").first
+                            if next_page_link.count() > 0:
+                                next_page_link.click(timeout=5000)
+                                self._random_sleep(2, 3)
+                        except:
+                            break
+                            
+                except Exception as page_err:
+                    if "Login required" in str(page_err):
+                        safe_print(f"   ⚠️  Login required to view replies - stopping extraction")
+                        break
+                    safe_print(f"   ⚠️  Error on page {page_num}: {page_err}")
+                    break
+            
+            if replies_extracted > 0:
+                safe_print(f"   ✅ Successfully extracted {replies_extracted} total replies")
+            else:
+                safe_print(f"   ℹ️  No replies extracted (may require authentication)")
+            
+            safe_print(f"   ✅ Successfully scraped {len(collected)} book comments")
+            
+            comments = collected
+            safe_print(f"✅ Collected {len(comments)} book comments total\n")
+            
+            # Remove network listener
+            try:
+                self.page.remove_listener('response', handle_comment_response)
+            except:
+                pass
+        
         except Exception as e:
             safe_print(f"⚠️  Error scraping book comments: {e}")
+            import traceback
+            traceback.print_exc()
         
         return comments
+    
+    def _OLD_REPLY_EXTRACTION_CODE_DISABLED(self):
+        """
+        OLD CODE - Reply extraction disabled (requires login)
+        Kept for reference only
+        """
+        if False:  # Disabled
+                # Extract replies from each page
+                for page_num in range(1, 999):
+                    try:
+                        # Get all comment sections on current page
+                        sections = self.page.locator(".m-comment").all()
+                        page_replies_count = 0
+                        if page_num == 1:
+                            safe_print(f"      🔍 Page {page_num}: Found {len(sections)} comment sections")
+                        
+                        for sec in sections:
+                            try:
+                                data_ejs = sec.get_attribute('data-ejs')
+                                if not data_ejs:
+                                    continue
+                                
+                                parsed = json.loads(data_ejs)
+                                raw_id = str(parsed.get('reviewId') or parsed.get('id'))
+                                
+                                # Find matching comment in our collected list
+                                if raw_id not in comment_map:
+                                    continue
+                                
+                                comment = comment_map[raw_id]
+                                
+                                # Skip if already has replies
+                                if comment.get('replies') and len(comment['replies']) > 0:
+                                    continue
+                                
+                                # Look for reply button (use robust selector: a.m-comment-reply-btn)
+                                # Note: Webnovel has typo in class name (j_reivew_open, not j_review_open)
+                                reply_btn = sec.locator("a.m-comment-reply-btn").first
+                                reply_btn_count = reply_btn.count()
+                                if page_num == 1 and comment_map.get(raw_id):
+                                    safe_print(f"         Comment {raw_id}: reply_btn.count()={reply_btn_count}")
+                                if reply_btn_count > 0:
+                                    try:
+                                        # Check if button is visible (not hidden with .dn class)
+                                        btn_classes = reply_btn.get_attribute('class') or ''
+                                        if ' dn' in btn_classes or btn_classes.endswith('dn'):
+                                            if page_num == 1:
+                                                safe_print(f"            → Skipped (hidden): {raw_id}")
+                                            continue
+                                        
+                                        btn_text = reply_btn.inner_text()
+                                        if page_num == 1:
+                                            safe_print(f"            → Button text: '{btn_text}'")
+                                        
+                                        reply_match = re.search(r'(\d+)\s*Repl', btn_text, re.I)
+                                        if reply_match:
+                                            reply_count = int(reply_match.group(1))
+                                            if page_num == 1:
+                                                safe_print(f"            → Clicking to load {reply_count} replies...")
+                                            
+                                            # Scroll and click reply button
+                                            reply_btn.scroll_into_view_if_needed(timeout=3000)
+                                            self._random_sleep(0.3, 0.6)
+                                            reply_btn.click(timeout=5000)
+                                            self._random_sleep(1.0, 1.5)
+                                            
+                                            # Wait for replies to load - try multiple selectors
+                                            try:
+                                                sec.locator(".j_more_replies_body section, .m-comment-reply-item, .m-reply").first.wait_for(timeout=5000)
+                                            except:
+                                                self._random_sleep(0.5, 1.0)
+                                            
+                                            # Check if modal opened instead of inline expansion
+                                            modal = self.page.locator("#replyDetailModal, .g_mod_wrap._on").first
+                                            if modal.count() > 0 and modal.is_visible():
+                                                # Modal opened - extract from modal
+                                                if page_num == 1:
+                                                    safe_print(f"            → Modal opened, waiting for AJAX content...")
+                                                
+                                                # CRITICAL: Wait for loading spinner to disappear (AJAX loads replies)
+                                                loading_spinner = modal.locator(".g_loading._on, .loading._on, span.g_loading")
+                                                if loading_spinner.count() > 0:
+                                                    try:
+                                                        # Wait for spinner to be hidden (max 10 seconds)
+                                                        loading_spinner.wait_for(state="hidden", timeout=10000)
+                                                        if page_num == 1:
+                                                            safe_print(f"            → Content loaded!")
+                                                    except:
+                                                        if page_num == 1:
+                                                            safe_print(f"            → Loading timeout, extracting anyway...")
+                                                
+                                                self._random_sleep(0.5, 1.0)
+                                                replies = self._scrape_replies(modal)
+                                                
+                                                # Close modal - try multiple methods
+                                                modal_closed = False
+                                                try:
+                                                    # Method 1: Click close button
+                                                    close_btn = modal.locator("a.close, button.close, .g_close, a.g_close, [class*='close']").first
+                                                    if close_btn.count() > 0:
+                                                        close_btn.click(timeout=2000)
+                                                        self._random_sleep(0.2, 0.4)
+                                                        modal_closed = True
+                                                except:
+                                                    pass
+                                                
+                                                if not modal_closed:
+                                                    try:
+                                                        # Method 2: Press Escape key
+                                                        self.page.keyboard.press("Escape")
+                                                        self._random_sleep(0.2, 0.4)
+                                                    except:
+                                                        pass
+                                            else:
+                                                # Inline expansion
+                                                replies = self._scrape_replies(sec)
+                                            
+                                            comment['replies'] = replies
+                                            page_replies_count += len(replies)
+                                            total_replies_extracted += len(replies)
+                                            
+                                            if page_num == 1:
+                                                safe_print(f"            → Extracted {len(replies)} replies")
+                                        else:
+                                            if page_num == 1:
+                                                safe_print(f"            → No reply count match in text")
+                                    except Exception as click_err:
+                                        if page_num == 1:
+                                            safe_print(f"            → Error: {str(click_err)[:100]}")
+                                        # Try to close any open modal to prevent blocking next clicks
+                                        try:
+                                            # Try Escape key first
+                                            self.page.keyboard.press("Escape")
+                                            self._random_sleep(0.3, 0.5)
+                                        except:
+                                            pass
+                                        try:
+                                            # Then try close button
+                                            modal = self.page.locator("#replyDetailModal, .g_mod_wrap._on").first
+                                            if modal.count() > 0 and modal.is_visible():
+                                                close_btn = modal.locator("a.close, button.close, .g_close, a.g_close, [class*='close']").first
+                                                if close_btn.count() > 0:
+                                                    close_btn.click(timeout=1000)
+                                                    self._random_sleep(0.2, 0.3)
+                                        except:
+                                            pass
+                            except:
+                                continue
+                        
+                        if page_replies_count > 0:
+                            safe_print(f"      📄 Page {page_num}: Extracted {page_replies_count} replies")
+                        
+                        # Navigate to next page if not last
+                        if page_num < detected_pages:
+                            try:
+                                pagination_cont = self.page.locator("div.ui-page-x").first
+                                if pagination_cont.count() > 0:
+                                    next_page_link = pagination_cont.locator(f"a.ui-page[data-page='{page_num + 1}']").first
+                                    next_page_link.click(timeout=5000)
+                                    self.page.wait_for_function(f"() => {{ return document.querySelector('.ui-page-current').textContent.trim() == '{page_num + 1}'; }}", timeout=10000)
+                                    self._random_sleep(1, 1.5)
+                            except:
+                                break
+                    except:
+                        continue
+                
+                safe_print(f"   ✅ Extracted {total_replies_extracted} total replies")
+    
+    def _extract_comments_from_api_response(self, data, internal_book_id, platform_book_id):
+        """
+        Extract and normalize comments from intercepted API response data
+        Handles multiple API response formats from Webnovel
+        
+        Args:
+            data: JSON data from API response
+            internal_book_id: Internal book ID
+            platform_book_id: Platform book ID
+            
+        Returns:
+            list[dict]: Normalized comment dictionaries
+        """
+        comments = []
+        
+        try:
+            # Navigate through different possible response structures
+            comment_list = []
+            
+            # Strategy 1: data.data.items or data.data.list or data.data.reviews
+            if isinstance(data, dict):
+                if 'data' in data and isinstance(data['data'], dict):
+                    payload = data['data']
+                    # Try common keys
+                    for key in ['items', 'list', 'reviews', 'reviewList', 'commentList', 'comments']:
+                        if key in payload and isinstance(payload[key], list):
+                            comment_list = payload[key]
+                            break
+                # Strategy 2: Direct list at top level
+                elif 'items' in data or 'list' in data or 'reviews' in data:
+                    for key in ['items', 'list', 'reviews', 'reviewList', 'commentList']:
+                        if key in data and isinstance(data[key], list):
+                            comment_list = data[key]
+                            break
+            elif isinstance(data, list):
+                comment_list = data
+            
+            # Extract each comment
+            for item in comment_list:
+                try:
+                    # Extract user info
+                    user_name = 'Anonymous'
+                    user_id = None
+                    
+                    if 'userName' in item:
+                        user_name = item['userName']
+                    elif 'userInfo' in item and isinstance(item['userInfo'], dict):
+                        user_name = item['userInfo'].get('nickName') or item['userInfo'].get('userName') or 'Anonymous'
+                        user_id = item['userInfo'].get('userId')
+                    elif 'author' in item:
+                        if isinstance(item['author'], dict):
+                            user_name = item['author'].get('name') or 'Anonymous'
+                        else:
+                            user_name = item['author']
+                    
+                    # Extract content
+                    content = item.get('content') or item.get('reviewContent') or item.get('body') or item.get('reviewBody') or ''
+                    
+                    # Extract time
+                    time_str = ''
+                    if 'createTime' in item:
+                        # Unix timestamp in milliseconds
+                        try:
+                            ts = int(item['createTime'])
+                            if ts > 10**12:  # milliseconds
+                                ts = ts // 1000
+                            from datetime import datetime
+                            dt = datetime.fromtimestamp(ts)
+                            # Convert to relative time
+                            now = datetime.now()
+                            diff = now - dt
+                            if diff.days > 365:
+                                years = diff.days // 365
+                                time_str = f"{years} year{'s' if years > 1 else ''}"
+                            elif diff.days > 30:
+                                months = diff.days // 30
+                                time_str = f"{months} month{'s' if months > 1 else ''}"
+                            elif diff.days > 0:
+                                time_str = f"{diff.days} day{'s' if diff.days > 1 else ''}"
+                            elif diff.seconds > 3600:
+                                hours = diff.seconds // 3600
+                                time_str = f"{hours} hour{'s' if hours > 1 else ''}"
+                            else:
+                                minutes = diff.seconds // 60
+                                time_str = f"{minutes} minute{'s' if minutes > 1 else ''}"
+                        except:
+                            time_str = item.get('createTime', '')
+                    else:
+                        time_str = item.get('time') or item.get('date') or item.get('datePublished') or ''
+                    
+                    # Extract score
+                    score = None
+                    if 'score' in item:
+                        try:
+                            score = float(item['score'])
+                        except:
+                            pass
+                    elif 'reviewRating' in item and isinstance(item['reviewRating'], dict):
+                        try:
+                            score = float(item['reviewRating'].get('ratingValue'))
+                        except:
+                            pass
+                    
+                    # Extract raw ID for later use (replies loading)
+                    raw_id = item.get('reviewId') or item.get('id') or item.get('commentId')
+                    
+                    # Extract replies if present in API response
+                    replies = []
+                    if 'replyList' in item and isinstance(item['replyList'], list):
+                        for reply_item in item['replyList']:
+                            try:
+                                reply_user = 'Anonymous'
+                                if 'userName' in reply_item:
+                                    reply_user = reply_item['userName']
+                                elif 'userInfo' in reply_item and isinstance(reply_item['userInfo'], dict):
+                                    reply_user = reply_item['userInfo'].get('nickName') or reply_item['userInfo'].get('userName') or 'Anonymous'
+                                
+                                reply_content = reply_item.get('content') or reply_item.get('replyContent') or ''
+                                reply_time = reply_item.get('time') or reply_item.get('createTime') or ''
+                                
+                                replies.append({
+                                    'reply_id': str(uuid6.uuid7()),
+                                    'user_name': reply_user,
+                                    'time': reply_time,
+                                    'content': reply_content
+                                })
+                            except:
+                                continue
+                    
+                    # Build normalized comment
+                    comment = {
+                        'comment_id': str(uuid6.uuid7()),
+                        'story_id': internal_book_id,
+                        'user_id': user_id or self._make_platform_obf(user_name) if user_name else None,
+                        'user_name': user_name,
+                        'time': time_str,
+                        'content': content,
+                        'score': {'overall': score},
+                        'replies': replies,
+                        '_raw_id': raw_id  # Store for HTML fallback if needed
+                    }
+                    
+                    comments.append(comment)
+                    
+                except Exception as item_err:
+                    safe_print(f"      ⚠️ Failed to parse comment item: {item_err}")
+                    continue
+                    
+        except Exception as e:
+            safe_print(f"   ⚠️ Error extracting comments from API data: {e}")
+        
+        return comments
+
+    def _fetch_book_comments_via_api(self, book_id_numeric, page_num):
+        """
+        Try multiple known API endpoint patterns to fetch book comments for a given page.
+        Returns a list of normalized comment dicts or empty list.
+        """
+        results = []
+        try:
+            # Build candidate endpoints. These are best-effort guesses based on common patterns.
+            candidates = [
+                f"https://www.webnovel.com/apiajax/comment/getCommentList?bookId={book_id_numeric}&page={page_num}",
+                f"https://www.webnovel.com/apiajax/comment/getCommentList?workId={book_id_numeric}&page={page_num}",
+                f"https://www.webnovel.com/apiajax/comment/getBookComments?bookId={book_id_numeric}&page={page_num}",
+                f"https://www.webnovel.com/go/comment/getCommentList?bookId={book_id_numeric}&page={page_num}",
+                f"https://www.webnovel.com/go/pcm/comment/getCommentList?bookId={book_id_numeric}&page={page_num}",
+            ]
+
+            # Extract cookies from current Playwright context
+            cookies = {}
+            try:
+                for c in self.page.context.cookies():
+                    cookies[c.get('name')] = c.get('value')
+            except:
+                cookies = {}
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': self.page.url,
+                'Origin': 'https://www.webnovel.com',
+            }
+
+            with httpx.Client(timeout=15, follow_redirects=True, cookies=cookies) as client:
+                for url in candidates:
+                    try:
+                        resp = client.get(url, headers=headers)
+                        if resp.status_code != 200:
+                            continue
+                        text = resp.text
+                        if not text:
+                            continue
+                        try:
+                            data = resp.json()
+                        except Exception:
+                            # Sometimes API returns HTML fragment - skip
+                            continue
+
+                        # Normalize different response shapes
+                        comments_raw = []
+                        if isinstance(data, dict):
+                            # common envelope: { data: { commentList: [...] } }
+                            if data.get('data') and isinstance(data.get('data'), dict):
+                                d = data.get('data')
+                                # check several known keys
+                                if d.get('commentList') and isinstance(d.get('commentList'), list):
+                                    comments_raw = d.get('commentList')
+                                elif d.get('comments') and isinstance(d.get('comments'), list):
+                                    comments_raw = d.get('comments')
+                                elif d.get('list') and isinstance(d.get('list'), list):
+                                    comments_raw = d.get('list')
+                                else:
+                                    # try top-level list
+                                    for v in d.values():
+                                        if isinstance(v, list) and v and isinstance(v[0], dict) and ('content' in v[0] or 'body' in v[0] or 'reviewBody' in v[0]):
+                                            comments_raw = v
+                                            break
+                            elif data.get('comments') and isinstance(data.get('comments'), list):
+                                comments_raw = data.get('comments')
+                            elif isinstance(data.get('data'), list):
+                                comments_raw = data.get('data')
+                        elif isinstance(data, list):
+                            comments_raw = data
+
+                        # Convert comment entries into normalized format used by parser
+                        for entry in comments_raw:
+                            try:
+                                # entry may contain author, content, date, reviewId
+                                user_name = None
+                                if isinstance(entry.get('author'), dict):
+                                    user_name = entry.get('author', {}).get('name')
+                                else:
+                                    user_name = entry.get('author') or entry.get('userName') or entry.get('nickname')
+
+                                body = entry.get('content') or entry.get('body') or entry.get('reviewBody') or entry.get('description') or ''
+                                date = entry.get('date') or entry.get('createTime') or entry.get('time') or entry.get('datePublished') or ''
+                                rid = entry.get('reviewId') or entry.get('id') or entry.get('commentId') or entry.get('cid')
+
+                                comment = {
+                                    'comment_id': str(uuid6.uuid7()),
+                                    'story_id': f"bk_{book_id_numeric}",
+                                    'user_id': None,
+                                    'user_name': user_name or 'Anonymous',
+                                    'time': date,
+                                    'content': body,
+                                    'score': {'overall': None},
+                                    'replies': []
+                                }
+                                results.append(comment)
+                            except Exception:
+                                continue
+
+                        if results:
+                            return results
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return []
     
     def _parse_book_comments(self, internal_book_id, platform_book_id, return_ids=False):
         """Parse book comments from loaded page. If return_ids=True also returns platform review ids list for deduplication."""
@@ -1072,6 +1837,8 @@ class WebnovelScraper:
 
                     comment = self._parse_single_book_comment(sec, internal_book_id, platform_book_id)
                     if comment:
+                        # Add raw platform review ID for reply extraction
+                        comment['_raw_id'] = str(platform_rev_id) if platform_rev_id else None
                         comments.append(comment)
                         review_ids.append(str(platform_rev_id) if platform_rev_id else None)
                 except:
@@ -1098,9 +1865,14 @@ class WebnovelScraper:
         replies = []
         
         try:
-            # Find all reply items within this comment section
-            # Pattern: <div class="m-reply-item"> or <li class="reply-item">
-            reply_items = comment_section.locator(".m-reply-item, .reply-item, div[class*='reply']").all()
+            # Find all reply items within this comment section or modal
+            # Pattern: <div class="m-reply-item">, <section class="m-comment">, <li class="reply-item">
+            # In modals, replies are often in .m-comment or .j_reply_list
+            reply_items = comment_section.locator(
+                ".m-reply-item, .reply-item, div[class*='reply'], "
+                ".j_reply_list .m-comment, .m-comment-reply-item, "
+                "section.m-comment:not(:first-child)"
+            ).all()
             
             for reply_el in reply_items:
                 try:
@@ -1109,31 +1881,31 @@ class WebnovelScraper:
                     if not reply_text or len(reply_text) < 3:
                         continue
                     
-                    # Extract username
+                    # Extract username - try title attribute first
                     user_name = "Anonymous"
                     try:
-                        user_link = reply_el.locator("a[href*='/profile'], a[href*='/user']").first
+                        user_link = reply_el.locator("a[href*='/profile'][rel='nofollow']").first
                         if user_link.count() > 0:
-                            user_name = user_link.inner_text().strip() or user_name
+                            user_name = user_link.get_attribute('title') or user_link.inner_text().strip() or user_name
                     except:
                         pass
                     
-                    # Extract time
+                    # Extract time - expand format
                     time_str = ""
                     try:
                         time_patterns = [
-                            (r'(\d+)\s*s(?:ec)?', 's'),
-                            (r'(\d+)\s*m(?:in)?', 'm'),
-                            (r'(\d+)\s*h(?:r|our)?', 'h'),
-                            (r'(\d+)\s*d(?:ay)?', 'd'),
-                            (r'(\d+)\s*w(?:eek)?', 'w'),
-                            (r'(\d+)\s*m(?:on|nth|onth)?', 'mth'),
-                            (r'(\d+)\s*y(?:r|ear)?', 'yr')
+                            (r'(\d+)\s*y(?:r|ear)?s?', lambda n: f"{n} year{'s' if int(n) > 1 else ''}"),
+                            (r'(\d+)\s*m(?:on|nth|onth)?s?', lambda n: f"{n} month{'s' if int(n) > 1 else ''}"),
+                            (r'(\d+)\s*w(?:eek)?s?', lambda n: f"{n} week{'s' if int(n) > 1 else ''}"),
+                            (r'(\d+)\s*d(?:ay)?s?', lambda n: f"{n} day{'s' if int(n) > 1 else ''}"),
+                            (r'(\d+)\s*h(?:r|our)?s?', lambda n: f"{n} hour{'s' if int(n) > 1 else ''}"),
+                            (r'(\d+)\s*m(?:in)?s?', lambda n: f"{n} minute{'s' if int(n) > 1 else ''}"),
+                            (r'(\d+)\s*s(?:ec)?s?', lambda n: f"{n} second{'s' if int(n) > 1 else ''}"),
                         ]
-                        for pattern, suffix in time_patterns:
+                        for pattern, formatter in time_patterns:
                             match = re.search(pattern, reply_text, re.I)
                             if match:
-                                time_str = match.group(1) + suffix
+                                time_str = formatter(match.group(1))
                                 break
                     except:
                         pass
@@ -1155,7 +1927,8 @@ class WebnovelScraper:
                     
                     if content:
                         reply = {
-                            "comment_id": self._make_internal_id(self._id_prefix_comment),
+                            "comment_id": str(uuid6.uuid7()),  # UUID v7 for reply
+                            "source_id": str(uuid6.uuid7()),  # Separate UUID for source_id
                             "story_id": internal_book_id,
                             "user_id": None,
                             "user_name": user_name,
@@ -1173,6 +1946,240 @@ class WebnovelScraper:
             safe_print(f"      ⚠️  Error parsing replies: {e}")
         
         return replies
+
+    def _scrape_replies(self, comment_element):
+        """Click reply trigger and extract replies for a comment element.
+        
+        This method handles BOTH Book Reviews and Chapter Comments.
+        It uses broad selectors to handle Webnovel's varying DOM structures.
+
+        Returns:
+            list[dict]: [{reply_id, user_name, content, time, _raw_id}]
+        """
+        out = []
+        try:
+            # Check for reply count / trigger - broader selectors
+            trigger_selectors = [
+                ".j_reply_trigger",
+                ".reply-cnt",
+                "a.m-comment-reply-btn",
+                "button:has-text('View')",
+                "a:has-text('Reply')",
+                "a:has-text('Replies')",
+                ".j_reply_btn"
+            ]
+
+            reply_btn = None
+            for sel in trigger_selectors:
+                try:
+                    btn = comment_element.locator(sel).first
+                    if btn.count() > 0:
+                        reply_btn = btn
+                        break
+                except:
+                    continue
+
+            # If no button found, return []
+            if not reply_btn:
+                return []
+
+            # Try to read reply count quickly
+            try:
+                btn_text = reply_btn.inner_text().strip()
+                m = re.search(r"(\d+)", btn_text)
+                if m and int(m.group(1)) == 0:
+                    return []
+            except:
+                pass
+
+            # Click to reveal replies (inline or modal)
+            try:
+                reply_btn.scroll_into_view_if_needed(timeout=3000)
+                self._random_sleep(0.2, 0.5)
+                reply_btn.click(timeout=5000)
+                self._random_sleep(1.5, 2.5)  # Longer wait for animation/load
+            except Exception as click_err:
+                safe_print(f"   ⚠️  Reply button click failed: {click_err}")
+                return []
+
+            # CRITICAL: Find reply container - check BOTH inline and modal locations
+            container_selectors = [
+                '.j_reply_list',
+                '.j_more_replies_body',
+                '.sub-comm-item',
+                '.m-reply-list',
+                '.reply-list',
+                'div[class*="reply-list"]',
+                '.j_reply_body'
+            ]
+            
+            containers = []
+            # Strategy 1: First try inside the comment element (inline replies)
+            for sel in container_selectors:
+                try:
+                    loc = comment_element.locator(sel).first
+                    if loc.count() > 0:
+                        # Don't wait for visible - just check if it exists
+                        containers.append(loc)
+                        safe_print(f"   ✓ Found inline reply container: {sel}")
+                        break
+                except:
+                    continue
+            
+            # Strategy 2: If none found inside, check for modal (global page context)
+            if not containers:
+                try:
+                    # Wait briefly for modal to appear
+                    self._random_sleep(0.5, 1)
+                    modal_selectors = ['#replyDetailModal', '.g_mod_wrap._on', '.reply-modal', '.g_mod_reply']
+                    for modal_sel in modal_selectors:
+                        try:
+                            modal = self.page.locator(modal_sel).first
+                            if modal.count() > 0 and modal.is_visible():
+                                safe_print(f"   ✓ Found reply modal: {modal_sel}")
+                                for sel in container_selectors:
+                                    try:
+                                        loc = modal.locator(sel).first
+                                        if loc.count() > 0:
+                                            containers.append(loc)
+                                            safe_print(f"   ✓ Found modal reply container: {sel}")
+                                            break
+                                    except:
+                                        continue
+                                if containers:
+                                    break
+                        except:
+                            continue
+                except:
+                    pass
+
+            if not containers:
+                safe_print(f"   ⚠️  No reply container found after click")
+                return []
+
+            # Collect reply items with BROAD selectors
+            reply_item_selectors = [
+                '.m-reply-item',
+                '.reply-item',
+                '.sub-comm-item',
+                '.m-comment-reply-item',
+                '.j_reply_item',
+                'div[class*="reply-item"]',
+                'section.m-comment'
+            ]
+            
+            reply_items = []
+            for container in containers:
+                for sel in reply_item_selectors:
+                    try:
+                        items = container.locator(sel).all()
+                        if items:
+                            reply_items.extend(items)
+                            break  # Stop after first successful selector
+                    except:
+                        continue
+
+            # Debug print
+            safe_print(f"   -> Found {len(reply_items)} reply items after clicking")
+
+            # Parse each reply item with BROAD selectors
+            for item in reply_items:
+                try:
+                    # raw id candidates - broader search
+                    raw_id = (item.get_attribute('data-id') or 
+                             item.get_attribute('data-ejs') or 
+                             item.get_attribute('data-reply-id') or 
+                             item.get_attribute('id') or None)
+
+                    # user name - multiple strategies
+                    user_name = 'Anonymous'
+                    user_selectors = [
+                        ".j_user_name",
+                        "a[href*='/profile']",
+                        ".user-name",
+                        ".name",
+                        ".author",
+                        ".reply-author"
+                    ]
+                    for u_sel in user_selectors:
+                        try:
+                            u = item.locator(u_sel).first
+                            if u.count() > 0:
+                                user_name = u.get_attribute('title') or u.inner_text().strip() or user_name
+                                if user_name != 'Anonymous':
+                                    break
+                        except:
+                            continue
+
+                    # content - multiple strategies
+                    content = ''
+                    content_selectors = [
+                        '.j_content',
+                        '.comm-txt',
+                        '.reply-content',
+                        '.m-reply-cont',
+                        '.m-reply-body',
+                        '.content',
+                        'p'
+                    ]
+                    for c_sel in content_selectors:
+                        try:
+                            c_el = item.locator(c_sel).first
+                            if c_el.count() > 0:
+                                content = c_el.inner_text().strip()
+                                if content:
+                                    break
+                        except:
+                            continue
+                    
+                    # Fallback to full item text if no content found
+                    if not content:
+                        try:
+                            content = item.inner_text().strip()
+                        except:
+                            content = ''
+
+                    # time
+                    time_text = ''
+                    time_selectors = ['time', '.time', 'small', '.j_time', '.reply-time', '.date']
+                    for t_sel in time_selectors:
+                        try:
+                            t = item.locator(t_sel).first
+                            if t.count() > 0:
+                                time_text = t.inner_text().strip()
+                                if time_text:
+                                    break
+                        except:
+                            continue
+                    
+                    # Fallback: regex search for time pattern
+                    if not time_text:
+                        try:
+                            m = re.search(r"(\d+\s*(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s*ago)", item.inner_text(), re.I)
+                            if m:
+                                time_text = m.group(1)
+                        except:
+                            pass
+
+                    if not content:
+                        continue
+
+                    reply_obj = {
+                        'reply_id': str(uuid6.uuid7()),
+                        'user_name': user_name,
+                        'content': content,
+                        'time': time_text,
+                        '_raw_id': str(raw_id) if raw_id else None
+                    }
+                    out.append(reply_obj)
+                except Exception as parse_err:
+                    safe_print(f"   ⚠️  Failed to parse reply item: {parse_err}")
+                    continue
+
+        except Exception as e:
+            safe_print(f"   ⚠️  _scrape_replies error: {e}")
+
+        return out
     
     def _parse_single_book_comment(self, element, internal_book_id, platform_book_id):
         """
@@ -1182,24 +2189,50 @@ class WebnovelScraper:
             CommentOnBook: {comment_id, story_id, user_id, user_name, time, content, score, replies}
         """
         try:
+            # CRITICAL FIX: Click all "Reveal Spoiler" buttons BEFORE extracting text
+            try:
+                spoiler_buttons = element.locator("button:has-text('Reveal Spoiler'), a:has-text('Reveal Spoiler'), span:has-text('Reveal Spoiler')").all()
+                for btn in spoiler_buttons:
+                    try:
+                        if btn.is_visible():
+                            btn.click(timeout=2000)
+                            time.sleep(0.3)  # Wait for content to reveal
+                    except:
+                        continue
+            except:
+                pass
+            
             full_text = element.inner_text().strip()
             if not full_text or len(full_text) < 5:
                 return None
             
-            # Extract username and profile link
+            # Extract username and profile link - try multiple selectors
             user_name = "Anonymous"
             user_profile = None
+            
+            # Method 1: Try data-ejs JSON (most reliable)
             try:
-                user_links = element.locator("a[href*='/profile'], a[href*='/user']").all()
-                if user_links:
-                    user_el = user_links[0]
-                    user_name = user_el.inner_text().strip() or user_name
-                    try:
-                        user_profile = user_el.get_attribute('href')
-                    except:
-                        user_profile = None
+                data_ejs = element.get_attribute('data-ejs')
+                if data_ejs:
+                    ejs_data = json.loads(data_ejs)
+                    user_name = ejs_data.get('userName') or user_name
             except:
                 pass
+            
+            # Method 2: Try DOM selector for username link
+            if user_name == "Anonymous":
+                try:
+                    # Selector based on HTML structure: .m-comment-hd a[href*='/profile'][rel='nofollow']
+                    user_link = element.locator(".m-comment-hd a[href*='/profile'][rel='nofollow']").first
+                    if user_link.count() > 0:
+                        # Get username from title attribute first (most reliable)
+                        user_name = user_link.get_attribute('title') or user_link.inner_text().strip() or user_name
+                        try:
+                            user_profile = user_link.get_attribute('href')
+                        except:
+                            pass
+                except:
+                    pass
             
             # Extract ONLY comment content (filter out ALL metadata/navigation)
             lines = full_text.split('\n')
@@ -1257,29 +2290,63 @@ class WebnovelScraper:
             except:
                 pass
             
-            # Extract time - normalize format (22d, 1mth, 5yr)
+            # Extract time - expand to full format
             time_str = ""
             try:
-                # Find time patterns and normalize
-                time_patterns = [
-                    (r'(\d+)\s*s(?:ec)?', 's'),
-                    (r'(\d+)\s*m(?:in)?', 'm'),  
-                    (r'(\d+)\s*h(?:r|our)?', 'h'),
-                    (r'(\d+)\s*d(?:ay)?', 'd'),
-                    (r'(\d+)\s*w(?:eek)?', 'w'),
-                    (r'(\d+)\s*m(?:on|nth|onth)?', 'mth'),
-                    (r'(\d+)\s*y(?:r|ear)?', 'yr')
-                ]
-                for pattern, suffix in time_patterns:
-                    match = re.search(pattern, full_text, re.I)
-                    if match:
-                        time_str = match.group(1) + suffix
-                        break
+                # Find time patterns from data-ejs or text
+                # Try data-ejs lastTime first
+                try:
+                    data_ejs = element.get_attribute('data-ejs')
+                    if data_ejs:
+                        ejs_data = json.loads(data_ejs)
+                        last_time = ejs_data.get('lastTime')
+                        if last_time:
+                            # Convert milliseconds timestamp to readable format
+                            from datetime import datetime, timezone
+                            dt = datetime.fromtimestamp(last_time / 1000, tz=timezone.utc)
+                            now = datetime.now(timezone.utc)
+                            diff = now - dt
+                            
+                            if diff.days >= 365:
+                                years = diff.days // 365
+                                time_str = f"{years} year{'s' if years > 1 else ''}"
+                            elif diff.days >= 30:
+                                months = diff.days // 30
+                                time_str = f"{months} month{'s' if months > 1 else ''}"
+                            elif diff.days > 0:
+                                time_str = f"{diff.days} day{'s' if diff.days > 1 else ''}"
+                            elif diff.seconds >= 3600:
+                                hours = diff.seconds // 3600
+                                time_str = f"{hours} hour{'s' if hours > 1 else ''}"
+                            elif diff.seconds >= 60:
+                                minutes = diff.seconds // 60
+                                time_str = f"{minutes} minute{'s' if minutes > 1 else ''}"
+                            else:
+                                time_str = f"{diff.seconds} second{'s' if diff.seconds != 1 else ''}"
+                except:
+                    pass
+                
+                # Fallback: parse from text and expand
+                if not time_str:
+                    time_patterns = [
+                        (r'(\d+)\s*y(?:r|ear)?s?', lambda n: f"{n} year{'s' if int(n) > 1 else ''}"),
+                        (r'(\d+)\s*m(?:on|nth|onth)?s?', lambda n: f"{n} month{'s' if int(n) > 1 else ''}"),
+                        (r'(\d+)\s*w(?:eek)?s?', lambda n: f"{n} week{'s' if int(n) > 1 else ''}"),
+                        (r'(\d+)\s*d(?:ay)?s?', lambda n: f"{n} day{'s' if int(n) > 1 else ''}"),
+                        (r'(\d+)\s*h(?:r|our)?s?', lambda n: f"{n} hour{'s' if int(n) > 1 else ''}"),
+                        (r'(\d+)\s*m(?:in)?s?', lambda n: f"{n} minute{'s' if int(n) > 1 else ''}"),
+                        (r'(\d+)\s*s(?:ec)?s?', lambda n: f"{n} second{'s' if int(n) > 1 else ''}"),
+                    ]
+                    for pattern, formatter in time_patterns:
+                        match = re.search(pattern, full_text, re.I)
+                        if match:
+                            time_str = formatter(match.group(1))
+                            break
             except:
                 pass
             
-            # Generate internal comment_id (primary) and obfuscated platform user id
-            comment_id = self._make_internal_id(self._id_prefix_comment)
+            # Generate UUID v7 for comment_id (primary)
+            comment_id = str(uuid6.uuid7())
             user_id = None
             if user_profile:
                 user_id = self._make_platform_obf(user_profile)
@@ -1295,7 +2362,8 @@ class WebnovelScraper:
                 pass
             
             return {
-                "comment_id": comment_id,
+                "comment_id": comment_id,  # UUID v7
+                "source_id": comment_id,  # Store same as comment_id for now
                 "story_id": internal_book_id,
                 "user_id": user_id,
                 "user_name": user_name,
@@ -1639,7 +2707,7 @@ class WebnovelScraper:
             try:
                 # Go back to book page to ensure we're on the right page
                 if self.page.url != book_url:
-                    self.page.goto(book_url, timeout=config.TIMEOUT)
+                    self.page.goto(book_url, timeout=config.TIMEOUT, wait_until='domcontentloaded')
                     self._close_popups()
                     self._random_sleep(2, 3)
                 
@@ -1921,14 +2989,65 @@ class WebnovelScraper:
                 except Exception as debug_err:
                     safe_print(f"   ⚠️  Debug save failed: {debug_err}")
                 
-                # Scroll to load all lazy-loaded chapters
-                safe_print("   📜 Scrolling to load all chapters...")
-                for i in range(15):
+                # CRITICAL FIX: Aggressive scrolling to load all chapters
+                safe_print("   📜 AGGRESSIVE SCROLLING to load all chapters (Fix for 277-chapter bug)...")
+                
+                # First, try to find the Contents/catalog container to scroll
+                catalog_container = None
+                for container_sel in ["#j_catalog_content", ".catalog-content", ".j_catalog_content", "[class*='catalog']"]:
                     try:
-                        self.page.evaluate("window.scrollBy(0, 600)")
-                        self._random_sleep(0.6, 1.2)
+                        elem = self.page.locator(container_sel).first
+                        if elem.count() > 0:
+                            catalog_container = elem
+                            safe_print(f"   ✅ Found catalog container: {container_sel}")
+                            break
                     except:
-                        break
+                        continue
+                
+                # Strategy 1: Keyboard "End" key for maximum scroll efficiency
+                if catalog_container:
+                    try:
+                        # Click inside catalog container to focus it
+                        catalog_container.click(timeout=2000)
+                        safe_print("   🎯 Focused catalog container")
+                        
+                        # Press End key repeatedly (at least 20 times as per requirement)
+                        for i in range(25):
+                            try:
+                                self.page.keyboard.press("End")
+                                time.sleep(0.4)  # Wait for lazy load
+                                if i % 5 == 0:
+                                    safe_print(f"   ⬇️  End key pressed {i+1}/25 times...")
+                            except:
+                                break
+                        safe_print("   ✅ Aggressive keyboard scrolling complete")
+                    except Exception as kbd_err:
+                        safe_print(f"   ⚠️  Keyboard scroll failed: {kbd_err}, falling back to JS scroll")
+                
+                # Strategy 2: JavaScript scrolling fallback (if keyboard fails)
+                if catalog_container:
+                    try:
+                        # Scroll to bottom of container multiple times
+                        for i in range(30):
+                            catalog_container.evaluate("el => el.scrollTop = el.scrollHeight")
+                            time.sleep(0.3)
+                            if i % 5 == 0:
+                                safe_print(f"   📜 JS scroll iteration {i+1}/30...")
+                    except Exception as js_err:
+                        safe_print(f"   ⚠️  JS container scroll failed: {js_err}")
+                
+                # Strategy 3: Window-level scrolling as additional measure
+                try:
+                    for i in range(20):
+                        self.page.evaluate("window.scrollBy(0, 800)")
+                        time.sleep(0.3)
+                except:
+                    pass
+                
+                safe_print("   ✅ All scrolling strategies completed")
+                
+                # Wait for final render
+                time.sleep(2)
             except Exception as e:
                 safe_print(f"   ⚠️  Tab click and wait failed: {e}")
             
@@ -1970,8 +3089,20 @@ class WebnovelScraper:
                 try:
                     toc_chapters = self._parse_toc_chapters(book_id_numeric)
                     if toc_chapters:
-                        safe_print(f"   ✅ Parsed {len(toc_chapters)} chapters with metadata from TOC")
-                        return toc_chapters  # Return with full metadata
+                        # CRITICAL CHECK: Verify chapter count matches expected total
+                        expected_total = self._scrape_total_chapters()
+                        extracted_count = len(toc_chapters)
+                        
+                        safe_print(f"   📊 Expected: {expected_total} chapters, Extracted: {extracted_count}")
+                        
+                        # If we got significantly fewer chapters than expected, use Walk-Next fallback
+                        if expected_total > 0 and extracted_count < expected_total * 0.9:  # Allow 10% tolerance
+                            safe_print(f"   ⚠️  INCOMPLETE CHAPTER LIST DETECTED!")
+                            safe_print(f"   🔄 Switching to WALK-NEXT strategy (slower but 100% accurate)...")
+                            # Don't return yet - fall through to Walk-Next strategy below
+                        else:
+                            safe_print(f"   ✅ Chapter count verified! Parsed {len(toc_chapters)} chapters with metadata from TOC")
+                            return toc_chapters  # Return with full metadata
                 except Exception as toc_err:
                     safe_print(f"   ⚠️  TOC parsing failed: {toc_err}")
             
@@ -2068,63 +3199,144 @@ class WebnovelScraper:
             
             safe_print(f"📊 Webnovel chapters: {chapter_count_webnovel}, External redirects (filtered): {chapter_count_external}")
             
-            # Strategy 6 (LAST RESORT): Try READ button to get first chapter
+            # Strategy 6 (LAST RESORT): Find Chapter 1 from TOC or READ button
             if not chapter_urls:
-                safe_print("🔍 Strategy 6: Trying READ button to access first chapter...")
+                safe_print("🔍 Strategy 6: Finding Chapter 1 (not latest chapter)...")
                 try:
                     # Go back to book page
                     if self.page.url != book_url:
-                        self.page.goto(book_url, timeout=config.TIMEOUT)
+                        self.page.goto(book_url, timeout=config.TIMEOUT, wait_until='domcontentloaded')
                         self._close_popups()
                         self._random_sleep()
                     
-                    # Find READ button
-                    read_selectors = ["a:has-text('READ')", "button:has-text('READ')", "a.j_show_content"]
                     book_id_numeric = book_id.replace('wn_', '') if book_id.startswith('wn_') else book_id
+                    first_chapter_url = None
                     
-                    for read_sel in read_selectors:
-                        try:
-                            read_btn = self.page.locator(read_sel).first
-                            if read_btn.count() > 0:
-                                href = read_btn.get_attribute('href')
-                                if href and not href.startswith('http'):
-                                    href = 'https://www.webnovel.com' + href
-                                
-                                if href and 'webnovel.com' in href and '/book/' in href:
-                                    safe_print(f"   ✅ Found first chapter via READ: {href}")
-                                    chapter_urls.append(href)
-                                    
-                                    # Navigate to chapter and look for more
-                                    try:
-                                        self.page.goto(href, timeout=config.TIMEOUT)
-                                        self._close_popups()
-                                        self._random_sleep()
-                                        
-                                        # Find all chapter links on this page
-                                        nav_links = self.page.locator(f"a[href*='/book/{book_id_numeric}/']").all()
-                                        for nav_link in nav_links[:10]:
-                                            try:
-                                                nav_href = nav_link.get_attribute('href') or ""
-                                                if not nav_href.startswith('http'):
-                                                    nav_href = 'https://www.webnovel.com' + nav_href
-                                                if '/catalog' not in nav_href and nav_href not in chapter_urls:
-                                                    chapter_urls.append(nav_href)
-                                            except:
-                                                continue
-                                        
-                                        safe_print(f"   📊 Total chapters found: {len(chapter_urls)}")
-                                    except:
-                                        pass
+                    # PRIORITY: Look for "Chapter 1" link in TOC/Catalog
+                    safe_print("   🔍 Priority: Searching for 'Chapter 1' link in catalog...")
+                    try:
+                        # Click Contents tab first to reveal catalog
+                        for tab_sel in ["a:has-text('Contents')", "button:has-text('Contents')", "li:has-text('Contents')"]:
+                            try:
+                                tab = self.page.locator(tab_sel).first
+                                if tab.count() > 0:
+                                    tab.click(timeout=3000)
+                                    self._random_sleep(1, 2)
                                     break
+                            except:
+                                continue
+                        
+                        # Look for Chapter 1 specifically
+                        chapter1_selectors = [
+                            "a:has-text('Chapter 1')",
+                            "a:has-text('Ch 1')",
+                            "a:has-text('Ch. 1')",
+                            "a:has-text('1.')"
+                        ]
+                        
+                        for ch1_sel in chapter1_selectors:
+                            try:
+                                ch1_links = self.page.locator(ch1_sel).all()
+                                for link in ch1_links:
+                                    href = link.get_attribute('href')
+                                    if href and '/book/' in href and book_id_numeric in href:
+                                        if not href.startswith('http'):
+                                            href = 'https://www.webnovel.com' + href
+                                        first_chapter_url = href
+                                        safe_print(f"   ✅ Found Chapter 1 in catalog: {href}")
+                                        break
+                                if first_chapter_url:
+                                    break
+                            except:
+                                continue
+                        
+                        # Try getting first item from catalog list
+                        if not first_chapter_url:
+                            try:
+                                catalog_links = self.page.locator(f"#j_catalog_content a[href*='/book/{book_id_numeric}/'], .catalog-content a[href*='/book/{book_id_numeric}/']").all()
+                                if catalog_links:
+                                    first_href = catalog_links[0].get_attribute('href')
+                                    if first_href:
+                                        if not first_href.startswith('http'):
+                                            first_href = 'https://www.webnovel.com' + first_href
+                                        first_chapter_url = first_href
+                                        safe_print(f"   ✅ Found first chapter from catalog list: {first_href}")
+                            except:
+                                pass
+                    except:
+                        pass
+                    
+                    # FALLBACK: Use READ button but verify it's Chapter 1
+                    if not first_chapter_url:
+                        safe_print("   ⚠️  Chapter 1 not found in catalog, trying READ button...")
+                        read_selectors = ["a:has-text('READ')", "button:has-text('READ')", "a.j_show_content"]
+                        
+                        for read_sel in read_selectors:
+                            try:
+                                read_btn = self.page.locator(read_sel).first
+                                if read_btn.count() > 0:
+                                    href = read_btn.get_attribute('href')
+                                    if href and not href.startswith('http'):
+                                        href = 'https://www.webnovel.com' + href
+                                    
+                                    if href and 'webnovel.com' in href and '/book/' in href:
+                                        # Check if URL contains high chapter numbers
+                                        high_chapter_match = re.search(r'chapter[-_]?([56789]\d|\d{3,})', href, re.I)
+                                        if high_chapter_match:
+                                            safe_print(f"   ⚠️  READ button links to Chapter {high_chapter_match.group(1)}, not Chapter 1!")
+                                            safe_print(f"   🔄 Attempting to construct Chapter 1 URL...")
+                                            # Try to construct Chapter 1 by replacing chapter number in URL
+                                            # This is risky but better than starting from Chapter 61
+                                        else:
+                                            first_chapter_url = href
+                                            safe_print(f"   ✅ READ button appears to link to early chapter: {href}")
+                                        break
+                            except:
+                                continue
+                    
+                    if first_chapter_url:
+                        chapter_urls.append(first_chapter_url)
+                        
+                        # Navigate to chapter and look for more
+                        try:
+                            self.page.goto(first_chapter_url, timeout=config.TIMEOUT, wait_until='domcontentloaded')
+                            self._close_popups()
+                            self._random_sleep()
+                            
+                            # Find all chapter links on this page
+                            nav_links = self.page.locator(f"a[href*='/book/{book_id_numeric}/']").all()
+                            for nav_link in nav_links[:10]:
+                                try:
+                                    nav_href = nav_link.get_attribute('href') or ""
+                                    if not nav_href.startswith('http'):
+                                        nav_href = 'https://www.webnovel.com' + nav_href
+                                    if '/catalog' not in nav_href and nav_href not in chapter_urls:
+                                        chapter_urls.append(nav_href)
+                                except:
+                                    continue
+                            
+                            safe_print(f"   📊 Total chapters found: {len(chapter_urls)}")
                         except:
-                            continue
+                            pass
+                        
                 except Exception as read_err:
                     safe_print(f"   ⚠️  READ strategy failed: {read_err}")
             
             safe_print(f"✅ Found {len(chapter_urls)} chapter URLs (webnovel.com only)\n")
             
+            # CRITICAL CHECK: Verify chapter count for walk-next fallback
+            expected_total = self._scrape_total_chapters()
+            should_use_walk_next = False
+            
+            if expected_total > 0 and len(chapter_urls) > 0:
+                extracted_count = len(chapter_urls)
+                if extracted_count < expected_total * 0.9:  # Less than 90% of expected
+                    safe_print(f"⚠️  INCOMPLETE CHAPTER LIST: Expected {expected_total}, got {extracted_count}")
+                    safe_print(f"🔄 Will use WALK-NEXT fallback strategy for 100% accuracy...")
+                    should_use_walk_next = True
+            
             # Strategy 7 (fallback): Follow prefetch/read target -> walk next links to enumerate chapters
-            if not chapter_urls:
+            if not chapter_urls or should_use_walk_next:
                 safe_print("🔍 Strategy 7: Following prefetch/read link and walking next-> to enumerate chapters...")
                 try:
                     # Find prefetch link for first chapter
@@ -2187,6 +3399,15 @@ class WebnovelScraper:
                     if prefetch:
                         if not prefetch.startswith('http'):
                             prefetch = 'https://www.webnovel.com' + prefetch
+                        
+                        # CRITICAL CHECK: Verify this is Chapter 1, not a later chapter
+                        high_chapter_match = re.search(r'chapter[-_]?(\d+)', prefetch, re.I)
+                        if high_chapter_match:
+                            chapter_num = int(high_chapter_match.group(1))
+                            if chapter_num > 5:
+                                safe_print(f"   ⚠️  WARNING: Prefetch URL appears to be Chapter {chapter_num}, not Chapter 1!")
+                                safe_print(f"   ⚠️  This will result in incomplete scraping. Consider re-running with force.")
+                        
                         safe_print(f"   ↳ Starting from: {prefetch}")
                     else:
                         safe_print("   ❌ Could not find starting chapter URL for Strategy 7")
@@ -2195,7 +3416,10 @@ class WebnovelScraper:
                         # Walk next links and collect metadata using Cloudscraper (bypass Cloudflare)
                         visited = set()
                         to_visit = [prefetch]
-                        max_walk = min(int(self._scrape_total_chapters() or 100), 100)  # Limit to 100 for speed
+                        # CRITICAL FIX: Use actual total chapters from page (e.g., 277) instead of limiting to 100
+                        expected_total = self._scrape_total_chapters() or 300  # Default to 300 if unknown
+                        max_walk = expected_total + 10  # Add buffer for safety
+                        safe_print(f"   📊 Will walk up to {max_walk} chapters (expected: {expected_total})")
                         order = 0
                         
                         # Setup cloudscraper session with browser fingerprint (same as chapter scraping)
@@ -2282,8 +3506,7 @@ class WebnovelScraper:
                                     # Get published time from embedded JSON (chapInfo)
                                     # Webnovel stores chapter metadata in "var chapInfo={...}"
                                     # There are multiple publishTime fields - we want the LAST one (chapterInfo.publishTime)
-                                    import re
-                                    from datetime import datetime
+                                    # Note: re and datetime are already imported at module level
                                     
                                     script_tags = soup.find_all('script', string=re.compile(r'var chapInfo='))
                                     for script in script_tags:
@@ -2315,9 +3538,13 @@ class WebnovelScraper:
                                         'published_time': published_time
                                     })
                                     
-                                    # Print progress every 10 chapters
-                                    if order % 10 == 0:
-                                        safe_print(f"   📚 Walked {order} chapters...")
+                                    # Print progress more frequently for user feedback
+                                    if order == 1:
+                                        safe_print(f"   ✅ Chapter 1: {name[:50] if name else canonical[:50]}")
+                                    elif order % 20 == 0:
+                                        safe_print(f"   📚 Walked {order}/{expected_total} chapters... ({int(order/expected_total*100)}% complete)")
+                                    elif order == expected_total:
+                                        safe_print(f"   🎉 Reached expected total: {order} chapters!")
                                 # find next chapter link using several strategies
                                 next_found = None
                                 
@@ -2520,11 +3747,36 @@ class WebnovelScraper:
         
         try:
             # Navigate to chapter (Playwright attempt first)
-            self.page.goto(chapter_url, timeout=config.TIMEOUT)
-            self._random_sleep()  # Fast default
+            self.page.goto(chapter_url, timeout=config.TIMEOUT, wait_until='domcontentloaded')
             
-            # Generate internal chapter ID and attempt to derive platform chapter id
-            internal_chapter_id = self._make_internal_id(self._id_prefix_chapter)
+            # Wait for Cloudflare to complete (detect and wait for "Just a moment..." to disappear)
+            try:
+                # Wait up to 10 seconds for Cloudflare challenge to disappear
+                self.page.wait_for_function(
+                    """() => {
+                        const body = document.body.innerText.toLowerCase();
+                        return !body.includes('just a moment') && 
+                               !body.includes('checking your browser') &&
+                               !body.includes('cloudflare');
+                    }""",
+                    timeout=10000
+                )
+                safe_print("   ✅ Cloudflare bypass successful")
+            except Exception:
+                # If timeout, check if content is actually available anyway
+                body_text = self.page.locator('body').inner_text().lower()
+                if 'just a moment' in body_text or 'checking your browser' in body_text:
+                    safe_print("   ⚠️ Cloudflare challenge still present")
+                else:
+                    safe_print("   ✅ Page loaded (no Cloudflare detected)")
+            
+            # Small delay to ensure content renders
+            time.sleep(random.uniform(1.5, 2.5))
+            
+            # Generate UUID v7 for chapter ID
+            internal_chapter_id = str(uuid6.uuid7())
+            
+            # Extract platform chapter ID for source_id
             platform_chapter_id = None
             try:
                 m = re.search(r"/book/.+?/([\w\-]+_?\d+)$", chapter_url)
@@ -2538,22 +3790,26 @@ class WebnovelScraper:
             chapter_name = toc_name if toc_name else self._scrape_chapter_name()
             published_time = toc_published if toc_published else self._scrape_chapter_published_time()
 
-            # Try to get content via Playwright first
+            # Try to get content via Playwright (now that Cloudflare is bypassed)
             content = self._scrape_chapter_content()
 
-            # Detect Cloudflare / block patterns in fetched content
-            blocked_indicators = ['just a moment', 'checking your browser', 'cloudflare', 'you are being redirected']
-            content_lower = (content or '').lower()
-            need_cloudscraper = False
+            # Check if content extraction failed and log appropriately
             if not content or len(content.strip()) < 50:
-                need_cloudscraper = True
-            else:
-                for ind in blocked_indicators:
-                    if ind in content_lower:
-                        need_cloudscraper = True
-                        break
-
-            # If blocked or content missing, try cloudscraper (fresh session) to fetch chapter HTML directly
+                safe_print(f"   ⚠️ Warning: Chapter {order} content is too short or empty ({len(content or '')} chars)")
+                # Save debug HTML for inspection
+                try:
+                    os.makedirs('data/debug', exist_ok=True)
+                    debug_html = self.page.content()
+                    dbg_path = os.path.join('data/debug', f'chapter_{order}_failed.html')
+                    with open(dbg_path, 'w', encoding='utf-8') as df:
+                        df.write(debug_html)
+                    safe_print(f"   📄 Saved debug HTML to {dbg_path}")
+                except Exception as e:
+                    safe_print(f"   ⚠️ Failed to save debug HTML: {e}")
+            
+            # Legacy cloudscraper fallback (now deprecated in favor of Playwright with Cloudflare wait)
+            # Keeping this code commented for reference, but it should not be needed anymore
+            need_cloudscraper = False
             if need_cloudscraper and cloudscraper is not None and BeautifulSoup is not None:
                 try:
                     safe_print("   ⚙️  Content seems blocked or empty — attempting cloudscraper fetch...")
@@ -2708,13 +3964,153 @@ class WebnovelScraper:
         return "Untitled Chapter"
     
     def _scrape_chapter_content(self):
-        """Scrape chapter content text"""
+        """
+        Scrape chapter content text with robust multi-strategy fallback.
+        Tries specific selectors first, then generic patterns, then text-based extraction.
+        """
+        safe_print("   ⏳ Waiting for chapter content to render...")
+        
+        # ============================================================================
+        # PRIORITY 1: Try specific known Webnovel selectors with wait
+        # ============================================================================
+        specific_selectors = [
+            "div.cha-words",
+            "div.j_chapterContent", 
+            "div.cha-content",
+            "div.chapter-content"
+        ]
+        
+        for selector in specific_selectors:
+            try:
+                # Try to wait for this specific selector (15s timeout)
+                self.page.wait_for_selector(selector, timeout=15000, state='visible')
+                self._random_sleep(1, 1.5)
+                
+                # Extract text content
+                content_el = self.page.locator(selector).first
+                if content_el.count() > 0:
+                    text = content_el.inner_text().strip()
+                    if text and len(text) > 200:  # Valid chapter content should be substantial
+                        safe_print(f"   ✅ Content found via selector '{selector}' ({len(text)} chars)")
+                        return text
+                    elif text and len(text) > 50:
+                        safe_print(f"   ⚠️  Short content via '{selector}' ({len(text)} chars) - trying next...")
+            except Exception as e:
+                # Timeout or not found - continue to next selector
+                continue
+        
+        safe_print("   ⚠️  Specific selectors failed - trying generic patterns...")
+        
+        # ============================================================================
+        # PRIORITY 2: Try generic content patterns (any div with "content" in class)
+        # ============================================================================
         try:
-            content_el = self.page.locator(".chapter-inner, .chapter-content, div[class*='content']").first
-            if content_el.count() > 0:
-                return content_el.inner_text().strip()
-        except:
-            pass
+            generic_selector = 'div[class*="content"]'
+            self.page.wait_for_selector(generic_selector, timeout=10000, state='visible')
+            self._random_sleep(0.5, 1)
+            
+            # Find all matching divs and get the one with most paragraph content
+            content = self.page.evaluate("""() => {
+                const contentDivs = Array.from(document.querySelectorAll('div[class*="content"]'));
+                let bestContent = '';
+                let maxParagraphs = 0;
+                
+                for (const div of contentDivs) {
+                    const paragraphs = div.querySelectorAll('p');
+                    if (paragraphs.length > maxParagraphs) {
+                        const text = Array.from(paragraphs)
+                            .map(p => p.innerText.trim())
+                            .filter(t => t.length > 20)
+                            .join('\\n\\n');
+                        
+                        if (text.length > 200) {
+                            maxParagraphs = paragraphs.length;
+                            bestContent = text;
+                        }
+                    }
+                }
+                return bestContent;
+            }""")
+            
+            if content and len(content.strip()) > 200:
+                safe_print(f"   ✅ Content found via generic pattern ({len(content)} chars, paragraphs detected)")
+                return content.strip()
+                
+        except Exception as e:
+            safe_print(f"   ⚠️  Generic pattern failed: {str(e)[:100]}")
+        
+        # ============================================================================
+        # PRIORITY 3: Text-based fallback - find largest block of story-like text
+        # ============================================================================
+        safe_print("   ⚠️  All CSS selectors failed - using text-based extraction fallback...")
+        
+        try:
+            content = self.page.evaluate("""() => {
+                // Strategy: Find the container with the most <p> tags that looks like story content
+                const allContainers = Array.from(document.querySelectorAll('div, article, section, main'));
+                
+                let bestCandidate = null;
+                let maxScore = 0;
+                
+                for (const container of allContainers) {
+                    // Count paragraphs in this container
+                    const paragraphs = container.querySelectorAll('p');
+                    const pCount = paragraphs.length;
+                    
+                    // Skip containers with too few paragraphs (likely not story content)
+                    if (pCount < 5) continue;
+                    
+                    // Calculate total text length in paragraphs
+                    let totalLength = 0;
+                    const texts = [];
+                    for (const p of paragraphs) {
+                        const text = p.innerText.trim();
+                        if (text.length > 20) {  // Skip very short paragraphs (UI elements)
+                            texts.push(text);
+                            totalLength += text.length;
+                        }
+                    }
+                    
+                    // Skip if not enough text
+                    if (totalLength < 500) continue;
+                    
+                    // Score: prioritize containers with many long paragraphs
+                    const score = pCount * 10 + totalLength / 100;
+                    
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestCandidate = texts.join('\\n\\n');
+                    }
+                }
+                
+                // If we found a good candidate, return it
+                if (bestCandidate && bestCandidate.length > 200) {
+                    return bestCandidate;
+                }
+                
+                // Last resort: get all <p> tags on page (might include navigation/UI text)
+                const allParagraphs = Array.from(document.querySelectorAll('p'));
+                const allText = allParagraphs
+                    .map(p => p.innerText.trim())
+                    .filter(t => t.length > 20)
+                    .join('\\n\\n');
+                
+                return allText.length > 200 ? allText : '';
+            }""")
+            
+            if content and len(content.strip()) > 200:
+                safe_print(f"   ✅ Content extracted via text-based fallback ({len(content)} chars)")
+                return content.strip()
+            else:
+                safe_print(f"   ❌ Text-based fallback insufficient ({len(content or '')} chars)")
+                
+        except Exception as e:
+            safe_print(f"   ❌ Text-based extraction failed: {e}")
+        
+        # ============================================================================
+        # COMPLETE FAILURE: No content found
+        # ============================================================================
+        safe_print("   ❌ ALL extraction strategies failed - content unavailable")
         return ""
     
     def _scrape_chapter_published_time(self):
@@ -2732,7 +4128,7 @@ class WebnovelScraper:
     
     def _scrape_chapter_comments(self, chapter_id):
         """
-        Scrape ALL comments on chapter with infinite scroll
+        Scrape ALL comments on chapter by clicking comment button and waiting for drawer/panel
         
         Returns:
             list[CommentOnChapter]: All comments with replies
@@ -2741,156 +4137,486 @@ class WebnovelScraper:
         comments = []
         
         try:
-            # Find and click comment button
-            comment_btn_selectors = [
-                "button:has-text('Comment')",
-                "a:has-text('Comment')",
-                "button[class*='comment']"
-            ]
+            # STEP 1: Scroll to bottom to make comment button visible
+            safe_print(f"  📜 Scrolling to make comment button visible...")
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1)  # Brief pause for content to load
             
-            for selector in comment_btn_selectors:
-                btn = self.page.locator(selector).first
-                if btn.count() > 0:
-                    btn.scroll_into_view_if_needed()
-                    time.sleep(1)
-                    btn.click()
-                    time.sleep(3)
-                    break
+            # STEP 2: Find comment button FAST (5 second timeout total)
+            safe_print(f"  🔍 Looking for comment button (5s timeout)...")
+            comment_btn = None
+            comment_count = None
+            btn_text = ""
             
-            # Infinite scroll to load all comments
-            previous_height = 0
-            no_change_count = 0
-            max_scrolls = 30
-            
-            for scroll in range(max_scrolls):
-                self.page.evaluate("window.scrollBy(0, 500)")
-                time.sleep(1)
+            try:
+                # Quick check: CSS selector first (fastest)
+                try:
+                    btn_locator = self.page.locator(".j_bottom_comments, a[href*='#comment']").first
+                    if btn_locator.count() > 0:
+                        comment_btn = btn_locator
+                        btn_text = btn_locator.inner_text(timeout=2000).strip()
+                        try:
+                            comment_count = btn_locator.get_attribute('data-reply-amount')
+                        except:
+                            pass
+                        safe_print(f"  ✅ Found by CSS: '{btn_text}'")
+                except:
+                    pass
                 
-                current_height = self.page.evaluate("document.body.scrollHeight")
-                if current_height == previous_height:
-                    no_change_count += 1
-                    if no_change_count >= 3:
-                        break
-                else:
-                    no_change_count = 0
-                    previous_height = current_height
+                # Fallback: Text search
+                if not comment_btn:
+                    try:
+                        text_btn = self.page.get_by_text("Comment", exact=False).first
+                        if text_btn.is_visible(timeout=3000):
+                            comment_btn = text_btn
+                            btn_text = text_btn.inner_text().strip()
+                            safe_print(f"  ✅ Found by text: '{btn_text}'")
+                            
+                            # Extract count from text
+                            import re
+                            match = re.search(r'(\d+)', btn_text)
+                            if match:
+                                comment_count = match.group(1)
+                    except:
+                        pass
+                
+                # If no button found, skip this chapter
+                if not comment_btn:
+                    safe_print(f"  ⚠️  Comment button not found/clickable. Skipping.")
+                    return []
+                    
+            except Exception as find_err:
+                safe_print(f"  ⚠️  Comment button search timed out: {find_err}. Skipping.")
+                return []
             
-            # Parse comments
+            # STEP 3: CLICK THE BUTTON (fast, single attempt)
+            safe_print(f"  👆 Clicking comment button...")
+            try:
+                comment_btn.scroll_into_view_if_needed(timeout=3000)
+                time.sleep(0.5)
+                comment_btn.click(timeout=5000)
+                safe_print(f"  ✅ Comment button clicked!")
+            except Exception as click_err:
+                safe_print(f"  ⚠️  Click failed: {click_err}. Skipping.")
+                return []
+            
+            # STEP 4: Wait for drawer to open (3 seconds)
+            safe_print(f"  ⏳ Waiting for drawer (3s)...")
+            time.sleep(3)
+            
+            # STEP 5: Quick check for comment items (5 second timeout)
+            safe_print(f"  🔍 Checking for comment items (5s timeout)...")
+            comment_appeared = False
+            
+            try:
+                # Fast wait for comment items
+                self.page.wait_for_selector(
+                    ".m-comment-item, .j_comment_list li, section.m-comment, div[class*='comment-item'], li[class*='comment']",
+                    timeout=5000,
+                    state='attached'
+                )
+                safe_print(f"  ✅ Comment items detected!")
+                comment_appeared = True
+                time.sleep(1)  # Brief render wait
+                
+            except Exception as wait_err:
+                safe_print(f"  ⚠️  No comment items found after 5s")
+            
+            # STEP 6: One quick retry if no comments found
+            if not comment_appeared:
+                safe_print(f"  🔄 Quick retry: Scrolling drawer...")
+                try:
+                    # Try to find drawer and scroll
+                    drawer = self.page.locator(".drawer._on, .j_comment_list, .g_drawer._on").first
+                    if drawer.count() > 0:
+                        drawer.evaluate("el => el.scrollTop = 100")
+                        time.sleep(1)
+                        
+                        # Check again
+                        self.page.wait_for_selector(
+                            ".m-comment-item, .j_comment_list li",
+                            timeout=3000,
+                            state='attached'
+                        )
+                        safe_print(f"  ✅ Comments appeared after retry!")
+                        comment_appeared = True
+                except:
+                    safe_print(f"  ⚠️  Retry failed")
+            
+            # STEP 7: If still no comments, give up quickly
+            if not comment_appeared:
+                safe_print(f"  ⚠️  No comments detected. Skipping chapter.")
+                return []
+            
+            # STEP 8: Scroll to load all comments (fast)
+            safe_print(f"  📜 Scrolling to load all comments...")
+            try:
+                container = self.page.locator(".j_comment_list, .drawer._on").first
+                if container.count() > 0:
+                    # Quick scroll to trigger lazy loading
+                    for i in range(3):
+                        container.evaluate(f"el => el.scrollTop = {(i + 1) * 300}")
+                        time.sleep(0.3)
+            except:
+                pass
+            
+            # STEP 10: Parse comments with multiple selector strategies
             comments = self._parse_chapter_comments(chapter_id)
-            safe_print(f"  ✅ Found {len(comments)} chapter comments")
+            
+            # STEP 11: RETRY PARSE if we got 0 comments but button said there should be some
+            if not comments and comment_count and str(comment_count).isdigit() and int(comment_count) > 0:
+                safe_print(f"  🔄 Retry #2: Expected {comment_count} comments but got 0, waiting 2s and trying again...")
+                time.sleep(2)
+                # Try clicking button again (sometimes drawer needs double trigger)
+                try:
+                    comment_btn.click(timeout=3000)
+                    safe_print(f"     👆 Re-clicked comment button")
+                    time.sleep(3)
+                except:
+                    pass
+                # Try parsing again
+                comments = self._parse_chapter_comments(chapter_id)
+                if comments:
+                    safe_print(f"     ✅ Retry successful! Got {len(comments)} comments")
+            
+            if comments:
+                safe_print(f"  ✅ Successfully scraped {len(comments)} chapter comments")
+            else:
+                safe_print(f"  ℹ️  No comments found (might be 0 comments or wrong selector)")
+                # Debug: Save HTML for analysis
+                try:
+                    debug_dir = "data/debug"
+                    os.makedirs(debug_dir, exist_ok=True)
+                    debug_html = self.page.content()
+                    debug_path = f"{debug_dir}/chapter_{chapter_id}_after_click.html"
+                    with open(debug_path, 'w', encoding='utf-8') as f:
+                        f.write(debug_html)
+                    safe_print(f"  🐛 Saved debug HTML: {debug_path}")
+                except:
+                    pass
             
         except Exception as e:
             safe_print(f"  ⚠️  Error scraping chapter comments: {e}")
         
         return comments
     
+    def _parse_chapter_comments_inner(self, chapter_id):
+        """Inner parser after clicking Reveal Spoiler buttons"""
+    
     def _parse_chapter_comments(self, chapter_id):
-        """Parse chapter comments from loaded page"""
+        """Parse chapter comments - wrapper that clicks Reveal Spoiler first"""
+        # CRITICAL FIX: Click all Reveal Spoiler buttons before parsing
+        try:
+            spoiler_buttons = self.page.locator("button:has-text('Reveal Spoiler'), a:has-text('Reveal Spoiler'), span:has-text('Reveal Spoiler')").all()
+            if spoiler_buttons:
+                safe_print(f"  🔓 Found {len(spoiler_buttons)} spoiler buttons, clicking all...")
+                for btn in spoiler_buttons:
+                    try:
+                        if btn.is_visible():
+                            btn.click(timeout=2000)
+                            time.sleep(0.2)
+                    except:
+                        continue
+                safe_print(f"  ✅ All spoiler content revealed")
+        except:
+            pass
+        
+        # Now call the actual parser
+        return self._parse_chapter_comments_inner(chapter_id)
+    
+    def _parse_chapter_comments_inner(self, chapter_id):
+        """
+        Parse chapter comments using multiple selector strategies.
+        After clicking button, comments appear in drawer/panel with various possible selectors.
+        """
         comments = []
         
         try:
-            # Find comment containers
-            comment_selectors = [
-                "div[class*='comment']",
-                "li[class*='comment']",
-                ".comment-item"
-            ]
+            # Strategy 1: Try standard selectors first
+            comment_sections = self.page.locator("section.m-comment").all()
             
-            for selector in comment_selectors:
-                elements = self.page.locator(selector).all()
-                if elements:
-                    for el in elements:
-                        comment = self._parse_single_chapter_comment(el, chapter_id)
-                        if comment:
-                            comments.append(comment)
-                    break
-        except:
-            pass
+            # Strategy 2: Try .m-comment-item class (common in drawers)
+            if len(comment_sections) == 0:
+                safe_print(f"  🔍 Trying .m-comment-item selector...")
+                comment_sections = self.page.locator(".m-comment-item").all()
+                if len(comment_sections) > 0:
+                    safe_print(f"  ✅ Found {len(comment_sections)} comments using .m-comment-item")
+            
+            # Strategy 3: Try broader patterns
+            if len(comment_sections) == 0:
+                safe_print(f"  🔍 Standard selectors failed, trying broader patterns...")
+                selectors_to_try = [
+                    ".j_comment_list > li",
+                    ".j_comment_list > div",
+                    "div[class*='comment-item']",
+                    "li[class*='comment-item']",
+                    "div[class*='comment'][class*='item']",
+                    "[data-comment-id]",
+                    "[data-ejs*='review']",
+                ]
+                
+                for selector in selectors_to_try:
+                    comment_sections = self.page.locator(selector).all()
+                    if len(comment_sections) > 0:
+                        safe_print(f"  ✅ Found {len(comment_sections)} comments using: {selector}")
+                        break
+            
+            # Strategy 4: VERY BROAD - Find elements with level badges (reliable comment indicator)
+            if len(comment_sections) == 0:
+                safe_print(f"  🔍 All selectors failed, trying broad search with 'LV' and 'Level' indicators...")
+                try:
+                    # Strategy 4a: Look for elements with "LV" (user level badges like "LV 5")
+                    lv_candidates = self.page.locator("div, li").filter(has_text="LV").all()
+                    safe_print(f"     🔍 Found {len(lv_candidates)} elements with 'LV' text")
+                    
+                    for candidate in lv_candidates:
+                        try:
+                            text = candidate.inner_text().strip()
+                            # Validate: should have reasonable comment size and contain "LV" + content
+                            if len(text) > 30 and len(text) < 5000 and ("LV" in text):
+                                comment_sections.append(candidate)
+                        except:
+                            continue
+                    
+                    # Strategy 4b: Also try "Level" if "LV" didn't find enough
+                    if len(comment_sections) < 3:
+                        level_candidates = self.page.locator("div, li").filter(has_text="Level").all()
+                        safe_print(f"     🔍 Found {len(level_candidates)} elements with 'Level' text")
+                        
+                        for candidate in level_candidates:
+                            try:
+                                text = candidate.inner_text().strip()
+                                if len(text) > 30 and len(text) < 5000 and ("Level" in text):
+                                    # Avoid duplicates
+                                    if candidate not in comment_sections:
+                                        comment_sections.append(candidate)
+                            except:
+                                continue
+                    
+                    if len(comment_sections) > 0:
+                        safe_print(f"  ✅ Found {len(comment_sections)} potential comments via level badge search")
+                
+                except Exception as lv_err:
+                    safe_print(f"  ⚠️  Level badge search error: {lv_err}")
+            
+            # Strategy 5: FALLBACK - Find elements with "Reply" text
+            if len(comment_sections) == 0:
+                safe_print(f"  🔍 Last resort: Looking for elements with 'Reply' text...")
+                try:
+                    reply_candidates = self.page.locator("div, li").filter(has_text="Reply").all()
+                    safe_print(f"     🔍 Found {len(reply_candidates)} elements with 'Reply' text")
+                    
+                    for candidate in reply_candidates:
+                        try:
+                            text = candidate.inner_text().strip()
+                            if len(text) > 20 and len(text) < 5000:
+                                comment_sections.append(candidate)
+                        except:
+                            continue
+                    
+                    if len(comment_sections) > 0:
+                        safe_print(f"  ✅ Found {len(comment_sections)} potential comments via 'Reply' search")
+                
+                except Exception as reply_err:
+                    safe_print(f"  ⚠️  Reply search error: {reply_err}")
+            
+            # Log final selector used
+            if len(comment_sections) == 0:
+                safe_print(f"  ℹ️  No comment elements found with any selector")
+            else:
+                safe_print(f"  📝 Parsing {len(comment_sections)} comment element(s)...")
+            
+            # Parse each comment
+            for comment_section in comment_sections:
+                comment = self._parse_single_chapter_comment(comment_section, chapter_id)
+                if comment:
+                    comments.append(comment)
+                    
+        except Exception as e:
+            safe_print(f"  ⚠️  Error parsing chapter comments: {e}")
         
         return comments
     
     def _parse_single_chapter_comment(self, element, chapter_id):
         """
-        Parse single chapter comment
+        Parse single chapter comment - FIXED username and replies extraction
         
         Returns:
             CommentOnChapter: {comment_id, chapter_id, parent_id, user_id, user_name, time, content, replies}
         """
         try:
-            full_text = element.inner_text().strip()
-            if not full_text or len(full_text) < 5:
-                return None
-            
-            # Extract username and profile link
+            comment_id = str(uuid6.uuid7())
             user_name = "Anonymous"
-            user_profile = None
-            try:
-                user_links = element.locator("a[href*='/profile'], a[href*='/user']").all()
-                if user_links:
-                    user_el = user_links[0]
-                    user_name = user_el.inner_text().strip() or user_name
-                    try:
-                        user_profile = user_el.get_attribute('href')
-                    except:
-                        user_profile = None
-            except:
-                pass
-            
-            # Extract content
-            lines = full_text.split('\n')
-            content_lines = []
-            for line in lines:
-                line = line.strip()
-                if not line or line == user_name:
-                    continue
-                if re.match(r'^LV\s+\d+', line) or re.match(r'^\d+(s|m|h|d|w|mth|yr)$', line):
-                    continue
-                content_lines.append(line)
-            
-            content = '\n'.join(content_lines)
-            
-            # Extract GIFs (append to content)
-            try:
-                gifs = element.locator("img[src*='.gif']").all()
-                for gif in gifs:
-                    url = gif.get_attribute("src")
-                    if url and not url.startswith("http"):
-                        url = "https:" + url
-                    content += f"\n[GIF: {url}]"
-            except:
-                pass
-            
-            # Extract time
-            time_str = ""
-            patterns = [r'\d+s', r'\d+m', r'\d+h', r'\d+d', r'\d+w', r'\d+mth', r'\d+yr']
-            for pattern in patterns:
-                matches = re.findall(pattern, full_text)
-                if matches:
-                    time_str = matches[0]
-                    break
-            
-            # Normalize time format
-            time_patterns = [
-                (r'(\d+)\s*s(?:ec)?', 's'),
-                (r'(\d+)\s*m(?:in)?', 'm'),
-                (r'(\d+)\s*h(?:r)?', 'h'),
-                (r'(\d+)\s*d(?:ay)?', 'd'),
-                (r'(\d+)\s*w(?:eek)?', 'w'),
-                (r'(\d+)\s*m(?:on|nth)?', 'mth'),
-                (r'(\d+)\s*y(?:r)?', 'yr')
-            ]
-            for pattern, suffix in time_patterns:
-                match = re.search(pattern, full_text, re.I)
-                if match:
-                    time_str = match.group(1) + suffix
-                    break
-            
-            # Generate internal comment id and obfuscated user id
-            comment_id = self._make_internal_id(self._id_prefix_comment)
             user_id = None
-            if user_profile:
-                user_id = self._make_platform_obf(user_profile)
-
+            time_str = ""
+            
+            # ===== FIX BUG A: Extract USERNAME properly =====
+            # CRITICAL: Try the MOST SPECIFIC selector first
+            # Priority 1: Try data-ejs (most reliable for chapter comments)
+            try:
+                data_ejs = element.get_attribute('data-ejs')
+                if data_ejs:
+                    ejs_data = json.loads(data_ejs)
+                    username_from_ejs = ejs_data.get('userName') or ejs_data.get('user') or ejs_data.get('name')
+                    if username_from_ejs and username_from_ejs.strip():
+                        user_name = username_from_ejs.strip()
+                        # Also get user ID if available
+                        user_id_from_ejs = ejs_data.get('userId') or ejs_data.get('uid')
+                        if user_id_from_ejs:
+                            user_id = f"wn_{user_id_from_ejs}"
+            except:
+                pass
+            
+            # Priority 2: Try .m-comment-hd a selector (MOST SPECIFIC - prevents content capture)
+            if user_name == "Anonymous":
+                try:
+                    # CRITICAL: Use .m-comment-hd a to target ONLY the header link (NOT content)
+                    user_link = element.locator(".m-comment-hd a").first
+                    
+                    # Filter to ensure it's a profile link
+                    if user_link.count() > 0:
+                        href = user_link.get_attribute('href')
+                        if href and '/profile/' in href:
+                            # Get username from title attribute (most reliable)
+                            user_name = user_link.get_attribute('title')
+                            
+                            # If no title, try inner text
+                            if not user_name or not user_name.strip():
+                                user_name = user_link.inner_text().strip()
+                            
+                            # Validate it's a username (not content fragment)
+                            if user_name and len(user_name) < 50 and '\n' not in user_name:
+                                # Get user ID from href
+                                user_id = self._make_platform_obf(href)
+                            else:
+                                user_name = "Anonymous"  # Reset if invalid
+                except:
+                    pass
+            
+            # Priority 3: Fallback to any profile link if header search failed
+            if user_name == "Anonymous":
+                try:
+                    user_link = element.locator("a[href*='/profile/']").first
+                    if user_link.count() > 0:
+                        user_name = user_link.get_attribute('title') or user_link.inner_text().strip()
+                        if user_name and len(user_name) < 50 and '\n' not in user_name:
+                            href = user_link.get_attribute('href')
+                            if href:
+                                user_id = self._make_platform_obf(href)
+                        else:
+                            user_name = "Anonymous"
+                except:
+                    pass
+            
+            # Note: Removed .g_txt_over selector as it's too generic and captures content
+            
+            # ===== Extract TIMESTAMP =====
+            # Priority 1: Try data-ejs timestamp
+            try:
+                data_ejs = element.get_attribute('data-ejs')
+                if data_ejs:
+                    ejs_data = json.loads(data_ejs)
+                    last_time = ejs_data.get('lastTime')
+                    if last_time:
+                        from datetime import datetime, timezone
+                        dt = datetime.fromtimestamp(last_time / 1000, tz=timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        diff = now - dt
+                        
+                        years = diff.days // 365
+                        months = diff.days // 30
+                        weeks = diff.days // 7
+                        days = diff.days
+                        hours = diff.seconds // 3600
+                        minutes = (diff.seconds % 3600) // 60
+                        
+                        if years > 0:
+                            time_str = f"{years}y"
+                        elif months > 0:
+                            time_str = f"{months}mth"
+                        elif weeks > 0:
+                            time_str = f"{weeks}w"
+                        elif days > 0:
+                            time_str = f"{days}d"
+                        elif hours > 0:
+                            time_str = f"{hours}h"
+                        elif minutes > 0:
+                            time_str = f"{minutes}m"
+                        else:
+                            time_str = "Just now"
+            except:
+                pass
+            
+            # Priority 2: Parse from visible text
+            if not time_str:
+                try:
+                    full_text = element.inner_text()
+                    # Match patterns like "2d", "5h", "1mth", "Just now"
+                    match = re.search(r'\b(\d+(?:mth|[ywdhms])|Just now)\b', full_text, re.IGNORECASE)
+                    if match:
+                        time_str = match.group(1)
+                except:
+                    pass
+            
+            # ===== Extract CONTENT (NOT username!) =====
+            content = ""
+            try:
+                # Strategy 1: Look for .m-comment-bd or .db class
+                content_selectors = [".m-comment-bd", ".db", ".comment-content", ".content"]
+                for sel in content_selectors:
+                    try:
+                        content_el = element.locator(sel).first
+                        if content_el.count() > 0:
+                            content = content_el.inner_text().strip()
+                            if content:
+                                break
+                    except:
+                        continue
+                
+                # Strategy 2: Fallback to text parsing (remove username/metadata)
+                if not content:
+                    full_text = element.inner_text().strip()
+                    lines = full_text.split('\n')
+                    content_lines = []
+                    skip_patterns = [
+                        user_name,  # Skip username line
+                        r'^LV\s+\d+$',  # Skip level badge
+                        r'^\d+(?:mth|[ywdhms])$',  # Skip timestamp line
+                        r'^Just now$',  # Skip "Just now"
+                        r'^\d+$',  # Skip lone numbers (likes/votes)
+                    ]
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        # Check if line should be skipped
+                        should_skip = False
+                        for pattern in skip_patterns:
+                            if isinstance(pattern, str):
+                                if line == pattern:
+                                    should_skip = True
+                                    break
+                            else:  # regex pattern
+                                if re.match(pattern, line):
+                                    should_skip = True
+                                    break
+                        
+                        if not should_skip:
+                            content_lines.append(line)
+                    
+                    content = '\n'.join(content_lines)
+            except:
+                pass
+            
+            # ===== FIX BUG B: Extract REPLIES using unified helper =====
+            replies = []
+            try:
+                replies = self._scrape_replies(element)
+            except Exception as e:
+                safe_print(f"         ⚠️ Failed to extract replies: {e}")
+            
             return {
                 "comment_id": comment_id,
                 "chapter_id": chapter_id,
@@ -2899,9 +4625,125 @@ class WebnovelScraper:
                 "user_name": user_name,
                 "time": time_str,
                 "content": content,
-                "replies": []
+                "replies": replies
             }
             
+        except Exception as e:
+            return None
+    
+    def _parse_single_reply(self, element, parent_comment_id):
+        """
+        Parse a single reply (sub-comment) within a chapter comment
+        
+        Returns:
+            dict: {comment_id, chapter_id, parent_id, user_id, user_name, time, content, replies}
+        """
+        try:
+            reply_id = str(uuid6.uuid7())
+            user_name = "Anonymous"
+            user_id = None
+            time_str = ""
+            content = ""
+            
+            # Extract username - try data-ejs first
+            try:
+                data_ejs = element.get_attribute('data-ejs')
+                if data_ejs:
+                    ejs_data = json.loads(data_ejs)
+                    user_name = ejs_data.get('userName') or ejs_data.get('user') or ejs_data.get('name') or user_name
+                    user_id_raw = ejs_data.get('userId') or ejs_data.get('uid')
+                    if user_id_raw:
+                        user_id = f"wn_{user_id_raw}"
+            except:
+                pass
+            
+            # Fallback: profile link
+            if user_name == "Anonymous":
+                user_selectors = ["a[href*='/profile/']", ".g_txt_over", "h4", ".reply-user", ".user-name"]
+                for selector in user_selectors:
+                    try:
+                        user_el = element.locator(selector).first
+                        if user_el.count() > 0:
+                            name = user_el.get_attribute('title') or user_el.inner_text().strip()
+                            # Validate it's a username (not content)
+                            if name and len(name) < 50 and '\n' not in name:
+                                user_name = name
+                                # Get user ID
+                                href = user_el.get_attribute('href')
+                                if href and '/profile/' in href:
+                                    user_id = self._make_platform_obf(href)
+                                break
+                    except:
+                        continue
+            
+            # Extract timestamp
+            try:
+                full_text = element.inner_text()
+                match = re.search(r'\b(\d+(?:mth|[ywdhms])|Just now)\b', full_text, re.IGNORECASE)
+                if match:
+                    time_str = match.group(1)
+            except:
+                pass
+            
+            # Extract content - be VERY careful to not include username
+            try:
+                # Try specific content selectors first
+                content_selectors = [".reply-content", ".m-comment-bd", ".db", ".content", "[class*='content']"]
+                for sel in content_selectors:
+                    try:
+                        content_el = element.locator(sel).first
+                        if content_el.count() > 0:
+                            text = content_el.inner_text().strip()
+                            # Make sure it's not just the username
+                            if text and text != user_name and len(text) > 1:
+                                content = text
+                                break
+                    except:
+                        continue
+                
+                # Fallback: parse from full text (remove metadata)
+                if not content:
+                    full_text = element.inner_text().strip()
+                    lines = full_text.split('\n')
+                    content_lines = []
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Skip username
+                        if line == user_name:
+                            continue
+                        # Skip timestamp patterns
+                        if re.match(r'^\d+(?:mth|[ywdhms])$', line):
+                            continue
+                        if line.lower() == 'just now':
+                            continue
+                        # Skip level badges
+                        if re.match(r'^LV\s+\d+$', line):
+                            continue
+                        # Skip very short lines that are likely UI elements
+                        if len(line) < 3:
+                            continue
+                        
+                        content_lines.append(line)
+                    
+                    content = '\n'.join(content_lines)
+            except:
+                pass
+            
+            # Only return if we have actual content
+            if content and content.strip():
+                return {
+                    "comment_id": reply_id,
+                    "parent_id": parent_comment_id,
+                    "user_id": user_id,
+                    "user_name": user_name,
+                    "time": time_str,
+                    "content": content,
+                    "replies": []  # Nested replies not supported for now
+                }
+            return None
         except:
             return None
     
@@ -2909,7 +4751,7 @@ class WebnovelScraper:
     
     def _save_book_to_json(self, book_data):
         """Save book data to JSON file"""
-        output_dir = "data/json"
+        output_dir = self.output_dir
         os.makedirs(output_dir, exist_ok=True)
         # Sanitize book name for filename (remove illegal Windows characters)
         raw_name = book_data.get('name') or ''

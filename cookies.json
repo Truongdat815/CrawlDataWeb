@@ -1,0 +1,554 @@
+[
+  {
+    "name": "__cf_bm",
+    "value": "7lwirUk.BrhCHWh.jMhPrlHgVw.oRkypX84uQyEkT3I-1764843058-1.0.1.1-eYP6GckUIKeFVEH9mZ6TYIH.Ja8Y0qF39yDKdzCjzvBadj_iS5sIqRIURj81ixgYKTpM8Dg8oOn5nyPSWUGrtgJrSBMfuYJ0u0.ncWU7k04",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1764844848.677752,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "__cf_bm",
+    "value": "AWEe.4hKFxJFsDLH9G9Tx4288AlwAkSowX2k8zfQnuw-1764843058-1.0.1.1-Kq8kyZcrhOwzkgrvLh6UauyyDHT4v1_wZTB3aro5NAIInbbsAAcRhW4P0lSwT_PQz_HuINxjiApco1.oVUSdLEC5K_7Ult5eWnddMC9aR0c",
+    "domain": ".yueimg.com",
+    "path": "/",
+    "expires": 1764844848.885682,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "webnovel-content-language",
+    "value": "en",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1796379049,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "webnovel-language",
+    "value": "en",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1796379049,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "NEXT_LOCALE",
+    "value": "en",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1796379049,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "cf_clearance",
+    "value": "jwtr_h1Zi2OM8ajjPA.H2otx5tAUSA1kGrP89GqmfCE-1764843058-1.2.1.1-ZCZD1IDH9u4LygmcuKYErBlrD8nmhBCsj9JEY2p2J4c7Yjb4Dkoy2yXxKs44biDtn7P9pLci9g.CUtpk3Gg8huJgtMIgNEvFikrJ8fBERucpuOfi7bOqjTav.dcoPeiN.wAjt_MroSwY0TbJa4rwUpnpNuuXIl.1CJGzH5ua0jPLI5yBMg49lF_LX7ogCshuEc6XzyW10y6fpg3tzXA6I6Jm_8pqnOWMguDVtmMYVPg",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1796379049.32602,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None",
+    "partitionKey": "https://webnovel.com",
+    "_crHasCrossSiteAncestor": false
+  },
+  {
+    "name": "webnovel_uuid",
+    "value": "1764843058_749892863",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1799403049.913583,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga_PH6KHFG28N",
+    "value": "GS2.1.s1764843050$o1$g0$t1764843050$j60$l0$h0",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1799403050.771239,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_fbp",
+    "value": "fb.1.1764843050903.184906389987676659",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1772619052,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_gid",
+    "value": "GA1.2.818848156.1764843051",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1764929453,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "AMP_TOKEN",
+    "value": "%24NOT_FOUND",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1764846650,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_csrfToken",
+    "value": "LEzIIeL7rFUxnjjmuLVSra1OoSb6W7E7FhukpCfs",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1796379051.347518,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "e2",
+    "value": "%7B%22l1%22%3A1%2C%22eid%22%3A%22qi_C_downloadpop%22%2C%22pid%22%3A%22downloadpop%22%7D",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1767435052,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "e1",
+    "value": "%7B%22eid%22%3A%22qi_A_home_signin%22%2C%22l1%22%3A%2299%22%7D",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1767435052,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga",
+    "value": "GA1.1.1793089608.1764843051",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1799403053.524214,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "user_id",
+    "value": "116085294203750622164",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "HSID",
+    "value": "AZNWPTtvoe7yw-9c9",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.079251,
+    "httpOnly": true,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "SSID",
+    "value": "A4Jf0oEickzAh54Jz",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.079291,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "APISID",
+    "value": "XpjawO9eCFWuMy9w/Ajv2UTKjLWHxfuILS",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.07933,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "SAPISID",
+    "value": "UfCv3AXd_cA7KVyB/A1bF1kNHKojgc1qLp",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.079371,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-1PAPISID",
+    "value": "UfCv3AXd_cA7KVyB/A1bF1kNHKojgc1qLp",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.079407,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-3PAPISID",
+    "value": "UfCv3AXd_cA7KVyB/A1bF1kNHKojgc1qLp",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.079444,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "NID",
+    "value": "526=iZ0hH2n3_LAQX6iEoUKkO57-kJubhppxYaqlV7s0Q662QX8ISutjXeRO2gl4QDxrU67tnzzuI7lYISrbdzVZcwaQj_qk48DWcvJfIbldehlKj0lRA58IBt0QkvMej0Kf3pssaTgcGOeV39jSRm_MUC8doeZWOwqOyEiJh8u1PBzG7QQJVFXFagcIbNOBmIF0lFZ_pQSbpxRpqHOPRf8nT5NJUrzjQvlAj8G-yx5RiKuPeDMPj82sjAnj2bw0OUGmPw",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1780654256.079602,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "LSID",
+    "value": "s.VN:g.a0004AhXCbevdgT7GMFcHOz_7gSBQ7J6R96AJ_La1mA_IV8zAGCUxZbyGsgTMC2V-iGrr_AeJgACgYKAekSARYSFQHGX2Miv-sePK2ZqWU9gqPN0H1X7hoVAUF8yKrKL4x0fXa7hXf_AjPHf1GD0076",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": 1799403123.230009,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Host-1PLSID",
+    "value": "s.VN:g.a0004AhXCbevdgT7GMFcHOz_7gSBQ7J6R96AJ_La1mA_IV8zAGCUmre1JpDlYRtuOdCSdgI1sQACgYKASwSARYSFQHGX2Micmbt8DSMzwDN5TppA0R0RhoVAUF8yKrTZ5RGTHP3z5EQXwj3kE5o0076",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": 1799403123.230252,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Host-3PLSID",
+    "value": "s.VN:g.a0004AhXCbevdgT7GMFcHOz_7gSBQ7J6R96AJ_La1mA_IV8zAGCUg7N8tNs-tPdHDR_VUCHb1gACgYKAZASARYSFQHGX2Miu2pSQpquUM3q1nS5zk01lhoVAUF8yKrPo5muWvfYsMm4G718ybll0076",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": 1799403123.230372,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "ACCOUNT_CHOOSER",
+    "value": "AFx_qI5-AD14QpsPaE-qYmQ9h9JhZajVAPPcitvkCVQiybpxeEH-XINhaD0nRvW9-jCT0HwhgdGqb0EY5GrhrrX965-jLFjv4fpsfYFvn86I-ekFSkE17bARA8sWW2MlZPDz3K6ZTvsr",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": 1799403123.230477,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "SID",
+    "value": "g.a0004AhXCfh1I4H5an9d4BCKRSZikD0ub-J3ogqQuO_59zG-VnG1DpsAtURYJw_APt-KoYPc9wACgYKAakSARYSFQHGX2Miai9P6cnE_z0xUCHZ8VV3_RoVAUF8yKqNVheGCpgCHGFwgshhw9xa0076",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.427765,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-1PSID",
+    "value": "g.a0004AhXCfh1I4H5an9d4BCKRSZikD0ub-J3ogqQuO_59zG-VnG1-NBPwP4cs5fQF066KgUoIwACgYKARcSARYSFQHGX2MicOndZEV8SwO7RvA6oK9_ORoVAUF8yKrUuD1udrLpsEFPCA3QrDE70076",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.427859,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-3PSID",
+    "value": "g.a0004AhXCfh1I4H5an9d4BCKRSZikD0ub-J3ogqQuO_59zG-VnG1qXYyHwFIg4hOQOMofKfkJwACgYKAaQSARYSFQHGX2Mi0KgY0RVsmmbGeyJGJpTSVxoVAUF8yKrRoQU7Hk_dGU7N9qxhPNBo0076",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1799403123.427947,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "HSID",
+    "value": "AA_a4rXLE_uK9G2Oh",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475214,
+    "httpOnly": true,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "SSID",
+    "value": "Ah8tEiKBpEnD0HIub",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475403,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "APISID",
+    "value": "XpjawO9eCFWuMy9w/Ajv2UTKjLWHxfuILS",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475487,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "SAPISID",
+    "value": "UfCv3AXd_cA7KVyB/A1bF1kNHKojgc1qLp",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475545,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-1PAPISID",
+    "value": "UfCv3AXd_cA7KVyB/A1bF1kNHKojgc1qLp",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475599,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-3PAPISID",
+    "value": "UfCv3AXd_cA7KVyB/A1bF1kNHKojgc1qLp",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475653,
+    "httpOnly": false,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "NID",
+    "value": "526=RaFa35oUKQpmoJE8wqZjqWnBOGZ4K3DupC4UwYHjRxpYLojczNF049xa1rTan6y6QsDom2G_2Qn6xQDvMFJfu__1A_yUyr92-fhalTNOldaaisZPBnwfdH7variAGdNPlpShcp6x5fGAbZNSLEAk-crJThuUA2LLL0uW4Airtmw255nwkmXTuIAaAR2tyJlS_6Ynp0LE1tJvYcIvv1w-F7zRew",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1780654323.475705,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "SID",
+    "value": "g.a0004AhXCQ24kgvXvllER-3EPhALxbiPXduvmMbayq-0hwDNV9ye5A1cwEhqpK8tZbA7NrBumgACgYKAdESARYSFQHGX2Min-M-1FgJH-qDk5DzjLaqahoVAUF8yKr0Tx5dWVkZTWv0Zcvl3WU40076",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475767,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-1PSID",
+    "value": "g.a0004AhXCQ24kgvXvllER-3EPhALxbiPXduvmMbayq-0hwDNV9yef2UXNJ2ZEjhZ0rCvMYDn5gACgYKAakSARYSFQHGX2MisDMXHs5fbaVs6RZ1fXu8cBoVAUF8yKrckbBpzDyYih4RvrNKR58X0076",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475823,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-3PSID",
+    "value": "g.a0004AhXCQ24kgvXvllER-3EPhALxbiPXduvmMbayq-0hwDNV9yequmD88wusakxdbAC8NPXpQACgYKASoSARYSFQHGX2MiZlPYBVg0k65-gwhwARpJiRoVAUF8yKqp4WH9g1qiSuzoVAfBW4bR0076",
+    "domain": ".google.com.vn",
+    "path": "/",
+    "expires": 1799403123.475877,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "__Secure-1PSIDTS",
+    "value": "sidts-CjYBwQ9iI0GtncDN7jtAQmEeEfjFa14NEhTv35nbKht8avRamnWRN0sFukQOtUcKvVpPJPGZjUgQAA",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1796379123.832319,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-1PSIDRTS",
+    "value": "sidts-CjYBwQ9iI0GtncDN7jtAQmEeEfjFa14NEhTv35nbKht8avRamnWRN0sFukQOtUcKvVpPJPGZjUgQAA",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1764843723.83253,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-3PSIDTS",
+    "value": "sidts-CjYBwQ9iI0GtncDN7jtAQmEeEfjFa14NEhTv35nbKht8avRamnWRN0sFukQOtUcKvVpPJPGZjUgQAA",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1796379123.832647,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "__Secure-3PSIDRTS",
+    "value": "sidts-CjYBwQ9iI0GtncDN7jtAQmEeEfjFa14NEhTv35nbKht8avRamnWRN0sFukQOtUcKvVpPJPGZjUgQAA",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1764843723.832738,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "SIDCC",
+    "value": "AKEyXzX95ZQKvXnffuzaFwA-HANhiI2WUOmCU4QrAoCxvj-0OiM3IaL-TQ72Ycm56-52mkjdVw",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1796379123.832847,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-1PSIDCC",
+    "value": "AKEyXzVLswQsVzpcot322qfUaLji0Z6KAWKyBO0yF5S8vr6-KK-_9R1ZzbhADiv57kZJSTDcqg",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1796379123.832922,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Secure-3PSIDCC",
+    "value": "AKEyXzXRQOYxdhh1eP6EM8VyHx9z0VDdzXSJK3lEcW1WkDeXc7g4VJUwAzmrJMLDGy3B0RJDjw",
+    "domain": ".google.com",
+    "path": "/",
+    "expires": 1796379123.832993,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None"
+  },
+  {
+    "name": "__Host-GAPS",
+    "value": "1:4SEV_wQYV6jMSvedyuYegM_skCLOp2eN-eAr4afPEMdJhBM2JEu-0esewwQdO-PIG7jPZ_pR5RPi8wUd2ExnB04LrGDfNaynVX27cvbvTK2fxuxia8voLbs8tUsjYGc1W4iSKVXNdNQDHndoZlCwp5AALxUcUXrzBVFaXNlJVoGEpGoVdSpitg:zPzzESdz1tHgtH-F",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": 1799403123.926382,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "alk",
+    "value": "taad5e3a0454214f99a3bafd5a132fe2ff|4504823729",
+    "domain": ".ptlogin.webnovel.com",
+    "path": "/",
+    "expires": 1766139124.143162,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "alkts",
+    "value": "1766139133",
+    "domain": ".ptlogin.webnovel.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "uid",
+    "value": "4504823729",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "ukey",
+    "value": "uHm8lV7g4gO",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": -1,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "__Host-GAPSTS",
+    "value": "gapsts-Ci0BPxvOV8TV6ZzJVmZPdE9o3QTKGnvXtjLpXFIPyecsFWJc6XpVd-w-C65qBbEQAQ==",
+    "domain": "accounts.google.com",
+    "path": "/",
+    "expires": 1799403124.148193,
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_ga_GG9P0S9KJK",
+    "value": "GS2.1.s1764843053$o1$g1$t1764843124$j60$l0$h0",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1799403124.598663,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  },
+  {
+    "name": "_gat",
+    "value": "1",
+    "domain": ".webnovel.com",
+    "path": "/",
+    "expires": 1764843184,
+    "httpOnly": false,
+    "secure": false,
+    "sameSite": "Lax"
+  }
+]
