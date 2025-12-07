@@ -8,6 +8,7 @@ from src import config
 from src.utils.validation import validate_against_schema
 from src.schemas.story_info_schema import STORY_INFO_SCHEMA
 from src.scrapers.website import WebsiteScraper
+from bs4 import BeautifulSoup
 
 
 class StoryInfoScraper(BaseScraper):
@@ -18,12 +19,13 @@ class StoryInfoScraper(BaseScraper):
         self.init_collections({"story_info": "story_info"})
     
     @staticmethod
-    def map_api_to_story_info(story_data):
+    def map_api_to_story_info(story_data, free_chapter_override=None):
         """
         Map API response to Wattpad story info schema
         
         Args:
             story_data: API response from /api/v3/stories/{id}
+            free_chapter_override: Override freeChapter value from HTML extraction (from first chapter)
         
         Returns:
             story_info dict with statistics
@@ -34,6 +36,13 @@ class StoryInfoScraper(BaseScraper):
             
             # Generate infoId based on story_id (deterministic, 1 info per story)
             info_id = WebsiteScraper.generate_info_id(story_id, prefix="wp")
+            
+            # Determine freeChapter value
+            # Priority: free_chapter_override (from HTML) > API isPaywalled
+            if free_chapter_override is not None:
+                free_chapter = free_chapter_override
+            else:
+                free_chapter = not story_data.get("isPaywalled", False)
             
             # Map stats from API response
             processed_info = {
@@ -52,7 +61,7 @@ class StoryInfoScraper(BaseScraper):
                 "characterScore": None,              # Not available
                 "stabilityOfUpdates": None,          # Not available
                 "voted": story_data.get("voteCount", 0),
-                "freeChapter": not story_data.get("isPaywalled", False),
+                "freeChapter": free_chapter,
                 "time": story_data.get("createDate"),
                 "releaseRate": None,                 # Not available
                 "numberOfReader": None,              # Not available
@@ -112,3 +121,36 @@ class StoryInfoScraper(BaseScraper):
                 safe_print(f"   ✅ Saved story info: {info_id}")
         except Exception as e:
             safe_print(f"⚠️ Error saving story info: {e}")
+    
+    @staticmethod
+    def extract_free_chapter_from_html(page_html):
+        """
+        Extract freeChapter information from HTML of first chapter page
+        Looks for class 'free-parts-warning' to determine if chapters are free
+        
+        Args:
+            page_html: HTML content of first chapter page
+        
+        Returns:
+            True if chapters are free (free-parts-warning found), False otherwise, None if cannot determine
+        """
+        try:
+            if not page_html:
+                return None
+            
+            soup = BeautifulSoup(page_html, 'html.parser')
+            
+            # Look for free-parts-warning class
+            # If this class exists, it means the story has free chapters
+            free_warning = soup.find(class_='free-parts-warning')
+            
+            if free_warning:
+                safe_print(f"   ✅ Found free-parts-warning: Story has free chapters")
+                return True
+            else:
+                safe_print(f"   ℹ️ No free-parts-warning found: Story may be paid/premium")
+                return False
+                
+        except Exception as e:
+            safe_print(f"⚠️ Error extracting freeChapter from HTML: {e}")
+            return None

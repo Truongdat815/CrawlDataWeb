@@ -104,6 +104,23 @@ class WebsiteScraper(BaseScraper):
         return f"{prefix}_{uid}"
     
     @staticmethod
+    def generate_user_id(username, prefix="wp"):
+        """
+        Generate user UUID v7 (deterministic based on username)
+        Format: {prefix}_{uuid_v5}
+        
+        Args:
+            username: Username from website
+            prefix: Website prefix (default: "wp" for Wattpad)
+            
+        Returns:
+            String: {prefix}_{uuid_v5}
+        """
+        namespace = uuid.NAMESPACE_DNS
+        uid = uuid.uuid5(namespace, f"{prefix}_user_{username}")
+        return f"{prefix}_{uid}"
+    
+    @staticmethod
     def get_or_create_wattpad_website(mongo_collection):
         """
         Get or create Wattpad website entry

@@ -275,21 +275,43 @@ class WattpadScraper:
                 "Sec-Fetch-Dest": "document",
             }
 
-            # Launch persistent context (headful recommended)
+            # Launch persistent context (headless or headful based on config)
             pw = self.playwright
             # playwright runtime object may be typed as Optional in static analysis; ignore for attribute access
+            
+            # Enhanced stealth arguments for headless mode
+            stealth_args = [
+                '--no-sandbox',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-infobars',
+                '--window-size=1280,800',
+            ]
+            
+            # Additional args for headless mode to mimic real browser
+            if config.HEADLESS:
+                stealth_args.extend([
+                    '--disable-gpu',
+                    '--disable-setuid-sandbox',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-background-networking',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                ])
+            
             self.context = pw.chromium.launch_persistent_context(
                 profile_dir,
-                headless=False if not config.HEADLESS else True,
+                headless=config.HEADLESS,
                 user_agent=ua,
                 proxy=proxy_dict,  # type: ignore[arg-type]
                 extra_http_headers=extra_headers,
                 viewport={"width": 1280, "height": 800},
                 java_script_enabled=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled'
-                ]
+                args=stealth_args
             )  # type: ignore[attr-defined]
 
             # Get page (existing or new)
@@ -403,18 +425,39 @@ class WattpadScraper:
             pw = self.playwright
             if pw is None:
                 return False
+            
+            # Enhanced stealth arguments (same as start())
+            stealth_args = [
+                '--no-sandbox',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-infobars',
+                '--window-size=1280,800',
+            ]
+            
+            if config.HEADLESS:
+                stealth_args.extend([
+                    '--disable-gpu',
+                    '--disable-setuid-sandbox',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-background-networking',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                ])
+            
             self.context = pw.chromium.launch_persistent_context(
                 profile_dir,
-                headless=False if not config.HEADLESS else True,
+                headless=config.HEADLESS,
                 user_agent=ua,
                 proxy=proxy_dict,  # type: ignore[arg-type]
                 extra_http_headers=extra_headers,
                 viewport={"width": 1280, "height": 800},
                 java_script_enabled=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled'
-                ]
+                args=stealth_args
             )  # type: ignore[attr-defined]
             pages = self.context.pages
             self.page = pages[0] if pages else self.context.new_page()
@@ -470,7 +513,7 @@ class WattpadScraper:
         
         if fields is None:
             # Include tags and categories so story mapping can use API-provided values
-            fields = "id,title,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description,tags,categories"
+            fields = "id,title,length,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description,tags,categories"
         
         safe_print(f"📚 Đang cào {len(story_ids)} bộ truyện từ Wattpad API...")
         
@@ -550,7 +593,7 @@ class WattpadScraper:
         """
         if fields is None:
             # Include tags and categories in default fields
-            fields = "id,title,voteCount,readCount,createDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description,tags,categories"
+            fields = "id,title,length,voteCount,readCount,createDate,modifyDate,lastPublishedPart,user(name,avatar),cover,url,numParts,isPaywalled,paidModel,completed,mature,description,tags,categories"
         
         url = f"{config.BASE_URL}/api/v3/stories/{story_id}"
         params = {"fields": fields}
@@ -570,16 +613,20 @@ class WattpadScraper:
             safe_print(f"⚠️ Lỗi khi fetch story {story_id}: {e}")
             return None
 
-    def fetch_comments_from_api_v5(self, chapter_id):
+    def fetch_comments_from_api_v5(self, web_chapter_id, chapter_id=None):
         """
         Lấy comments từ Wattpad API v5 (endpoint mới) - dùng Playwright từ main thread
         
         Args:
-            chapter_id: Chapter/Part ID
+            web_chapter_id: Original Wattpad chapter/part ID (for API calls)
+            chapter_id: Internal chapter UUID (for saving to DB, optional)
         
         Returns:
             List of comments (limited by MAX_COMMENTS_PER_CHAPTER)
         """
+        # Use web_chapter_id for DB if chapter_id not provided
+        db_chapter_id = chapter_id or web_chapter_id
+        
         # Sequential processing using Playwright (thread-safe, main thread only)
         self._v5_saved_flag = False
         collected = []
@@ -625,8 +672,9 @@ class WattpadScraper:
                     parent_id = resource_id if namespace == 'comments' else None
                     # Pass websiteId from wattpad_website (key is 'website_id' in DB)
                     website_id = self.wattpad_website.get("website_id") if self.wattpad_website else None
+                    # Use db_chapter_id (UUID) for saving to DB
                     mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(
-                        data, chapter_id, namespace, 
+                        data, db_chapter_id, namespace, 
                         comment_scraper=self.comment_scraper,
                         parent_comment_id=parent_id,
                         website_id=website_id
@@ -667,7 +715,8 @@ class WattpadScraper:
 
         # Start from main thread (no ThreadPoolExecutor - Playwright sequential)
         # Use 'parts' namespace for chapter-level comments
-        process_page(chapter_id, 'parts', None)
+        # Use web_chapter_id (original Wattpad ID) for API calls
+        process_page(web_chapter_id, 'parts', None)
 
         return collected
 
@@ -836,6 +885,9 @@ class WattpadScraper:
         safe_print(f"📖 Bắt đầu cào story ID: {story_id}")
         safe_print(f"{'='*60}")
         
+        # Variable to store freeChapter info from first chapter
+        free_chapter_from_html = None
+        
         # ✅ CHECK: Story đã được cào hay chưa
         dup_checker = DuplicateChecker()
         story_status = dup_checker.check_story(story_id)
@@ -922,16 +974,26 @@ class WattpadScraper:
             return None
         
         # 4. CHECK PAID CONTENT trước khi fetch chapters
+        is_paid_story = False
+        has_full_access = True
+        
         if fetch_chapters:
             safe_print(f"   💰 Đang kiểm tra paid content...")
             paid_info = self.check_paid_content(story_id)
             
-            if paid_info and not paid_info.get("has_full_access", True):
-                safe_print(f"   ⛔ TRUYỆN NÀY CẦN TRẢ PHÍ ĐỂ XEM - Bỏ qua tất cả chapters")
-                safe_print(f"      💵 Price: {paid_info.get('price', 'Unknown')}")
-                safe_print(f"      🔒 Has full access: False")
-                # Vẫn lưu story metadata nhưng không cào chapters
-                fetch_chapters = False
+            if paid_info:
+                is_paid_story = paid_info.get("is_paid", False)
+                has_full_access = paid_info.get("has_full_access", True)
+                
+                if is_paid_story:
+                    if has_full_access:
+                        safe_print(f"   💰 Paid story - Đã có quyền truy cập (có thể đã mua)")
+                        safe_print(f"      💵 Price: {paid_info.get('price', 'Unknown')}")
+                    else:
+                        safe_print(f"   💰 Paid story - CHƯA có quyền truy cập đầy đủ")
+                        safe_print(f"      💵 Price: {paid_info.get('price', 'Unknown')}")
+                        safe_print(f"      ℹ️  Sẽ cào các chapters MIỄN PHÍ (nếu có)")
+                        # KHÔNG skip, vẫn cho cào free chapters
         
         # 5. Optionally fetch chapters
         if fetch_chapters:
@@ -1016,11 +1078,14 @@ class WattpadScraper:
                 safe_print(f"   📖 Bắt đầu cào {min(len(chapters), config.MAX_CHAPTERS_PER_STORY or len(chapters))} chapters...")
                 
                 max_to_fetch = config.MAX_CHAPTERS_PER_STORY or len(chapters)
+                
                 for idx, chapter in enumerate(chapters, 1):
                     if idx > max_to_fetch:
                         break
                     
-                    chapter_id = chapter.get("chapterId")
+                    chapter_id = chapter.get("chapterId")  # UUID for DB
+                    web_chapter_id = chapter.get("webChapterId")  # Original Wattpad ID for API
+                    
                     if not chapter_id:
                         continue
                     
@@ -1050,6 +1115,11 @@ class WattpadScraper:
                         self.page.wait_for_timeout(2000)
                         self._simulate_human_behavior(self.page)
                         
+                        # Step 3a.1: Extract freeChapter info from FIRST chapter only
+                        if idx == 1 and self.story_info_scraper:
+                            page_html_for_free_check = self.page.content()
+                            free_chapter_from_html = self.story_info_scraper.extract_free_chapter_from_html(page_html_for_free_check)
+                        
                         # Step 3b: Fetch window.prefetched data của chapter này
                         chapter_prefetched_data = self.page.evaluate("() => window.prefetched")
                         
@@ -1065,7 +1135,8 @@ class WattpadScraper:
                                         chapter["order"] = chapter_meta.get("order", idx - 1)
                                         chapter["totalComments"] = chapter_meta.get("commentCount", 0)
                                         chapter["publishedTime"] = chapter_meta.get("createDate")
-                                        chapter["webChapterId"] = None
+                                        # ✅ KEEP webChapterId from URL parsing (line 1068) - don't overwrite with None
+                                        # chapter["webChapterId"] was already set from URL parsing above
                                         safe_print(f"      ✅ Metadata: {chapter['chapterName']}")
                                         break
                         else:
@@ -1087,7 +1158,10 @@ class WattpadScraper:
                             if self.chapter_content_scraper:
                                 self.chapter_content_scraper.save_chapter_content_to_mongo(chapter_content)
                         else:
+                            # Check if paid chapter (empty content)
                             safe_print(f"      ⚠️ Không extract được content")
+                            if is_paid_story and not has_full_access:
+                                safe_print(f"      🔒 Chapter này có thể cần trả phí - bỏ qua")
                         
                         # Step 3d: Extract comments cho CHAPTER NÀY (không phải chapter cuối cùng)
                         chapter_comments = None
@@ -1095,9 +1169,13 @@ class WattpadScraper:
                             safe_print(f"      💬 Đang lấy comments...")
                             
                             # Use API v5 with Playwright (only method)
+                            # ✅ IMPORTANT: Pass webChapterId (for API) and chapterId (UUID for DB)
                             chapter_comments = None
                             try:
-                                chapter_comments = self.fetch_comments_from_api_v5(chapter_id)
+                                chapter_comments = self.fetch_comments_from_api_v5(
+                                    web_chapter_id=web_chapter_id or chapter_id,
+                                    chapter_id=chapter_id
+                                )
                             except Exception as e:
                                 safe_print(f"      ⚠️ Lỗi API v5: {e}")
                             
@@ -1140,8 +1218,12 @@ class WattpadScraper:
             # Also save story info (stats/metrics)
             if self.story_info_scraper:
                 safe_print(f"   💾 Đang lưu story info vào MongoDB...")
-                story_info = self.story_info_scraper.map_api_to_story_info(story_data)
+                story_info = self.story_info_scraper.map_api_to_story_info(story_data, free_chapter_override=free_chapter_from_html)
                 if story_info:
+                    # Set websiteId from wattpad_website
+                    website_id = self.wattpad_website.get("website_id") if self.wattpad_website else None
+                    if website_id:
+                        story_info["websiteId"] = website_id
                     self.story_info_scraper.save_story_info(story_info)
         
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")

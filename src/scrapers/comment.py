@@ -18,6 +18,7 @@ from src.utils.validation import validate_against_schema
 from src.schemas.comment_schema import COMMENT_SCHEMA
 from src.scrapers.website import WebsiteScraper
 import uuid
+import requests
 
 
 class CommentScraper(BaseScraper):
@@ -27,8 +28,63 @@ class CommentScraper(BaseScraper):
         super().__init__(page, mongo_db, config)
         self.init_collections({"comments": "comments", "users": "users"})
     
-
-
+    def fetch_and_map_user(self, username):
+        """
+        Fetch user info from API v3/users and map to schema
+        
+        Args:
+            username: Username to fetch
+        
+        Returns:
+            dict: Mapped user data or None if failed
+        """
+        try:
+            api_url = f"https://www.wattpad.com/api/v3/users/{username}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://www.wattpad.com/'
+            }
+            response = requests.get(api_url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                api_data = response.json()
+                username = api_data.get("username")
+                
+                # Generate userId từ username (UUID v7)
+                from src.scrapers.website import WebsiteScraper
+                user_id = WebsiteScraper.generate_user_id(username)
+                
+                # Map theo USER_SCHEMA
+                user_data = {
+                    "userId": user_id,
+                    "webUserId": None,
+                    "username": username,
+                    "userUrl": api_data.get("deeplink"),
+                    "createdDate": api_data.get("createDate"),
+                    "gender": api_data.get("gender"),
+                    "location": api_data.get("location"),
+                    "followers": api_data.get("numFollowers"),
+                    "following": api_data.get("numFollowing"),
+                    "comments": None,
+                    "bio": api_data.get("description"),
+                    "favorites": None,
+                    "ratings": None,
+                    "reviews": None,
+                    "numberOfStories": api_data.get("numStoriesPublished"),
+                    "totalWords": None,
+                    "totalReviewsReceived": None,
+                    "totalRatingsReceived": api_data.get("votesReceived"),
+                    "totalFavoritesReceived": None,
+                }
+                
+                return user_data
+            else:
+                safe_print(f"      ⚠️ API v3/users trả về status {response.status_code} cho {username}")
+                return None
+        except Exception as e:
+            safe_print(f"      ⚠️ Lỗi khi fetch user từ API: {e}")
+            return None
 
     @staticmethod
     def map_v5_comment(api_comment, chapter_id):
@@ -148,7 +204,18 @@ class CommentScraper(BaseScraper):
 
             pagination = api_data.get('pagination') or {}
             if pagination and pagination.get('after'):
-                next_cursor = pagination['after'].get('resourceId')
+                # API v5 pagination cursor là full string, không chỉ resourceId
+                # Format: "resourceId#hash1#timestamp#hash2"
+                # Lấy toàn bộ pagination.after nếu là string, nếu không thì lấy resourceId
+                after_data = pagination.get('after')
+                if isinstance(after_data, str):
+                    next_cursor = after_data
+                elif isinstance(after_data, dict):
+                    # Fallback: nếu là dict thì thử lấy resourceId hoặc serialize
+                    # Có thể cần encode thành format "id#hash#timestamp#hash"
+                    next_cursor = after_data.get('resourceId')
+                else:
+                    next_cursor = None
 
             return results, parents, next_cursor
         except Exception as e:
@@ -198,9 +265,21 @@ class CommentScraper(BaseScraper):
                 # Debug log
                 if data:
                     comments_count = len(data.get('comments', []))
-                    safe_print(f"   🔍 API Response: {comments_count} comments, pagination: {bool(data.get('pagination'))}")
+                    pagination_info = data.get('pagination', {})
+                    safe_print(f"   🔍 API Response: {comments_count} comments, pagination: {bool(pagination_info)}")
+                    
+                    # Debug pagination structure
+                    if pagination_info and pagination_info.get('after'):
+                        after_value = pagination_info.get('after')
+                        safe_print(f"   📄 Pagination.after type: {type(after_value).__name__}")
+                        if isinstance(after_value, dict):
+                            safe_print(f"      Keys: {list(after_value.keys())}")
+                        else:
+                            safe_print(f"      Value: {str(after_value)[:100]}")
+                    
                     if comments_count == 0:
                         safe_print(f"   ⚠️ API returned 0 comments. Full response keys: {list(data.keys())}")
+                        safe_print(f"   📍 URL requested: {url}")
                 return data
             except Exception:
                 try:
@@ -245,16 +324,14 @@ class CommentScraper(BaseScraper):
                 try:
                     users_collection = self.get_collection("users")
                     if users_collection is not None:
-                        # Check if user already exists (dùng userName để tìm, vì userId là UUID)
-                        existing_user = users_collection.find_one({"userName": user_name})
+                        # Check if user already exists (dùng username để tìm)
+                        existing_user = users_collection.find_one({"username": user_name})
                         if not existing_user:
-                            user_data = {
-                                "userId": comment_data.get("userId"),  # UUID from comment
-                                "userName": user_name,
-                                "avatar": None,
-                                "isFollowing": False
-                            }
-                            users_collection.insert_one(user_data)
+                            # Fetch full user info from API v3/users
+                            user_data = self.fetch_and_map_user(user_name)
+                            if user_data:
+                                users_collection.insert_one(user_data)
+                                safe_print(f"      ✅ Lưu user mới: {user_name}")
                 except Exception as e:
                     safe_print(f"      ⚠️ Lỗi khi lưu user: {e}")
         

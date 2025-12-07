@@ -14,7 +14,10 @@ os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # Cấu hình Bot
 TIMEOUT = 60  # 60 giây
-HEADLESS = False # True = Chạy ngầm, False = Hiện trình duyệt
+HEADLESS = True  # True = Chạy ngầm (headless), False = Hiện trình duyệt
+# ⚠️ Lưu ý: Headless mode tiết kiệm tài nguyên nhưng có thể bị phát hiện bot
+# Code đã tích hợp stealth plugins để giảm thiểu rủi ro
+# Nếu bị block, đổi lại HEADLESS = False
 
 # ========== RATE LIMITING & ERROR HANDLING ==========
 # Rate limiting để tránh ban IP từ Wattpad
@@ -89,7 +92,7 @@ CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")  # Checkpoint 
 # Giới hạn số lượng chapters và comments khi cào
 MAX_CHAPTERS_PER_STORY = None  # None = Lấy tất cả, số = Tối đa N chapters
 MAX_COMMENTS_PER_CHAPTER = None  # None = Lấy tất cả, số = Tối đa N comments
-MAX_STORIES_PER_BATCH = 20  # Tối đa 100 stories khi scrape batch
+MAX_STORIES_PER_BATCH = 5  # Tối đa 100 stories khi scrape batch
 
 # ========== WATTPAD LOGIN CREDENTIALS ==========
 # Thêm credentials để tự động đăng nhập
@@ -99,22 +102,24 @@ WATTPAD_PASSWORD = "Abcdefgh123@"
 
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
-MONGODB_USERNAME = "xuannguyentruong15"
-MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
-CLUSTER_URL = "crawl.ujyutza.mongodb.net"
 
-MONGODB_DB_NAME = "WattpadData"
+# ========== MONGODB ATLAS (OLD - COMMENTED) ==========
+# MONGODB_USERNAME = "xuannguyentruong15"
+# MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
+# CLUSTER_URL = "crawl.ujyutza.mongodb.net"
+# MONGODB_DB_NAME = "WattpadData"
+# MONGODB_URI = "mongodb+srv://xuannguyentruong15:grXsKiSEOf3APbRD@crawl.ujyutza.mongodb.net/?appName=Crawl"
+
+# ========== MONGODB SELF-HOSTED (CURRENT) ==========
+MONGODB_USERNAME = "user"
+MONGODB_PASSWORD = "56915001"
+MONGODB_HOST = "103.90.224.232"
+MONGODB_PORT = "27017"
+MONGODB_DB_NAME = "my_database"
 MONGODB_COLLECTION_STORIES = "stories"
 
-# Connection string đầy đủ với các options chuẩn
-# Dùng password trực tiếp, KHÔNG encode
-# MONGODB_URI = (
-#     f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
-#     f"@{CLUSTER_URL}/?appName=Crawl"
-# )
-MONGODB_URI = (
-   "mongodb+srv://xuannguyentruong15:grXsKiSEOf3APbRD@crawl.ujyutza.mongodb.net/?appName=Crawl"
-)
+# Connection string cho MongoDB self-hosted
+MONGODB_URI = f"mongodb://{MONGODB_USERNAME}:{MONGODB_PASSWORD}@{MONGODB_HOST}:{MONGODB_PORT}/{MONGODB_DB_NAME}"
 
 # Cho phép override bằng environment variable (ưu tiên)
 if os.getenv("MONGODB_URI"):

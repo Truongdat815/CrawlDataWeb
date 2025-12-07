@@ -4,6 +4,9 @@ Responsible for: chapter body text, HTML content, etc.
 """
 
 import hashlib
+import re
+import requests
+from bs4 import BeautifulSoup
 from src.scrapers.base import BaseScraper, safe_print
 from src import config
 from src.utils.validation import validate_against_schema
@@ -17,9 +20,141 @@ class ChapterContentScraper(BaseScraper):
     CONTENT_CONTAINER_SELECTOR = 'div.panel-reading'
     PARAGRAPH_SELECTOR = 'div.panel-reading p'
     
-    def __init__(self, page=None, mongo_db=None):
+    # API endpoint for chapter content
+    APIV2_ENDPOINT = "https://www.wattpad.com/apiv2/"
+    
+    def __init__(self, page=None, mongo_db=None, cookies=None):
         super().__init__(page, mongo_db, config)
         self.init_collections({"chapter_contents": "chapter_contents"})
+        self.cookies = cookies or {}
+    
+    @staticmethod
+    def clean_html_content(html_content):
+        """
+        Lọc HTML content để chỉ lấy text thuần túy từ các thẻ <p>
+        Loại bỏ các thuộc tính data-p-id, style và format lại thành đoạn văn đẹp
+        
+        Args:
+            html_content: HTML content string chứa các thẻ <p>
+        
+        Returns:
+            str: Nội dung text đã được làm sạch và format
+        """
+        try:
+            if not html_content:
+                return ""
+            
+            # Parse HTML
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Tìm tất cả thẻ <p>
+            paragraphs = soup.find_all('p')
+            
+            # Lấy text từ mỗi paragraph
+            clean_texts = []
+            for p in paragraphs:
+                text = p.get_text(strip=True)
+                if text:  # Chỉ thêm nếu không rỗng
+                    clean_texts.append(text)
+            
+            # Nối các đoạn lại với double newline để tạo format đẹp
+            cleaned_content = "\n\n".join(clean_texts)
+            
+            return cleaned_content
+        except Exception as e:
+            safe_print(f"⚠️  Lỗi khi clean HTML content: {e}")
+            return ""
+    
+    def fetch_chapter_content_from_apiv2(self, chapter_id, cookies=None):
+        """
+        Fetch chapter content từ Wattpad API v2 endpoint trực tiếp
+        API: https://www.wattpad.com/apiv2/?m=storytext&id={chapter_id}&page=
+        
+        Args:
+            chapter_id: Chapter ID (part ID)
+            cookies: Dict cookies cho authentication (hoặc list từ Playwright)
+        
+        Returns:
+            str: Nội dung chapter đã được làm sạch và format, hoặc None nếu lỗi
+        """
+        try:
+            safe_print(f"   📡 Fetching chapter content từ API v2: {chapter_id}")
+            
+            # Prepare headers
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': f'https://www.wattpad.com/{chapter_id}'
+            }
+            
+            # Sử dụng cookies nếu có
+            request_cookies = cookies or self.cookies
+            
+            # Convert Playwright cookies (list) to requests cookies (dict) nếu cần
+            if isinstance(request_cookies, list):
+                request_cookies = {cookie['name']: cookie['value'] for cookie in request_cookies}
+            
+            # Gọi trực tiếp API v2 với page= (không có giá trị hoặc page=0 để lấy toàn bộ)
+            # QUAN TRỌNG: page= hoặc page=0 sẽ lấy TOÀN BỘ nội dung
+            # page=1,2,3... chỉ lấy từng phần
+            api_url = f"https://www.wattpad.com/apiv2/?m=storytext&id={chapter_id}&page="
+            
+            safe_print(f"   📄 API URL: {api_url}")
+            
+            response = requests.get(api_url, headers=headers, cookies=request_cookies, timeout=30)
+            
+            if response.status_code == 200:
+                # Parse response text (HTML content)
+                html_content = response.text
+                
+                # Clean HTML để lấy text thuần túy
+                cleaned_content = self.clean_html_content(html_content)
+                
+                if cleaned_content:
+                    safe_print(f"   ✅ Fetched content: {len(cleaned_content)} characters")
+                    return cleaned_content
+                else:
+                    safe_print(f"   ⚠️  Không thể extract text từ API response")
+                    return None
+            else:
+                safe_print(f"   ⚠️  API request failed: {response.status_code}")
+                return None
+                safe_print(f"   ⚠️  API request failed: {response.status_code}")
+                return None
+        except Exception as e:
+            safe_print(f"   ⚠️  Lỗi khi fetch từ API v2: {e}")
+            return None
+    
+    def extract_chapter_content_using_apiv2(self, chapter_id, cookies=None):
+        """
+        Extract chapter content sử dụng API v2 (phương thức chính xác và đầy đủ)
+        
+        Args:
+            chapter_id: Chapter ID (part ID)
+            cookies: Dict cookies cho authentication
+        
+        Returns:
+            dict chứa chapter content data (mapped + validated) hoặc None nếu lỗi
+        """
+        try:
+            # Fetch content từ API v2
+            chapter_text = self.fetch_chapter_content_from_apiv2(chapter_id, cookies)
+            
+            if not chapter_text:
+                safe_print(f"⚠️  Không lấy được content từ API v2 cho chapter {chapter_id}")
+                return None
+            
+            # Map vào schema
+            processed_content = self.map_html_to_chapter_content(chapter_text, chapter_id)
+            
+            if processed_content:
+                safe_print(f"✅ Extract chapter content thành công từ API v2: {len(chapter_text)} characters")
+            
+            return processed_content
+        except Exception as e:
+            safe_print(f"⚠️  Lỗi khi extract chapter content từ API v2: {e}")
+            return None
     
     @staticmethod
     def map_html_to_chapter_content(chapter_text, chapter_id):
