@@ -8,9 +8,7 @@ import json
 import time
 from pathlib import Path
 from src.scrapers.base import safe_print
-
-
-COOKIES_FILE = "wattpad_cookies.json"
+from src import config
 
 
 class WattpadLoginService:
@@ -19,15 +17,17 @@ class WattpadLoginService:
     def __init__(self):
         self.cookies = None
         self.is_authenticated = False
+        self.last_refresh_time = None
     
     def load_cookies_from_file(self):
         """Load cookies từ file nếu có"""
-        if os.path.exists(COOKIES_FILE):
+        if os.path.exists(config.COOKIE_FILE):
             try:
-                with open(COOKIES_FILE, 'r') as f:
+                with open(config.COOKIE_FILE, 'r') as f:
                     self.cookies = json.load(f)
                     self.is_authenticated = True
-                    safe_print(f"✅ Loaded cookies từ file")
+                    self.last_refresh_time = time.time()
+                    safe_print(f"✅ Loaded cookies từ file: {config.COOKIE_FILE}")
                     return True
             except Exception as e:
                 safe_print(f"⚠️ Lỗi load cookies: {e}")
@@ -37,15 +37,24 @@ class WattpadLoginService:
     def save_cookies_to_file(self, cookies):
         """Lưu cookies vào file"""
         try:
-            with open(COOKIES_FILE, 'w') as f:
+            os.makedirs(os.path.dirname(config.COOKIE_FILE), exist_ok=True)
+            with open(config.COOKIE_FILE, 'w') as f:
                 json.dump(cookies, f, indent=2)
-                safe_print(f"✅ Lưu cookies vào file")
+                safe_print(f"✅ Lưu cookies vào file: {config.COOKIE_FILE}")
                 self.cookies = cookies
                 self.is_authenticated = True
+                self.last_refresh_time = time.time()
                 return True
         except Exception as e:
             safe_print(f"❌ Lỗi lưu cookies: {e}")
             return False
+    
+    def should_refresh_cookies(self):
+        """Check xem có cần refresh cookies không (mỗi 30 phút)"""
+        if not self.last_refresh_time:
+            return False
+        elapsed = time.time() - self.last_refresh_time
+        return elapsed > config.COOKIE_REFRESH_INTERVAL
     
     def is_already_logged_in(self, page):
         """

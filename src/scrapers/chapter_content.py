@@ -32,7 +32,7 @@ class ChapterContentScraper(BaseScraper):
     def clean_html_content(html_content):
         """
         Lọc HTML content để chỉ lấy text thuần túy từ các thẻ <p>
-        Loại bỏ các thuộc tính data-p-id, style và format lại thành đoạn văn đẹp
+        Xử lý cả trường hợp content bị escape trong <pre> tag (từ API v2)
         
         Args:
             html_content: HTML content string chứa các thẻ <p>
@@ -46,6 +46,14 @@ class ChapterContentScraper(BaseScraper):
             
             # Parse HTML
             soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Kiểm tra xem có <pre> tag không (response từ API v2)
+            pre_tag = soup.find('pre')
+            if pre_tag:
+                # Lấy text từ <pre> (đây là escaped HTML)
+                escaped_html = pre_tag.get_text()
+                # Parse escaped HTML thành soup mới
+                soup = BeautifulSoup(escaped_html, 'html.parser')
             
             # Tìm tất cả thẻ <p>
             paragraphs = soup.find_all('p')
@@ -65,81 +73,138 @@ class ChapterContentScraper(BaseScraper):
             safe_print(f"⚠️  Lỗi khi clean HTML content: {e}")
             return ""
     
-    def fetch_chapter_content_from_apiv2(self, chapter_id, cookies=None):
+    def fetch_chapter_content_from_apiv2_sync(self, page, chapter_id):
         """
-        Fetch chapter content từ Wattpad API v2 endpoint trực tiếp
+        Fetch chapter content từ Wattpad API v2 endpoint qua Playwright (SYNC wrapper)
         API: https://www.wattpad.com/apiv2/?m=storytext&id={chapter_id}&page=
         
         Args:
-            chapter_id: Chapter ID (part ID)
-            cookies: Dict cookies cho authentication (hoặc list từ Playwright)
+            page: Playwright page object (đã có session/cookies)
+            chapter_id: Chapter ID (part ID) - phải là numeric
         
         Returns:
             str: Nội dung chapter đã được làm sạch và format, hoặc None nếu lỗi
         """
         try:
-            safe_print(f"   📡 Fetching chapter content từ API v2: {chapter_id}")
+            safe_print(f"   📡 Fetching chapter content từ API v2 (Playwright): {chapter_id}")
             
-            # Prepare headers
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Referer': f'https://www.wattpad.com/{chapter_id}'
-            }
+            if not page:
+                safe_print(f"   ⚠️  Không có Playwright page object")
+                return None
             
-            # Sử dụng cookies nếu có
-            request_cookies = cookies or self.cookies
+            # Validate chapter_id - phải là số
+            chapter_id_str = str(chapter_id).strip()
+            if not chapter_id_str.isdigit():
+                safe_print(f"   ⚠️  Chapter ID không hợp lệ (phải là số): {chapter_id_str}")
+                return None
             
-            # Convert Playwright cookies (list) to requests cookies (dict) nếu cần
-            if isinstance(request_cookies, list):
-                request_cookies = {cookie['name']: cookie['value'] for cookie in request_cookies}
-            
-            # Gọi trực tiếp API v2 với page= (không có giá trị hoặc page=0 để lấy toàn bộ)
-            # QUAN TRỌNG: page= hoặc page=0 sẽ lấy TOÀN BỘ nội dung
-            # page=1,2,3... chỉ lấy từng phần
+            # API v2 URL - page= để lấy toàn bộ nội dung
             api_url = f"https://www.wattpad.com/apiv2/?m=storytext&id={chapter_id}&page="
             
             safe_print(f"   📄 API URL: {api_url}")
             
-            response = requests.get(api_url, headers=headers, cookies=request_cookies, timeout=30)
-            
-            if response.status_code == 200:
-                # Parse response text (HTML content)
-                html_content = response.text
+            # Dùng Playwright để fetch API (giữ nguyên cookies và session)
+            try:
+                response = page.goto(api_url, wait_until="load", timeout=30000)
                 
-                # Clean HTML để lấy text thuần túy
-                cleaned_content = self.clean_html_content(html_content)
-                
-                if cleaned_content:
-                    safe_print(f"   ✅ Fetched content: {len(cleaned_content)} characters")
-                    return cleaned_content
+                if response and response.status == 200:
+                    # Lấy nội dung từ page
+                    html_content = page.content()
+                    
+                    # Clean HTML để lấy text thuần túy
+                    cleaned_content = self.clean_html_content(html_content)
+                    
+                    if cleaned_content:
+                        safe_print(f"   ✅ Fetched content: {len(cleaned_content)} characters")
+                        return cleaned_content
+                    else:
+                        safe_print(f"   ⚠️  Không thể extract text từ API response")
+                        return None
                 else:
-                    safe_print(f"   ⚠️  Không thể extract text từ API response")
+                    status = response.status if response else "unknown"
+                    safe_print(f"   ⚠️  API request failed: {status}")
                     return None
-            else:
-                safe_print(f"   ⚠️  API request failed: {response.status_code}")
+            except Exception as e:
+                safe_print(f"   ⚠️  Lỗi khi goto API URL: {e}")
                 return None
-                safe_print(f"   ⚠️  API request failed: {response.status_code}")
+                
+        except Exception as e:
+            safe_print(f"   ⚠️  Lỗi khi fetch từ API v2: {e}")
+            return None
+
+    async def fetch_chapter_content_from_apiv2(self, page, chapter_id):
+        """
+        Fetch chapter content từ Wattpad API v2 endpoint qua Playwright
+        API: https://www.wattpad.com/apiv2/?m=storytext&id={chapter_id}&page=
+        
+        Args:
+            page: Playwright page object (đã có session/cookies)
+            chapter_id: Chapter ID (part ID) - phải là numeric
+        
+        Returns:
+            str: Nội dung chapter đã được làm sạch và format, hoặc None nếu lỗi
+        """
+        try:
+            safe_print(f"   📡 Fetching chapter content từ API v2 (Playwright): {chapter_id}")
+            
+            if not page:
+                safe_print(f"   ⚠️  Không có Playwright page object")
                 return None
+            
+            # Validate chapter_id - phải là số
+            chapter_id_str = str(chapter_id).strip()
+            if not chapter_id_str.isdigit():
+                safe_print(f"   ⚠️  Chapter ID không hợp lệ (phải là số): {chapter_id_str}")
+                return None
+            
+            # API v2 URL - page= để lấy toàn bộ nội dung
+            api_url = f"https://www.wattpad.com/apiv2/?m=storytext&id={chapter_id}&page="
+            
+            safe_print(f"   📄 API URL: {api_url}")
+            
+            # Dùng Playwright để fetch API (giữ nguyên cookies và session)
+            try:
+                response = await page.goto(api_url, wait_until="load", timeout=30000)
+                
+                if response and response.status == 200:
+                    # Lấy nội dung từ page
+                    html_content = await page.content()
+                    
+                    # Clean HTML để lấy text thuần túy
+                    cleaned_content = self.clean_html_content(html_content)
+                    
+                    if cleaned_content:
+                        safe_print(f"   ✅ Fetched content: {len(cleaned_content)} characters")
+                        return cleaned_content
+                    else:
+                        safe_print(f"   ⚠️  Không thể extract text từ API response")
+                        return None
+                else:
+                    status = response.status if response else "unknown"
+                    safe_print(f"   ⚠️  API request failed: {status}")
+                    return None
+            except Exception as e:
+                safe_print(f"   ⚠️  Lỗi khi goto API URL: {e}")
+                return None
+                
         except Exception as e:
             safe_print(f"   ⚠️  Lỗi khi fetch từ API v2: {e}")
             return None
     
-    def extract_chapter_content_using_apiv2(self, chapter_id, cookies=None):
+    async def extract_chapter_content_using_apiv2(self, page, chapter_id):
         """
-        Extract chapter content sử dụng API v2 (phương thức chính xác và đầy đủ)
+        Extract chapter content sử dụng API v2 qua Playwright
         
         Args:
+            page: Playwright page object
             chapter_id: Chapter ID (part ID)
-            cookies: Dict cookies cho authentication
         
         Returns:
             dict chứa chapter content data (mapped + validated) hoặc None nếu lỗi
         """
         try:
             # Fetch content từ API v2
-            chapter_text = self.fetch_chapter_content_from_apiv2(chapter_id, cookies)
+            chapter_text = await self.fetch_chapter_content_from_apiv2(page, chapter_id)
             
             if not chapter_text:
                 safe_print(f"⚠️  Không lấy được content từ API v2 cho chapter {chapter_id}")

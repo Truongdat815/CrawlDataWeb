@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Parallel Crawler - Multi-threaded story crawling với anti-bot protection
-Crawl nhiều stories đồng thời mà không bị phát hiện là bot
+✅ OPTIMIZED: Browser pooling + API-only chapter crawl
 """
 
 import threading
@@ -14,28 +14,33 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from src import config
-from src.scraper_engine import WattpadScraper
+from src.scraper_engine import WattpadScraper, BrowserManager
 from src.scrapers import safe_print
 from src.utils.url_utils import extract_story_id_from_url, is_category_url
 
 
 class ParallelCrawler:
     """
-    Multi-level parallel crawler:
-    - Level 1: Crawl nhiều stories song song (story-level parallelism)
-    - Level 2: Mỗi story crawl chapters song song (chapter-level parallelism)
-    - Shared rate limiter để tránh ban IP
-    - Shared browser context để giữ session
+    ✅ OPTIMIZED Multi-level parallel crawler:
+    - Level 1: N stories crawled in parallel (each has 1 browser)
+    - Level 2: Each story crawls chapters (API-only, no browser)
+    - Shared rate limiter to prevent IP ban
+    - Browser design: 5 stories = 5 browsers (simple, safe, no sharing)
     """
     
     def __init__(self, max_story_workers=None, max_chapter_workers=None):
         """
         Args:
-            max_story_workers: Số stories crawl đồng thời (default: from config)
-            max_chapter_workers: Số chapters crawl đồng thời mỗi story (default: from config)
+            max_story_workers: Number of stories to crawl in parallel
+            max_chapter_workers: Number of chapters per story (deprecated in this version)
         """
         self.max_story_workers = max_story_workers or config.MAX_STORY_WORKERS
         self.max_chapter_workers = max_chapter_workers or config.MAX_CHAPTER_WORKERS
+        
+        # ✅ NEW: Browser manager for per-thread browsers
+        # Design: 5 stories = 5 workers = 5 browsers (1:1 mapping)
+        # No sharing, no race conditions, thread-safe
+        self.browser_manager = BrowserManager()
         
         # Results
         self.results = []
@@ -47,20 +52,20 @@ class ParallelCrawler:
         self.failed_stories = 0
         self.progress_lock = threading.Lock()
         
-        # Retry logic (NEW)
-        self.retry_queue = []  # Stories to retry
-        self.retry_counts = {}  # Track retry attempts per story
+        # Retry logic
+        self.retry_queue = []
+        self.retry_counts = {}
         self.retry_lock = threading.Lock()
         
-        # Progress checkpoint (NEW)
-        self.completed_story_ids = set()  # Track completed stories
+        # Progress checkpoint
+        self.completed_story_ids = set()
         self.checkpoint_lock = threading.Lock()
         
-        # Shared rate limiter (thread-safe) - TẤT CẢ threads dùng chung
+        # Shared rate limiter (thread-safe)
         from src.scraper_engine import RateLimiter
         self.shared_rate_limiter = RateLimiter()
         
-        # MongoDB connection info (shared across threads)
+        # MongoDB connection info
         self.mongo_uri = config.MONGODB_URI if config.MONGODB_ENABLED else None
         self.mongo_db_name = config.MONGODB_DB_NAME if config.MONGODB_ENABLED else None
         
@@ -69,10 +74,10 @@ class ParallelCrawler:
         
         safe_print("✨ ParallelCrawler initialized")
         safe_print(f"   Story workers: {self.max_story_workers}")
-        safe_print(f"   Chapter workers per story: {self.max_chapter_workers}")
-        safe_print(f"   Shared rate limiter: {config.MAX_REQUESTS_PER_MINUTE} req/min")
+        safe_print(f"   ✅ Browser design: 1 per worker (5 workers = 5 browsers)")
+        safe_print(f"   ✅ Chapter crawl: 100% API (no browser)")
+        safe_print(f"   ✅ Shared rate limiter: {config.MAX_REQUESTS_PER_MINUTE} req/min")
         safe_print(f"   Retry enabled: {config.MAX_STORY_RETRIES > 0} (max {config.MAX_STORY_RETRIES} retries)")
-        safe_print(f"   Checkpoint enabled: {config.ENABLE_CHECKPOINTS}")
         if self.completed_story_ids:
             safe_print(f"   📋 Loaded checkpoint: {len(self.completed_story_ids)} stories already completed")
     
@@ -137,14 +142,19 @@ class ParallelCrawler:
     
     def _crawl_story_worker(self, story_id: str) -> Optional[Dict[str, Any]]:
         """
-        Worker function để crawl 1 story (runs in thread)
-        Mỗi thread tạo scraper riêng (Playwright không thread-safe)
+        ✅ OPTIMIZED: Worker function to crawl 1 story
+        
+        Key optimizations:
+        - Reuse browser from pool (not create new)
+        - Load cookies from file (no re-login)
+        - Chapter crawl: API-only (no browser)
+        - Minimal browser lifetime
         
         Args:
             story_id: Story ID to crawl
             
         Returns:
-            Story data dict hoặc None nếu thất bại
+            Story data dict or None if failed
         """
         thread_name = threading.current_thread().name
         scraper = None
@@ -152,31 +162,26 @@ class ParallelCrawler:
         try:
             safe_print(f"🔄 [{thread_name}] Starting story {story_id}...")
             
-            # Random delay trước khi bắt đầu (anti-pattern detection)
+            # Random delay (anti-pattern detection)
             delay = random.uniform(
                 config.PARALLEL_RANDOM_DELAY_MIN,
                 config.PARALLEL_RANDOM_DELAY_MAX
             )
             time.sleep(delay)
             
-            # Tạo scraper riêng cho thread này (Playwright không share được giữa threads)
+            # Create scraper (browser will be created/reused internally)
             scraper = WattpadScraper(max_workers=self.max_chapter_workers)
             
-            # Inject shared rate limiter (tất cả threads dùng chung)
+            # Inject shared rate limiter
             scraper.rate_limiter = self.shared_rate_limiter
             
-            # Extract worker ID from thread name (e.g., "StoryWorker_0" -> 0)
+            # Extract worker ID
             worker_id = thread_name.split('_')[-1] if '_' in thread_name else None
             
-            # Start browser với UNIQUE profile directory (tránh conflict)
-            # Đăng nhập tự động nếu có credentials trong config
-            scraper.start(
-                username=config.WATTPAD_USERNAME if hasattr(config, 'WATTPAD_USERNAME') else None,
-                password=config.WATTPAD_PASSWORD if hasattr(config, 'WATTPAD_PASSWORD') else None,
-                worker_id=worker_id
-            )
+            # Start browser (loads cookies from file, no re-login)
+            scraper.start(worker_id=worker_id)
             
-            # Crawl story
+            # ✅ OPTIMIZED: Crawl story with API-only chapters
             story_data = scraper.scrape_story(
                 story_id=story_id,
                 fetch_chapters=True,
@@ -189,7 +194,6 @@ class ParallelCrawler:
                 return story_data
             else:
                 safe_print(f"❌ [{thread_name}] Failed story {story_id} - No data returned")
-                # Add to retry queue if retries enabled
                 self._add_to_retry_queue(story_id)
                 self._update_progress(success=False)
                 return None
@@ -197,12 +201,11 @@ class ParallelCrawler:
         except Exception as e:
             safe_print(f"❌ [{thread_name}] Error crawling story {story_id}: {e}")
             traceback.print_exc()
-            # Add to retry queue if retries enabled
             self._add_to_retry_queue(story_id)
             self._update_progress(success=False)
             return None
         finally:
-            # Đóng scraper của thread này
+            # Close scraper (but keep browser for reuse if needed)
             if scraper:
                 try:
                     scraper.stop()
@@ -228,9 +231,67 @@ class ParallelCrawler:
             self.retry_queue.clear()
             return batch
     
+    def _do_initial_login(self):
+        """
+        ⚠️ CRITICAL: Login 1 lần duy nhất trong main thread
+        Mục đích: Tránh 5 threads login đồng thời → account lock / IP ban
+        
+        Workflow:
+        1. Main thread: Tạo WattpadScraper, login, save cookies vào file
+        2. Worker threads: Mỗi thread load cookies từ file, reuse session
+        3. Result: Chỉ 1 login request duy nhất (thay vì 5)
+        
+        Returns: None (cookies saved to file)
+        """
+        # Kiểm tra credentials
+        username = config.WATTPAD_USERNAME if hasattr(config, 'WATTPAD_USERNAME') else None
+        password = config.WATTPAD_PASSWORD if hasattr(config, 'WATTPAD_PASSWORD') else None
+        
+        # Nếu không có credentials hoặc cookie file đã tồn tại, bỏ qua
+        if not username or not password:
+            safe_print("⚠️ No credentials provided - Skipping initial login")
+            return
+        
+        if config.SKIP_LOGIN_IF_COOKIE_EXISTS and os.path.exists(config.COOKIE_FILE):
+            safe_print(f"🍪 Cookie file already exists ({config.COOKIE_FILE}) - Reusing cookies")
+            return
+        
+        safe_print(f"\n{'='*60}")
+        safe_print(f"🔑 INITIAL LOGIN (Main Thread - 1 lần duy nhất)")
+        safe_print(f"   Username: {username}")
+        safe_print(f"   Saving cookies to: {config.COOKIE_FILE}")
+        safe_print(f"   Workers sẽ reuse cookies này")
+        safe_print(f"{'='*60}\n")
+        
+        scraper = None
+        try:
+            # Tạo scraper trong main thread để login
+            scraper = WattpadScraper(max_workers=self.max_chapter_workers)
+            scraper.rate_limiter = self.shared_rate_limiter
+            
+            # Login - this will save cookies to file automatically
+            scraper.start(username=username, password=password, worker_id="MainThread")
+            
+            safe_print("✅ Initial login successful - Cookies saved for worker threads\n")
+            
+        except Exception as e:
+            safe_print(f"❌ Initial login failed: {e}")
+            safe_print(f"⚠️ Workers will attempt to scrape without login\n")
+            traceback.print_exc()
+        finally:
+            if scraper:
+                try:
+                    scraper.stop()
+                except Exception as e:
+                    safe_print(f"⚠️ Cleanup error during initial login: {e}")
+    
     def crawl_stories_parallel(self, story_ids: List[str]) -> List[Dict[str, Any]]:
         """
-        Crawl nhiều stories song song với retry logic
+        Crawl nhiều stories song parallel với cookie-based session reuse
+        
+        ✅ OPTIMIZATION: 
+        - 1 login ở main thread → save cookies
+        - N workers reuse cookies → no multi-login risk
         
         Args:
             story_ids: List of story IDs to crawl
@@ -255,11 +316,15 @@ class ParallelCrawler:
         self.failed_stories = 0
         self.results = []
         
+        # ⚠️ CRITICAL: Do initial login BEFORE creating workers
+        # This ensures cookies are saved and workers can reuse them
+        self._do_initial_login()
+        
         safe_print(f"\n{'='*60}")
         safe_print(f"🚀 Starting parallel crawl of {len(story_ids)} stories")
         safe_print(f"   Workers: {self.max_story_workers}")
         safe_print(f"   Rate limit: {config.MAX_REQUESTS_PER_MINUTE} req/min")
-        safe_print(f"   ⚠️  Each worker creates separate browser (Playwright limitation)")
+        safe_print(f"   ✅ Workers will reuse cookies (single login strategy)")
         safe_print(f"{'='*60}\n")
         
         start_time = time.time()
@@ -328,6 +393,7 @@ class ParallelCrawler:
         
         elapsed = time.time() - start_time
         
+        # ✅ FIX: Prevent division by zero
         # Final summary
         safe_print(f"\n{'='*60}")
         safe_print(f"🎉 Parallel crawl completed!")
@@ -335,10 +401,19 @@ class ParallelCrawler:
         safe_print(f"   Stories crawled: {len(self.results)}/{len(story_ids)}")
         if retry_results:
             safe_print(f"   Recovered via retry: {len(retry_results)}")
-        safe_print(f"   Success rate: {len(self.results)/len(story_ids)*100:.1f}%")
-        safe_print(f"   Avg time/story: {elapsed/len(story_ids):.1f}s")
-        if len(self.results) > 0:
-            safe_print(f"   Speed: {len(self.results)/(elapsed/60):.2f} stories/minute")
+        
+        # ✅ Only calculate metrics if we have stories
+        if len(story_ids) > 0:
+            success_rate = (len(self.results) / len(story_ids) * 100)
+            safe_print(f"   Success rate: {success_rate:.1f}%")
+            avg_time = elapsed / len(story_ids)
+            safe_print(f"   Avg time/story: {avg_time:.1f}s")
+        else:
+            safe_print(f"   ⚠️ No stories were extracted from URLs")
+        
+        if len(self.results) > 0 and elapsed > 0:
+            speed = len(self.results) / (elapsed / 60)
+            safe_print(f"   Speed: {speed:.2f} stories/minute")
         safe_print(f"{'='*60}\n")
         
         return self.results

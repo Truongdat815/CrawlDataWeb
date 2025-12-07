@@ -133,6 +133,64 @@ def retry_request(func, max_retries=None, backoff=None):
     return None
 
 
+class BrowserManager:
+    """
+    ✅ OPTIMIZATION: One browser per worker thread (no sharing, no race conditions)
+    
+    Design:
+    - 5 stories = 5 worker threads = 5 browsers
+    - Each worker creates its own browser instance
+    - No sharing = no race conditions = safe
+    - Thread-local browser cache
+    
+    Browser lifetime:
+    1. Created when worker starts
+    2. Used for login + prefetch only
+    3. Closed when worker finishes
+    
+    Benefits:
+    - Simpler than browser pool
+    - No deadlocks
+    - No race conditions
+    - Each thread is independent
+    - Easy to debug
+    """
+    
+    def __init__(self):
+        self.browser_cache = {}  # {thread_id: browser}
+        self._lock = threading.Lock()
+    
+    def get_browser_for_thread(self, thread_id: str):
+        """Get or create browser for current thread (lazy creation)"""
+        with self._lock:
+            if thread_id not in self.browser_cache:
+                # Will be created on first use in scraper.start()
+                return None
+            return self.browser_cache.get(thread_id)
+    
+    def cache_browser(self, thread_id: str, browser):
+        """Cache browser for thread"""
+        if browser:
+            with self._lock:
+                self.browser_cache[thread_id] = browser
+    
+    def remove_browser(self, thread_id: str):
+        """Remove browser from cache"""
+        with self._lock:
+            if thread_id in self.browser_cache:
+                del self.browser_cache[thread_id]
+    
+    def close_all(self):
+        """Close all cached browsers"""
+        with self._lock:
+            for browser in self.browser_cache.values():
+                try:
+                    browser.close()
+                except:
+                    pass
+            self.browser_cache.clear()
+
+
 class WattpadScraper:
     """Wattpad API-based scraper using modular components"""
     
@@ -140,7 +198,7 @@ class WattpadScraper:
         self.context = None
         self.page = None
         self.playwright = None
-        self.max_workers = max_workers or config.MAX_WORKERS
+        self.max_workers = max_workers or config.MAX_CHAPTER_WORKERS
         
         # Rate limiter
         self.rate_limiter = RateLimiter()
@@ -331,26 +389,31 @@ class WattpadScraper:
 
             safe_print("✅ Playwright persistent context initialized")
 
-            # Đăng nhập vào Wattpad nếu có credentials
-            if username and password:
+            # ========== WATTPAD LOGIN STRATEGY ==========
+            # ⚠️ QUAN TRỌNG: Chỉ login 1 lần, sau đó reuse cookies
+            # Tránh 5 threads login cùng lúc → account lock / IP ban
+            
+            # Step 1: Load cookies từ file nếu tồn tại (reuse cơ)
+            if config.SKIP_LOGIN_IF_COOKIE_EXISTS and self.login_service.load_cookies_from_file():
+                safe_print("🍪 Loaded cookies từ file - Bỏ qua login")
+                self.login_service.apply_cookies_to_browser(self.page)
+            # Step 2: Nếu có credentials mới, login 1 lần và lưu cookies
+            elif username and password:
                 safe_print("\n" + "="*60)
-                safe_print("🔑 WATTPAD LOGIN")
+                safe_print("🔑 WATTPAD LOGIN (1 lần duy nhất)")
                 safe_print("="*60)
                 
-                # Kiểm tra xem đã đăng nhập chưa
-                if self.login_service.is_already_logged_in(self.page):
-                    safe_print("✅ Đã đăng nhập rồi - Bỏ qua bước login")
-                else:
-                    # Chưa đăng nhập -> Thực hiện login
-                    self.login_service.login_with_playwright(self.page, username, password)
+                # Login qua Playwright
+                self.login_service.login_with_playwright(self.page, username, password)
+                
+                # Lấy cookies từ browser và lưu vào file
+                cookies = self.page.context.cookies()
+                if cookies:
+                    self.login_service.save_cookies_to_file(cookies)
+                    safe_print("✅ Cookies lưu vào file - Các threads khác sẽ reuse")
             else:
-                # Load cookies từ file nếu có
-                if self.login_service.load_cookies_from_file():
-                    self.login_service.apply_cookies_to_browser(self.page)
-                    safe_print("✅ Đã load cookies từ file")
-                else:
-                    safe_print("⚠️ Không có credentials, scrape mà không đăng nhập")
-                    safe_print("   Một số trang có thể cần đăng nhập để xem")
+                safe_print("⚠️ Không có credentials và cookie file, scrape mà không đăng nhập")
+                safe_print("   Một số trang có thể cần đăng nhập để xem")
 
         except Exception as e:
             safe_print(f"⚠️ Lỗi khởi tạo Playwright: {e}")
@@ -670,8 +733,8 @@ class WattpadScraper:
                 try:
                     # Pass parent_comment_id when fetching replies (namespace='comments')
                     parent_id = resource_id if namespace == 'comments' else None
-                    # Pass websiteId from wattpad_website (key is 'website_id' in DB)
-                    website_id = self.wattpad_website.get("website_id") if self.wattpad_website else None
+                    # Pass websiteId from wattpad_website
+                    website_id = self.wattpad_website.get("websiteId") if self.wattpad_website else None
                     # Use db_chapter_id (UUID) for saving to DB
                     mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(
                         data, db_chapter_id, namespace, 
@@ -892,8 +955,54 @@ class WattpadScraper:
         dup_checker = DuplicateChecker()
         story_status = dup_checker.check_story(story_id)
         if story_status:
-            dup_checker.close()
-            return story_status  # Return existing data instead of None
+            # If story exists, check whether chapters and contents are complete
+            try:
+                chapters_count = story_status.get("chapters_count", 0)
+                chapters_with_content = story_status.get("chapters_with_content", 0)
+
+                if chapters_count and chapters_with_content and chapters_count == chapters_with_content:
+                    # Fully scraped -> safe to return
+                    dup_checker.close()
+                    return story_status
+
+                # Story exists but incomplete -> delegate to ChapterCrawler to finish missing chapters/content
+                safe_print("ℹ️ Story exists but chapters/content incomplete — delegating to ChapterCrawler to finish")
+
+                # Try to determine web_story_id from DB (preferred)
+                web_story_id = None
+                try:
+                    if self.mongo_collection_stories:
+                        story_doc = self.mongo_collection_stories.find_one({"storyId": str(story_id)})
+                        if story_doc:
+                            web_story_id = story_doc.get("webStoryId") or story_doc.get("web_story_id") or story_doc.get("web_id")
+                except Exception:
+                    web_story_id = None
+
+                # If not found in DB, try to fetch metadata from API to obtain web ID
+                if not web_story_id:
+                    try:
+                        api_meta = self.fetch_story_from_api(story_id)
+                        if api_meta:
+                            web_story_id = str(api_meta.get("id") or api_meta.get("webStoryId") or api_meta.get("storyId"))
+                    except Exception:
+                        web_story_id = None
+
+                if not web_story_id:
+                    safe_print("❌ Cannot determine webStoryId for this story; returning existing status")
+                    dup_checker.close()
+                    return story_status
+
+                # Import ChapterCrawler lazily to avoid circular imports
+                from src.utils.chapter_crawler import ChapterCrawler
+
+                chapter_crawler = ChapterCrawler(self)
+                result = chapter_crawler.crawl_chapters(story_id=str(story_id), web_story_id=str(web_story_id), fetch_comments=fetch_comments)
+                dup_checker.close()
+                return result
+            except Exception as e:
+                safe_print(f"⚠️ Error while delegating to ChapterCrawler: {e}")
+                dup_checker.close()
+                return story_status
         dup_checker.close()
         
         # 1. Fetch story metadata từ API
@@ -1144,22 +1253,38 @@ class WattpadScraper:
                             chapter["chapterName"] = f"Chapter {idx}: {chapter.get('chapterName', 'Unknown')}"
                             chapter["order"] = idx - 1
                         
-                        # Step 3c: Extract chapter content từ HTML
-                        page_html = self.page.content()
-                        chapter_content = ChapterContentScraper.extract_and_map_chapter_content(page_html, chapter_id)
+                        # Step 3c: Extract chapter content từ API v2 qua Playwright
+                        # ✅ Dùng Playwright để giữ session/cookies cho API v2
+                        # Lợi ích: Tránh lỗi 400, giữ authentication state
                         
-                        if chapter_content and chapter_content.get("content"):
-                            # ✅ LƯUÍ: Không lưu content trong chapter object
-                            # Content sẽ được lưu riêng vào chapter_content collection
-                            content_len = len(chapter_content.get('content', ''))
-                            safe_print(f"      ✅ Content: {content_len} bytes")
-                            
-                            # Save chapter_content to MongoDB (collection riêng)
-                            if self.chapter_content_scraper:
-                                self.chapter_content_scraper.save_chapter_content_to_mongo(chapter_content)
+                        chapter_text = None
+                        if web_chapter_id and str(web_chapter_id).isdigit():
+                            try:
+                                # Fetch từ API v2 sử dụng Playwright (sync)
+                                chapter_text = self.chapter_content_scraper.fetch_chapter_content_from_apiv2_sync(
+                                    self.page,
+                                    web_chapter_id
+                                )
+                            except Exception as e:
+                                safe_print(f"      ⚠️ Lỗi fetch API v2: {e}")
                         else:
-                            # Check if paid chapter (empty content)
-                            safe_print(f"      ⚠️ Không extract được content")
+                            safe_print(f"      ⚠️ webChapterId không hợp lệ: {web_chapter_id}")
+                        
+                        if chapter_text:
+                            # Map vào schema
+                            chapter_content = self.chapter_content_scraper.map_html_to_chapter_content(chapter_text, chapter_id)
+                            
+                            if chapter_content and chapter_content.get("content"):
+                                content_len = len(chapter_content.get('content', ''))
+                                safe_print(f"      ✅ Content (API): {content_len} bytes")
+                                
+                                # Save chapter_content to MongoDB
+                                if self.chapter_content_scraper:
+                                    self.chapter_content_scraper.save_chapter_content_to_mongo(chapter_content)
+                            else:
+                                safe_print(f"      ⚠️ Không thể parse content từ API")
+                        else:
+                            safe_print(f"      ⚠️ Không extract được content từ API")
                             if is_paid_story and not has_full_access:
                                 safe_print(f"      🔒 Chapter này có thể cần trả phí - bỏ qua")
                         
@@ -1221,7 +1346,7 @@ class WattpadScraper:
                 story_info = self.story_info_scraper.map_api_to_story_info(story_data, free_chapter_override=free_chapter_from_html)
                 if story_info:
                     # Set websiteId from wattpad_website
-                    website_id = self.wattpad_website.get("website_id") if self.wattpad_website else None
+                    website_id = self.wattpad_website.get("websiteId") if self.wattpad_website else None
                     if website_id:
                         story_info["websiteId"] = website_id
                     self.story_info_scraper.save_story_info(story_info)

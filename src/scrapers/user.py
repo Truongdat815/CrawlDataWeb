@@ -140,7 +140,7 @@ class UserScraper(BaseScraper):
                     "followers": api_data.get("numFollowers"),
                     "following": api_data.get("numFollowing"),
                     "comments": None,
-                    "bio": api_data.get("description"),
+                    "bio": api_data.get("description") or None,  # None if empty
                     "favorites": None,
                     "ratings": None,
                     "reviews": None,

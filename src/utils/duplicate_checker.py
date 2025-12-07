@@ -57,25 +57,28 @@ class DuplicateChecker:
             chapter_name: Optional chapter name for logging
         
         Returns:
-            True if chapter already scraped, False otherwise
+            True if chapter AND content already exist, False otherwise
         """
-        if self.checker.chapter_exists(chapter_id):
+        chapter_exists = self.checker.chapter_exists(chapter_id)
+        content_exists = self.checker.chapter_content_exists(chapter_id)
+        
+        # Chỉ skip khi CẢ chapter VÀ content đều đã có
+        if chapter_exists and content_exists:
             safe_print(f"      ⚠️ SKIP: Chapter already scraped!")
-            
-            # Check if content exists
-            if self.checker.chapter_content_exists(chapter_id):
-                safe_print(f"         ✅ Content exists")
-            else:
-                safe_print(f"         ⚠️ Content missing")
+            safe_print(f"         ✅ Content exists")
             
             self.skipped_chapters.append({
                 "chapterId": chapter_id,
                 "chapterName": chapter_name,
                 "reason": "already_scraped",
-                "has_content": self.checker.chapter_content_exists(chapter_id)
+                "has_content": True
             })
             
             return True
+        
+        # Nếu chapter có nhưng content thiếu, cho phép cào lại content
+        if chapter_exists and not content_exists:
+            safe_print(f"      ℹ️  Chapter exists but content missing - will fetch content")
         
         return False
     

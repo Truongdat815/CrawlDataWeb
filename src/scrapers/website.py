@@ -130,41 +130,34 @@ class WebsiteScraper(BaseScraper):
             mongo_collection: MongoDB websites collection
             
         Returns:
-            dict: Website document with _id, website_id, name
+            dict: Website document with websiteId and websiteName
         """
         if mongo_collection is None:
             safe_print("⚠️ MongoDB collection is None, skipping website creation")
             return None
         
         try:
-            # Check if Wattpad website exists
-            existing = mongo_collection.find_one({"website_id": WebsiteScraper.WATTPAD_WEBSITE_ID})
-            
-            if existing:
-                safe_print(f"✅ Wattpad website already exists: {WebsiteScraper.WATTPAD_WEBSITE_ID}")
-                return existing
-            
-            # Create new Wattpad website entry
+            # Use upsert to prevent race conditions in parallel crawler
             website_doc = {
-                "website_id": WebsiteScraper.WATTPAD_WEBSITE_ID,
-                "name": WebsiteScraper.WATTPAD_WEBSITE_NAME,
-                "display_name": "Wattpad",
-                "base_url": "https://www.wattpad.com",
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-                "status": "active",
-                "metadata": {
-                    "description": "Online storytelling platform",
-                    "language": "en",
-                    "country": "CA"
-                }
+                "websiteId": WebsiteScraper.WATTPAD_WEBSITE_ID,
+                "websiteName": WebsiteScraper.WATTPAD_WEBSITE_NAME
             }
             
-            result = mongo_collection.insert_one(website_doc)
-            website_doc["_id"] = result.inserted_id
+            result = mongo_collection.update_one(
+                {"websiteId": WebsiteScraper.WATTPAD_WEBSITE_ID},
+                {"$setOnInsert": website_doc},
+                upsert=True
+            )
             
-            safe_print(f"✅ Created Wattpad website: {WebsiteScraper.WATTPAD_WEBSITE_ID}")
-            return website_doc
+            # Retrieve the document (either existing or newly created)
+            existing = mongo_collection.find_one({"websiteId": WebsiteScraper.WATTPAD_WEBSITE_ID})
+            
+            if result.upserted_id:
+                safe_print(f"✅ Created Wattpad website: {WebsiteScraper.WATTPAD_WEBSITE_ID}")
+            else:
+                safe_print(f"✅ Wattpad website already exists: {WebsiteScraper.WATTPAD_WEBSITE_ID}")
+            
+            return existing
             
         except Exception as e:
             safe_print(f"❌ Error getting/creating Wattpad website: {e}")
@@ -173,7 +166,7 @@ class WebsiteScraper(BaseScraper):
     @staticmethod
     def get_website_by_id(mongo_collection, website_id):
         """
-        Get website by website_id
+        Get website by websiteId
         
         Args:
             mongo_collection: MongoDB websites collection
@@ -186,20 +179,20 @@ class WebsiteScraper(BaseScraper):
             return None
         
         try:
-            return mongo_collection.find_one({"website_id": website_id})
+            return mongo_collection.find_one({"websiteId": website_id})
         except Exception as e:
             safe_print(f"❌ Error fetching website {website_id}: {e}")
             return None
     
     @staticmethod
-    def create_website(mongo_collection, name, base_url, prefix="wp"):
+    def create_website(mongo_collection, name, base_url=None, prefix="wp"):
         """
         Create new website entry (for future multi-source support)
         
         Args:
             mongo_collection: MongoDB websites collection
             name: Website name (lowercase, no spaces)
-            base_url: Website base URL
+            base_url: Website base URL (deprecated, not stored)
             prefix: ID prefix
             
         Returns:
@@ -210,7 +203,7 @@ class WebsiteScraper(BaseScraper):
         
         try:
             # Check if exists
-            existing = mongo_collection.find_one({"name": name})
+            existing = mongo_collection.find_one({"websiteName": name})
             if existing:
                 safe_print(f"⚠️ Website {name} already exists")
                 return existing
@@ -218,15 +211,10 @@ class WebsiteScraper(BaseScraper):
             # Generate ID
             website_id = WebsiteScraper.generate_website_id(prefix)
             
+            # Chỉ 2 fields theo schema
             website_doc = {
-                "website_id": website_id,
-                "name": name,
-                "display_name": name.title(),
-                "base_url": base_url,
-                "created_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow(),
-                "status": "active",
-                "metadata": {}
+                "websiteId": website_id,
+                "websiteName": name
             }
             
             result = mongo_collection.insert_one(website_doc)

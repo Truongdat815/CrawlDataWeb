@@ -12,24 +12,12 @@ IMAGES_DIR = os.path.join(DATA_DIR, "images")
 os.makedirs(JSON_DIR, exist_ok=True)
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
-# Cấu hình Bot
+# ========== BROWSER & BOT CONFIGURATION ==========
 TIMEOUT = 60  # 60 giây
-HEADLESS = True  # True = Chạy ngầm (headless), False = Hiện trình duyệt
-# ⚠️ Lưu ý: Headless mode tiết kiệm tài nguyên nhưng có thể bị phát hiện bot
-# Code đã tích hợp stealth plugins để giảm thiểu rủi ro
-# Nếu bị block, đổi lại HEADLESS = False
-
-# ========== RATE LIMITING & ERROR HANDLING ==========
-# Rate limiting để tránh ban IP từ Wattpad
-REQUEST_DELAY = 1.0  # Giây - Delay giữa các request (default: 1 giây)
-MAX_RETRIES = 3  # Số lần retry nếu request thất bại
-RETRY_BACKOFF = 2  # Multiplier cho exponential backoff (1s, 2s, 4s, 8s...)
-MAX_REQUESTS_PER_MINUTE = 60  # Rate limit: max 60 requests/phút
-REQUEST_TIMEOUT = 30  # Timeout cho mỗi request (giây)
+HEADLESS = True  # True = Chạy ngầm (tiết kiệm tài nguyên), False = Hiện trình duyệt
+# ⚠️ Lưu ý: Code đã tích hợp stealth plugins để tránh bị phát hiện bot
 
 # ========== HTTP & PROXY CONFIGURATION ==========
-# Connection pooling headers và proxy để tránh bị block
-# User-Agent và headers mặc định cho mọi HTTP requests
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -37,79 +25,66 @@ DEFAULT_USER_AGENT = (
 )
 
 # Playwright settings
-# Directory to store persistent profile (cookies, localStorage)
 PLAYWRIGHT_PROFILE_DIR = os.path.join(DATA_DIR, "playwright_profile")
-# Playwright user agent override (defaults to DEFAULT_USER_AGENT)
 PLAYWRIGHT_USER_AGENT = DEFAULT_USER_AGENT
-# Use stealth-sync integration if available
 PLAYWRIGHT_USE_STEALTH = True
 
-# Optional list of proxy servers to rotate through (strings like 'http://user:pass@host:port')
-# If empty, will fallback to HTTP_PROXY / HTTPS_PROXY
-PROXIES = []
-
 # Optional proxy configuration (None để không dùng proxy)
-# Ví dụ: "http://user:pass@proxy.example.com:3128"
+PROXIES = []
 HTTP_PROXY = None
 HTTPS_PROXY = None
 
-# ========== CẤU HÌNH TỐC ĐỘ ==========
-# ⚠️ Lưu ý: Giảm delays có thể tăng tốc nhưng cũng tăng rủi ro bị ban IP
-# ✅ Khuyến nghị: Bắt đầu với giá trị mặc định, test và giảm dần nếu không bị ban
+# ========== RATE LIMITING & ERROR HANDLING ==========
+MAX_RETRIES = 3  # Số lần retry nếu request thất bại
+RETRY_BACKOFF = 2  # Multiplier cho exponential backoff (1s, 2s, 4s, 8s...)
+MAX_REQUESTS_PER_MINUTE = 60  # Rate limit: 60 requests/phút (dùng cho shared rate limiter)
+REQUEST_TIMEOUT = 30  # Timeout cho mỗi HTTP request (giây)
 
-# Delays - Giảm để tăng tốc (cẩn thận với rate limiting)
-DELAY_BETWEEN_CHAPTERS = 2 # Giây - Delay giữa các chương (có thể giảm xuống 0.5-1)
-DELAY_BETWEEN_REQUESTS = 5 # Giây - Delay giữa các request để tránh ban IP (có thể giảm xuống 1-2)
-DELAY_THREAD_START = 0.5 # Giây - Delay để stagger các thread khi bắt đầu (có thể giảm xuống 0.1)
+# ========== PARALLEL CRAWLING CONFIGURATION ==========
+# 🚀 Tốc độ crawl (dùng multi-threading)
+MAX_STORY_WORKERS = 3  # Số stories cào song song (recommended: 3-5)
+MAX_CHAPTER_WORKERS = 2  # Số chapters cào song song mỗi story (recommended: 2-3)
 
-# Parallel Processing - Tăng để crawl nhanh hơn (tốn nhiều RAM/CPU hơn)
-MAX_WORKERS = 3  # Số thread để cào chapters song song (có thể tăng lên 6-10 nếu CPU/RAM cho phép)
-MAX_FICTION_WORKERS = 2  # Số fiction crawl song song cùng lúc (có thể tăng lên 3-5)
+# 🎲 Random delays giữa các requests (anti-bot detection)
+PARALLEL_RANDOM_DELAY_MIN = 1.0  # Min delay (seconds)
+PARALLEL_RANDOM_DELAY_MAX = 3.0  # Max delay (seconds)
 
-# Multi-Threading Parallel Crawling (NEW)
-MAX_STORY_WORKERS = 3  # Số stories cào song song (3-5 recommended)
-MAX_CHAPTER_WORKERS = 2  # Số chapters cào song song mỗi story (2-3 recommended)
-USE_PARALLEL_CRAWLING = True  # Enable/disable parallel crawling
-PARALLEL_RANDOM_DELAY_MIN = 1.0  # Min delay giữa requests (seconds)
-PARALLEL_RANDOM_DELAY_MAX = 3.0  # Max delay giữa requests (seconds)
-
-# Retry & Recovery Configuration
-MAX_STORY_RETRIES = 2  # Số lần retry cho failed stories (0 = no retry)
+# 🔄 Retry & Recovery
+MAX_STORY_RETRIES = 2  # Số lần retry cho failed stories (0 = no retry) - DEPRECATED, use per-chapter retry instead
+MAX_CHAPTER_RETRIES = 3  # Số lần retry cho failed chapters (per API step)
 RETRY_DELAY = 5.0  # Delay trước khi retry (seconds)
 
-# Progress Checkpoint Configuration
-ENABLE_CHECKPOINTS = True  # Enable progress checkpoints
-CHECKPOINT_INTERVAL = 10  # Save checkpoint mỗi N stories
-CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")  # Checkpoint file path
+# ✅ Per-Chapter Retry Settings
+RETRY_BACKOFF_INITIAL = 1.0  # Initial backoff time (seconds)
+RETRY_BACKOFF_MAX = 60.0  # Maximum backoff time
+RETRY_BACKOFF_MULTIPLIER = 2.0  # Exponential backoff multiplier
 
-# ========== CẤU HÌNH TỐI ƯU (Uncomment để dùng) ==========
-# DELAY_BETWEEN_CHAPTERS = 0.5  # Tăng tốc 4x
-# DELAY_BETWEEN_REQUESTS = 1   # Tăng tốc 5x
-# MAX_WORKERS = 8              # Tăng tốc 2.6x
-# ⚠️ Cảnh báo: Có thể bị ban IP nếu tăng tốc quá nhiều
+# 📊 Progress tracking
+ENABLE_CHECKPOINTS = True  # Lưu tiến độ để resume sau
+CHECKPOINT_INTERVAL = 10  # Save checkpoint mỗi N stories
+CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")
+CHECKPOINT_DIR = os.path.join(DATA_DIR, "checkpoints")  # Per-chapter checkpoints directory
 
 # ========== SCRAPING LIMITS ==========
-# Giới hạn số lượng chapters và comments khi cào
-MAX_CHAPTERS_PER_STORY = None  # None = Lấy tất cả, số = Tối đa N chapters
-MAX_COMMENTS_PER_CHAPTER = None  # None = Lấy tất cả, số = Tối đa N comments
-MAX_STORIES_PER_BATCH = 5  # Tối đa 100 stories khi scrape batch
+MAX_CHAPTERS_PER_STORY = 3  # None = Tất cả, số = Tối đa N chapters
+MAX_COMMENTS_PER_CHAPTER = 10  # None = Tất cả, số = Tối đa N comments
+MAX_STORIES_PER_BATCH = 2
 
 # ========== WATTPAD LOGIN CREDENTIALS ==========
-# Thêm credentials để tự động đăng nhập
-# Để trống nếu muốn dùng cookies từ file
 WATTPAD_USERNAME = "buonnguqua"
 WATTPAD_PASSWORD = "Abcdefgh123@"
 
-# --- CẤU HÌNH MONGODB ---
+# ========== COOKIE & SESSION MANAGEMENT ==========
+# 🍪 Cookie reuse để tránh login multiple times
+COOKIE_FILE = os.path.join(DATA_DIR, "wattpad_cookies.json")  # Lưu cookie từ login duy nhất
+COOKIE_REFRESH_INTERVAL = 30 * 60  # Refresh cookie mỗi 30 phút (seconds)
+# ⚠️ QUAN TRỌNG: Login 1 lần → tất cả threads reuse cookie từ file
+#              Không login trong mỗi thread (tránh account lock / IP ban)
+SKIP_LOGIN_IF_COOKIE_EXISTS = True  # Nếu cookie file tồn tại, bỏ qua login
+
+# ========== MONGODB CONFIGURATION ==========
 MONGODB_ENABLED = True
-
-# ========== MONGODB ATLAS (OLD - COMMENTED) ==========
-# MONGODB_USERNAME = "xuannguyentruong15"
-# MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
-# CLUSTER_URL = "crawl.ujyutza.mongodb.net"
-# MONGODB_DB_NAME = "WattpadData"
-# MONGODB_URI = "mongodb+srv://xuannguyentruong15:grXsKiSEOf3APbRD@crawl.ujyutza.mongodb.net/?appName=Crawl"
-
+"""
 # ========== MONGODB SELF-HOSTED (CURRENT) ==========
 MONGODB_USERNAME = "user"
 MONGODB_PASSWORD = "56915001"
@@ -117,10 +92,25 @@ MONGODB_HOST = "103.90.224.232"
 MONGODB_PORT = "27017"
 MONGODB_DB_NAME = "my_database"
 MONGODB_COLLECTION_STORIES = "stories"
+MONGODB_COLLECTION_CHAPTERS = "chapters"
+MONGODB_COLLECTION_COMMENTS = "comments"
 
-# Connection string cho MongoDB self-hosted
 MONGODB_URI = f"mongodb://{MONGODB_USERNAME}:{MONGODB_PASSWORD}@{MONGODB_HOST}:{MONGODB_PORT}/{MONGODB_DB_NAME}"
 
-# Cho phép override bằng environment variable (ưu tiên)
+# Allow override via environment variable
 if os.getenv("MONGODB_URI"):
     MONGODB_URI = os.getenv("MONGODB_URI")
+
+    
+"""
+
+
+# ========== MONGODB ATLAS (OLD - COMMENTED FOR REFERENCE) ==========
+MONGODB_USERNAME = "xuannguyentruong15"
+MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
+MONGODB_CLUSTER_URL = "crawl.ujyutza.mongodb.net"
+MONGODB_DB_NAME = "WattpadData"
+MONGODB_URI = "mongodb+srv://xuannguyentruong15:grXsKiSEOf3APbRD@crawl.ujyutza.mongodb.net/?appName=Crawl"
+MONGODB_COLLECTION_STORIES = "stories"
+MONGODB_COLLECTION_CHAPTERS = "chapters"
+MONGODB_COLLECTION_COMMENTS = "comments"

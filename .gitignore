@@ -3,6 +3,7 @@ config.py
 
 # Documentation
 docs/*.md
+docs/*.txt
 
 # Python artifacts
 __pycache__/
