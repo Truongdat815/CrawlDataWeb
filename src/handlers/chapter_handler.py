@@ -45,19 +45,19 @@ class ChapterHandler:
             safe_print(f"    🔄 Thread-{index}: Đang cào chương {index + 1}")
             
             # Lấy web_chapter_id từ URL TRƯỚC để kiểm tra chapter đã có chưa
-            web_chapter_id = ""
+            web_chapter_id = None
             try:
                 url_parts = url.split("/chapter/")
                 if len(url_parts) > 1:
                     web_chapter_id = url_parts[1].split("/")[0]
             except:
-                web_chapter_id = ""
+                web_chapter_id = None
             
             # Kiểm tra chapter đã có trong DB chưa - nếu có rồi thì chỉ scrape comments
             if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
                 safe_print(f"      ⏭️  Thread-{index}: Chapter {web_chapter_id} đã có trong DB, chỉ scrape comments")
                 existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
-                existing_chapter_id = existing_chapter.get("chapter_id") if existing_chapter else None
+                existing_chapter_id = existing_chapter.get("chapterId") if existing_chapter else None
                 if existing_chapter_id:
                     # Navigate đến chapter URL để scrape comments
                     time.sleep(config.DELAY_BETWEEN_REQUESTS)
@@ -80,18 +80,20 @@ class ChapterHandler:
                 try:
                     time_elem = worker_page.locator("time[datetime]").first
                     if time_elem.count() > 0:
-                        published_time = time_elem.get_attribute("datetime") or ""
+                        published_time = time_elem.get_attribute("datetime") or None
                 except:
                     pass
             
-            content = ""
+            content = None
             try:
                 content_container = worker_page.locator(".chapter-inner").first
                 if content_container.count() > 0:
                     html_content = content_container.inner_html()
-                    content = convert_html_to_formatted_text(html_content)
+                    content_value = convert_html_to_formatted_text(html_content)
+                    content = content_value if content_value else None
                 else:
-                    content = worker_page.locator(".chapter-inner").inner_text()
+                    content_value = worker_page.locator(".chapter-inner").inner_text()
+                    content = content_value if content_value else None
             except Exception as e:
                 safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy content: {e}")
                 content = worker_page.locator(".chapter-inner").inner_text()
@@ -110,16 +112,16 @@ class ChapterHandler:
             
             # Tạo và lưu chapter_data vào DB TRƯỚC khi scrape comments
             chapter_data = {
-                "chapter_id": chapter_id,
-                "web_chapter_id": web_chapter_id,
+                "chapterId": chapter_id,
+                "webChapterId": web_chapter_id,
                 "order": order,
-                "chapter_name": title,
-                "chapter_url": url,
-                "published_time": published_time,
-                "story_id": story_id,
-                "voted": "",
-                "views": "",
-                "total_comments": ""
+                "chapterName": title,
+                "chapterUrl": url,
+                "publishedTime": published_time,
+                "storyId": story_id,
+                "voted": None,
+                "views": None,
+                "totalComments": None
             }
             
             self.mongo.save_chapter(chapter_data)

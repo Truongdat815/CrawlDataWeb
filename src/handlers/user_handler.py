@@ -36,25 +36,25 @@ class UserHandler:
                 user_url = config.BASE_URL + "/" + user_url
         
         user_data = {
-            "user_id": user_id,  # Schema: user_id (khóa chính, format rr_{uuid})
-            "web_user_id": web_user_id,  # Schema: web_user_id (lấy từ URL)
+            "userId": user_id,  # Schema: userId (khóa chính, format rr_{uuid})
+            "webUserId": web_user_id,  # Schema: webUserId (lấy từ URL)
             "username": username,  # Schema: username
-            "user_url": user_url if user_url else "",  # Schema: user_url
-            "created_date": "",  # Để trống
-            "gender": "",  # Để trống
-            "location": "",  # Để trống
-            "followers": "",  # Để trống
-            "following": "",  # Để trống
-            "comments": "",  # Để trống
-            "bio": "",  # Để trống
-            "favorites": "",  # Để trống
-            "ratings": "",  # Để trống
-            "reviews": "",  # Để trống
-            "number_of_stories": "",  # Để trống
-            "total_words": "",  # Để trống
-            "total_reviews_received": "",  # Để trống
-            "total_ratings_received": "",  # Để trống
-            "total_favorites_received": "",  # Để trống
+            "userUrl": user_url if user_url else None,  # Schema: userUrl
+            "createdDate": None,  # Để trống
+            "gender": None,  # Để trống
+            "location": None,  # Để trống
+            "followers": None,  # Để trống
+            "following": None,  # Để trống
+            "comments": None,  # Để trống
+            "bio": None,  # Để trống
+            "favorites": None,  # Để trống
+            "ratings": None,  # Để trống
+            "reviews": None,  # Để trống
+            "numberOfStories": None,  # Để trống
+            "totalWords": None,  # Để trống
+            "totalReviewsReceived": None,  # Để trống
+            "totalRatingsReceived": None,  # Để trống
+            "totalFavoritesReceived": None,  # Để trống
         }
         return user_data
     
@@ -82,9 +82,9 @@ class UserHandler:
                 ".name a[href*='/profile/']"
             ]
         
-        web_user_id = ""
-        username = ""
-        user_url = ""
+        web_user_id = None
+        username = None
+        user_url = None
         
         try:
             for selector in selectors:
@@ -92,8 +92,8 @@ class UserHandler:
                     username_elem = element.locator(selector).first
                     if username_elem.count() > 0:
                         username = username_elem.inner_text().strip()
-                        href = username_elem.get_attribute("href") or ""
-                        if "/profile/" in href:
+                        href = username_elem.get_attribute("href") or None
+                        if href and "/profile/" in href:
                             web_user_id = href.split("/profile/")[1].split("/")[0] if "/profile/" in href else ""
                             # Tạo full URL từ href
                             if href.startswith("/"):
@@ -113,8 +113,8 @@ class UserHandler:
                     username_elem = element.locator("a[href*='/profile/']").first
                     if username_elem.count() > 0:
                         username = username_elem.inner_text().strip()
-                        href = username_elem.get_attribute("href") or ""
-                        if "/profile/" in href:
+                        href = username_elem.get_attribute("href") or None
+                        if href and "/profile/" in href:
                             web_user_id = href.split("/profile/")[1].split("/")[0] if "/profile/" in href else ""
                             # Tạo full URL từ href
                             if href.startswith("/"):
@@ -150,12 +150,12 @@ class UserHandler:
         if not href:
             return (None, None, None)
         
-        web_user_id = ""
-        user_url = ""
+        web_user_id = None
+        user_url = None
         
         try:
-            if "/profile/" in href:
-                web_user_id = href.split("/profile/")[1].split("/")[0] if "/profile/" in href else ""
+            if href and "/profile/" in href:
+                web_user_id = href.split("/profile/")[1].split("/")[0]
                 # Tạo full URL từ href
                 if href.startswith("/"):
                     user_url = config.BASE_URL + href
@@ -197,28 +197,32 @@ class UserHandler:
                 else:
                     user_url = config.BASE_URL + "/" + user_url
             
-            # Tìm user theo web_user_id
-            existing = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+            # Tìm user theo webUserId
+            existing = self.mongo.mongo_collection_users.find_one({"webUserId": web_user_id})
+            if not existing:
+                # Fallback: tìm theo format cũ
+                existing = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
             
             if existing:
                 # Update các fields nếu có thay đổi
                 update_data = {}
                 if existing.get("username") != username:
                     update_data["username"] = username
-                if user_url and existing.get("user_url") != user_url:
-                    update_data["user_url"] = user_url
+                if user_url and existing.get("userUrl") != user_url and existing.get("user_url") != user_url:
+                    update_data["userUrl"] = user_url
                 
                 if update_data:
+                    query = {"webUserId": web_user_id} if "webUserId" in existing else {"web_user_id": web_user_id}
                     self.mongo.mongo_collection_users.update_one(
-                        {"web_user_id": web_user_id},
+                        query,
                         {"$set": update_data}
                     )
                 
-                user_id = existing.get("user_id")
+                user_id = existing.get("userId") or existing.get("user_id")
                 
-                # Kiểm tra xem user đã có đầy đủ thông tin chưa (có created_date hoặc followers)
+                # Kiểm tra xem user đã có đầy đủ thông tin chưa (có createdDate hoặc followers)
                 # Nếu chưa có thì mới scrape profile
-                has_full_info = existing.get("created_date") or existing.get("followers")
+                has_full_info = existing.get("createdDate") or existing.get("created_date") or existing.get("followers")
                 
                 # Nếu có page và user_url và chưa có đầy đủ thông tin, scrape profile
                 if page and user_url and not has_full_info:
@@ -299,18 +303,21 @@ class UserHandler:
                 return None
             
             # Tìm user hiện có trong DB
-            existing_user = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+            existing_user = self.mongo.mongo_collection_users.find_one({"webUserId": web_user_id})
+            if not existing_user:
+                # Fallback: tìm theo format cũ
+                existing_user = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
             if not existing_user:
                 safe_print(f"        ⚠️ User {web_user_id} chưa có trong DB, cần tạo trước")
                 return None
             
             # Kiểm tra xem user đã có đầy đủ thông tin chưa
-            has_full_info = existing_user.get("created_date") or existing_user.get("followers")
+            has_full_info = existing_user.get("createdDate") or existing_user.get("created_date") or existing_user.get("followers")
             if has_full_info:
                 safe_print(f"        ⏭️  User {web_user_id} đã có đầy đủ thông tin, bỏ qua scrape profile")
-                return existing_user.get("user_id")
+                return existing_user.get("userId") or existing_user.get("user_id")
             
-            user_id = existing_user.get("user_id")
+            user_id = existing_user.get("userId") or existing_user.get("user_id")
             
             # Lưu URL hiện tại để quay lại sau
             current_url = page.url
@@ -339,218 +346,227 @@ class UserHandler:
             activity_table = page.locator("div.portlet:has-text('Activity') table").first
             author_info_table = page.locator("div.portlet:has-text('Author Information') table").first
             
+            # Debug: kiểm tra xem có tìm thấy table không
+            personal_info_count = personal_info_table.count()
+            activity_count = activity_table.count()
+            author_info_count = author_info_table.count()
+            if personal_info_count == 0 and activity_count == 0 and author_info_count == 0:
+                safe_print(f"        ⚠️ User {web_user_id}: Không tìm thấy table nào trên profile page")
+            
             # ========== Personal Information ==========
             # Lấy created_date từ Personal Information table
-            created_date = ""
+            created_date = None
             try:
                 if personal_info_table.count() > 0:
                     joined_time = personal_info_table.locator("tbody tr:has-text('Joined:') time[datetime]").first
                     if joined_time.count() > 0:
-                        created_date = joined_time.get_attribute("datetime") or ""
+                        created_date = joined_time.get_attribute("datetime") or None
             except:
                 pass
             
             # Lấy gender từ Personal Information table
-            gender = ""
+            gender = None
             try:
                 if personal_info_table.count() > 0:
                     gender_row = personal_info_table.locator("tbody tr:has-text('Gender:')").first
                     if gender_row.count() > 0:
                         gender_td = gender_row.locator("td").last
                         if gender_td.count() > 0:
-                            gender = gender_td.inner_text().strip()
-            except:
+                            gender = gender_td.inner_text().strip() or None
+            except Exception as e:
                 pass
             
             # Lấy location từ Personal Information table
-            location = ""
+            location = None
             try:
                 if personal_info_table.count() > 0:
                     location_row = personal_info_table.locator("tbody tr:has-text('Location:')").first
                     if location_row.count() > 0:
                         location_td = location_row.locator("td").last
                         if location_td.count() > 0:
-                            location = location_td.inner_text().strip()
-            except:
+                            location = location_td.inner_text().strip() or None
+            except Exception as e:
                 pass
             
             # Lấy bio từ Personal Information table
-            bio = ""
+            bio = None
             try:
                 if personal_info_table.count() > 0:
                     bio_row = personal_info_table.locator("tbody tr:has-text('Bio:')").first
                     if bio_row.count() > 0:
                         bio_td = bio_row.locator("td.bio").first
                         if bio_td.count() > 0:
-                            bio = bio_td.inner_text().strip()
-            except:
+                            bio = bio_td.inner_text().strip() or None
+            except Exception as e:
                 pass
             
             # ========== Activity ==========
             # Lấy following từ Activity table (Follows)
-            following = ""
+            following = None
             try:
                 if activity_table.count() > 0:
                     follows_row = activity_table.locator("tbody tr:has-text('Follows')").first
                     if follows_row.count() > 0:
                         follows_td = follows_row.locator("td").last
                         if follows_td.count() > 0:
-                            following = follows_td.inner_text().strip().replace(",", "")
-            except:
+                            following = follows_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy comments từ Activity table
-            comments = ""
+            comments = None
             try:
                 if activity_table.count() > 0:
                     comments_row = activity_table.locator("tbody tr:has-text('Comments')").first
                     if comments_row.count() > 0:
                         comments_td = comments_row.locator("td").last
                         if comments_td.count() > 0:
-                            comments = comments_td.inner_text().strip().replace(",", "")
-            except:
+                            comments = comments_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy ratings từ Activity table
-            ratings = ""
+            ratings = None
             try:
                 if activity_table.count() > 0:
                     ratings_row = activity_table.locator("tbody tr:has-text('Ratings')").first
                     if ratings_row.count() > 0:
                         ratings_td = ratings_row.locator("td").last
                         if ratings_td.count() > 0:
-                            ratings = ratings_td.inner_text().strip().replace(",", "")
-            except:
+                            ratings = ratings_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy reviews từ Activity table
-            reviews = ""
+            reviews = None
             try:
                 if activity_table.count() > 0:
                     reviews_row = activity_table.locator("tbody tr:has-text('Reviews')").first
                     if reviews_row.count() > 0:
                         reviews_td = reviews_row.locator("td").last
                         if reviews_td.count() > 0:
-                            reviews = reviews_td.inner_text().strip().replace(",", "")
-            except:
+                            reviews = reviews_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # ========== Author Information ==========
             # Lấy number_of_stories từ Author Information table (Fictions)
-            number_of_stories = ""
+            number_of_stories = None
             try:
                 if author_info_table.count() > 0:
                     fictions_row = author_info_table.locator("tbody tr:has-text('Fictions:')").first
                     if fictions_row.count() > 0:
                         fictions_td = fictions_row.locator("td").last
                         if fictions_td.count() > 0:
-                            number_of_stories = fictions_td.inner_text().strip().replace(",", "")
-            except:
+                            number_of_stories = fictions_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_words từ Author Information table
-            total_words = ""
+            total_words = None
             try:
                 if author_info_table.count() > 0:
                     total_words_row = author_info_table.locator("tbody tr:has-text('Total Words:')").first
                     if total_words_row.count() > 0:
                         total_words_td = total_words_row.locator("td").last
                         if total_words_td.count() > 0:
-                            total_words = total_words_td.inner_text().strip().replace(",", "")
-            except:
+                            total_words = total_words_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_reviews_received từ Author Information table
-            total_reviews_received = ""
+            total_reviews_received = None
             try:
                 if author_info_table.count() > 0:
                     total_reviews_row = author_info_table.locator("tbody tr:has-text('Total Reviews Received:')").first
                     if total_reviews_row.count() > 0:
                         total_reviews_td = total_reviews_row.locator("td").last
                         if total_reviews_td.count() > 0:
-                            total_reviews_received = total_reviews_td.inner_text().strip().replace(",", "")
-            except:
+                            total_reviews_received = total_reviews_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_ratings_received từ Author Information table
-            total_ratings_received = ""
+            total_ratings_received = None
             try:
                 if author_info_table.count() > 0:
                     total_ratings_row = author_info_table.locator("tbody tr:has-text('Total Ratings Received:')").first
                     if total_ratings_row.count() > 0:
                         total_ratings_td = total_ratings_row.locator("td").last
                         if total_ratings_td.count() > 0:
-                            total_ratings_received = total_ratings_td.inner_text().strip().replace(",", "")
-            except:
+                            total_ratings_received = total_ratings_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy followers từ Author Information table
-            followers = ""
+            followers = None
             try:
                 if author_info_table.count() > 0:
                     followers_row = author_info_table.locator("tbody tr:has-text('Followers:')").first
                     if followers_row.count() > 0:
                         followers_td = followers_row.locator("td").last
                         if followers_td.count() > 0:
-                            followers = followers_td.inner_text().strip().replace(",", "")
-            except:
+                            followers = followers_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy favorites từ Author Information table
-            favorites = ""
+            favorites = None
             try:
                 if author_info_table.count() > 0:
                     favorites_row = author_info_table.locator("tbody tr:has-text('Favorites:')").first
                     if favorites_row.count() > 0:
                         favorites_td = favorites_row.locator("td").last
                         if favorites_td.count() > 0:
-                            favorites = favorites_td.inner_text().strip().replace(",", "")
-            except:
+                            favorites = favorites_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_favorites_received (cùng với favorites từ Author Information)
             total_favorites_received = favorites
             
-            # Cập nhật user_data với các fields mới
+            # Cập nhật user_data với các fields mới (cập nhật cả None để ghi đè dữ liệu cũ)
             update_data = {}
-            if created_date:
-                update_data["created_date"] = created_date
-            if gender:
+            if created_date is not None:  # Cập nhật cả khi có giá trị hoặc None
+                update_data["createdDate"] = created_date
+            if gender is not None:  # Cập nhật cả khi có giá trị hoặc None
                 update_data["gender"] = gender
-            if location is not None:  # Có thể là empty string
+            if location is not None:  # Cập nhật cả khi có giá trị hoặc None
                 update_data["location"] = location
-            if bio is not None:  # Có thể là empty string
+            if bio is not None:  # Cập nhật cả khi có giá trị hoặc None
                 update_data["bio"] = bio
-            if followers:
+            if followers is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["followers"] = followers
-            if following:
+            if following is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["following"] = following
-            if comments:
+            if comments is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["comments"] = comments
-            if favorites:
+            if favorites is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["favorites"] = favorites
-            if ratings:
+            if ratings is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["ratings"] = ratings
-            if reviews:
+            if reviews is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["reviews"] = reviews
-            if number_of_stories:
-                update_data["number_of_stories"] = number_of_stories
-            if total_words:
-                update_data["total_words"] = total_words
-            if total_reviews_received:
-                update_data["total_reviews_received"] = total_reviews_received
-            if total_ratings_received:
-                update_data["total_ratings_received"] = total_ratings_received
-            if total_favorites_received:
-                update_data["total_favorites_received"] = total_favorites_received
+            if number_of_stories is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["numberOfStories"] = number_of_stories
+            if total_words is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalWords"] = total_words
+            if total_reviews_received is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalReviewsReceived"] = total_reviews_received
+            if total_ratings_received is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalRatingsReceived"] = total_ratings_received
+            if total_favorites_received is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalFavoritesReceived"] = total_favorites_received
             
             # Cập nhật vào MongoDB
             if update_data:
+                query = {"webUserId": web_user_id} if "webUserId" in existing_user else {"web_user_id": web_user_id}
                 self.mongo.mongo_collection_users.update_one(
-                    {"web_user_id": web_user_id},
+                    query,
                     {"$set": update_data}
                 )
-                safe_print(f"        ✅ Đã cập nhật profile cho user {web_user_id}")
+                # Debug: in ra các fields đã cập nhật
+                safe_print(f"        ✅ Đã cập nhật profile cho user {web_user_id}: {list(update_data.keys())}")
             
             # Quay lại trang trước (URL của truyện)
             if current_url:
@@ -594,229 +610,242 @@ class UserHandler:
         
         try:
             # Tìm user hiện có trong DB
-            existing_user = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+            existing_user = self.mongo.mongo_collection_users.find_one({"webUserId": web_user_id})
             if not existing_user:
+                # Fallback: tìm theo format cũ
+                existing_user = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+            if not existing_user:
+                safe_print(f"        ⚠️ User {web_user_id} chưa có trong DB")
                 return None
             
-            user_id = existing_user.get("user_id")
+            user_id = existing_user.get("userId") or existing_user.get("user_id")
             
             # Scope vào các tables cụ thể
             personal_info_table = page.locator("div.portlet:has-text('Personal Information') table").first
             activity_table = page.locator("div.portlet:has-text('Activity') table").first
             author_info_table = page.locator("div.portlet:has-text('Author Information') table").first
             
+            # Debug: kiểm tra xem có tìm thấy table không
+            personal_info_count = personal_info_table.count()
+            activity_count = activity_table.count()
+            author_info_count = author_info_table.count()
+            if personal_info_count == 0 and activity_count == 0 and author_info_count == 0:
+                safe_print(f"        ⚠️ User {web_user_id}: Không tìm thấy table nào trên profile page")
+            
             # ========== Personal Information ==========
             # Lấy created_date từ Personal Information table
-            created_date = ""
+            created_date = None
             try:
                 if personal_info_table.count() > 0:
                     joined_time = personal_info_table.locator("tbody tr:has-text('Joined:') time[datetime]").first
                     if joined_time.count() > 0:
-                        created_date = joined_time.get_attribute("datetime") or ""
+                        created_date = joined_time.get_attribute("datetime") or None
             except:
                 pass
             
             # Lấy gender từ Personal Information table
-            gender = ""
+            gender = None
             try:
                 if personal_info_table.count() > 0:
                     gender_row = personal_info_table.locator("tbody tr:has-text('Gender:')").first
                     if gender_row.count() > 0:
                         gender_td = gender_row.locator("td").last
                         if gender_td.count() > 0:
-                            gender = gender_td.inner_text().strip()
-            except:
+                            gender = gender_td.inner_text().strip() or None
+            except Exception as e:
                 pass
             
             # Lấy location từ Personal Information table
-            location = ""
+            location = None
             try:
                 if personal_info_table.count() > 0:
                     location_row = personal_info_table.locator("tbody tr:has-text('Location:')").first
                     if location_row.count() > 0:
                         location_td = location_row.locator("td").last
                         if location_td.count() > 0:
-                            location = location_td.inner_text().strip()
-            except:
+                            location = location_td.inner_text().strip() or None
+            except Exception as e:
                 pass
             
             # Lấy bio từ Personal Information table
-            bio = ""
+            bio = None
             try:
                 if personal_info_table.count() > 0:
                     bio_row = personal_info_table.locator("tbody tr:has-text('Bio:')").first
                     if bio_row.count() > 0:
                         bio_td = bio_row.locator("td.bio").first
                         if bio_td.count() > 0:
-                            bio = bio_td.inner_text().strip()
-            except:
+                            bio = bio_td.inner_text().strip() or None
+            except Exception as e:
                 pass
             
             # ========== Activity ==========
             # Lấy following từ Activity table (Follows)
-            following = ""
+            following = None
             try:
                 if activity_table.count() > 0:
                     follows_row = activity_table.locator("tbody tr:has-text('Follows')").first
                     if follows_row.count() > 0:
                         follows_td = follows_row.locator("td").last
                         if follows_td.count() > 0:
-                            following = follows_td.inner_text().strip().replace(",", "")
-            except:
+                            following = follows_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy comments từ Activity table
-            comments = ""
+            comments = None
             try:
                 if activity_table.count() > 0:
                     comments_row = activity_table.locator("tbody tr:has-text('Comments')").first
                     if comments_row.count() > 0:
                         comments_td = comments_row.locator("td").last
                         if comments_td.count() > 0:
-                            comments = comments_td.inner_text().strip().replace(",", "")
-            except:
+                            comments = comments_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy ratings từ Activity table
-            ratings = ""
+            ratings = None
             try:
                 if activity_table.count() > 0:
                     ratings_row = activity_table.locator("tbody tr:has-text('Ratings')").first
                     if ratings_row.count() > 0:
                         ratings_td = ratings_row.locator("td").last
                         if ratings_td.count() > 0:
-                            ratings = ratings_td.inner_text().strip().replace(",", "")
-            except:
+                            ratings = ratings_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy reviews từ Activity table
-            reviews = ""
+            reviews = None
             try:
                 if activity_table.count() > 0:
                     reviews_row = activity_table.locator("tbody tr:has-text('Reviews')").first
                     if reviews_row.count() > 0:
                         reviews_td = reviews_row.locator("td").last
                         if reviews_td.count() > 0:
-                            reviews = reviews_td.inner_text().strip().replace(",", "")
-            except:
+                            reviews = reviews_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # ========== Author Information ==========
             # Lấy number_of_stories từ Author Information table (Fictions)
-            number_of_stories = ""
+            number_of_stories = None
             try:
                 if author_info_table.count() > 0:
                     fictions_row = author_info_table.locator("tbody tr:has-text('Fictions:')").first
                     if fictions_row.count() > 0:
                         fictions_td = fictions_row.locator("td").last
                         if fictions_td.count() > 0:
-                            number_of_stories = fictions_td.inner_text().strip().replace(",", "")
-            except:
+                            number_of_stories = fictions_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_words từ Author Information table
-            total_words = ""
+            total_words = None
             try:
                 if author_info_table.count() > 0:
                     total_words_row = author_info_table.locator("tbody tr:has-text('Total Words:')").first
                     if total_words_row.count() > 0:
                         total_words_td = total_words_row.locator("td").last
                         if total_words_td.count() > 0:
-                            total_words = total_words_td.inner_text().strip().replace(",", "")
-            except:
+                            total_words = total_words_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_reviews_received từ Author Information table
-            total_reviews_received = ""
+            total_reviews_received = None
             try:
                 if author_info_table.count() > 0:
                     total_reviews_row = author_info_table.locator("tbody tr:has-text('Total Reviews Received:')").first
                     if total_reviews_row.count() > 0:
                         total_reviews_td = total_reviews_row.locator("td").last
                         if total_reviews_td.count() > 0:
-                            total_reviews_received = total_reviews_td.inner_text().strip().replace(",", "")
-            except:
+                            total_reviews_received = total_reviews_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_ratings_received từ Author Information table
-            total_ratings_received = ""
+            total_ratings_received = None
             try:
                 if author_info_table.count() > 0:
                     total_ratings_row = author_info_table.locator("tbody tr:has-text('Total Ratings Received:')").first
                     if total_ratings_row.count() > 0:
                         total_ratings_td = total_ratings_row.locator("td").last
                         if total_ratings_td.count() > 0:
-                            total_ratings_received = total_ratings_td.inner_text().strip().replace(",", "")
-            except:
+                            total_ratings_received = total_ratings_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy followers từ Author Information table
-            followers = ""
+            followers = None
             try:
                 if author_info_table.count() > 0:
                     followers_row = author_info_table.locator("tbody tr:has-text('Followers:')").first
                     if followers_row.count() > 0:
                         followers_td = followers_row.locator("td").last
                         if followers_td.count() > 0:
-                            followers = followers_td.inner_text().strip().replace(",", "")
-            except:
+                            followers = followers_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy favorites từ Author Information table
-            favorites = ""
+            favorites = None
             try:
                 if author_info_table.count() > 0:
                     favorites_row = author_info_table.locator("tbody tr:has-text('Favorites:')").first
                     if favorites_row.count() > 0:
                         favorites_td = favorites_row.locator("td").last
                         if favorites_td.count() > 0:
-                            favorites = favorites_td.inner_text().strip().replace(",", "")
-            except:
+                            favorites = favorites_td.inner_text().strip().replace(",", "") or None
+            except Exception as e:
                 pass
             
             # Lấy total_favorites_received (cùng với favorites từ Author Information)
             total_favorites_received = favorites
             
-            # Cập nhật user_data với các fields mới
+            # Cập nhật user_data với các fields mới (cập nhật cả None để ghi đè dữ liệu cũ)
             update_data = {}
-            if created_date:
-                update_data["created_date"] = created_date
-            if gender:
+            if created_date is not None:  # Cập nhật cả khi có giá trị hoặc None
+                update_data["createdDate"] = created_date
+            if gender is not None:  # Cập nhật cả khi có giá trị hoặc None
                 update_data["gender"] = gender
-            if location is not None:  # Có thể là empty string
+            if location is not None:  # Cập nhật cả khi có giá trị hoặc None
                 update_data["location"] = location
-            if bio is not None:  # Có thể là empty string
+            if bio is not None:  # Cập nhật cả khi có giá trị hoặc None
                 update_data["bio"] = bio
-            if followers:
+            if followers is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["followers"] = followers
-            if following:
+            if following is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["following"] = following
-            if comments:
+            if comments is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["comments"] = comments
-            if favorites:
+            if favorites is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["favorites"] = favorites
-            if ratings:
+            if ratings is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["ratings"] = ratings
-            if reviews:
+            if reviews is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
                 update_data["reviews"] = reviews
-            if number_of_stories:
-                update_data["number_of_stories"] = number_of_stories
-            if total_words:
-                update_data["total_words"] = total_words
-            if total_reviews_received:
-                update_data["total_reviews_received"] = total_reviews_received
-            if total_ratings_received:
-                update_data["total_ratings_received"] = total_ratings_received
-            if total_favorites_received:
-                update_data["total_favorites_received"] = total_favorites_received
+            if number_of_stories is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["numberOfStories"] = number_of_stories
+            if total_words is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalWords"] = total_words
+            if total_reviews_received is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalReviewsReceived"] = total_reviews_received
+            if total_ratings_received is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalRatingsReceived"] = total_ratings_received
+            if total_favorites_received is not None:  # Cập nhật cả khi có giá trị hoặc None (có thể là "0")
+                update_data["totalFavoritesReceived"] = total_favorites_received
             
             # Cập nhật vào MongoDB
             if update_data:
+                query = {"webUserId": web_user_id} if "webUserId" in existing_user else {"web_user_id": web_user_id}
                 self.mongo.mongo_collection_users.update_one(
-                    {"web_user_id": web_user_id},
+                    query,
                     {"$set": update_data}
                 )
-                safe_print(f"        ✅ Đã cập nhật profile cho user {web_user_id}")
+                # Debug: in ra các fields đã cập nhật
+                safe_print(f"        ✅ Đã cập nhật profile cho user {web_user_id}: {list(update_data.keys())}")
             
             return user_id
             
@@ -852,6 +881,14 @@ class UserHandler:
             # Navigate đến profile page
             worker_page.goto(user_url, timeout=60000)
             time.sleep(2)
+            
+            # Đợi page load xong - kiểm tra xem có table không
+            try:
+                # Đợi ít nhất một trong các table xuất hiện
+                worker_page.wait_for_selector("div.portlet table", timeout=10000)
+            except:
+                # Nếu không có table, có thể page chưa load hoặc profile không có thông tin
+                pass
             
             # Scrape profile data (chỉ extract data, không navigate)
             user_id = self.scrape_user_profile_data(worker_page, user_url, web_user_id)

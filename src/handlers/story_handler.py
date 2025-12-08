@@ -83,7 +83,7 @@ class StoryHandler:
             # Lấy story_id đã có từ DB
             existing_story = self.mongo.get_story_by_web_id(web_story_id)
             if existing_story:
-                story_id = existing_story.get("story_id")
+                story_id = existing_story.get("storyId")
             else:
                 story_id = generate_id()
             return None, story_id  # Không cần cào metadata nữa
@@ -120,7 +120,7 @@ class StoryHandler:
         tags = self.page.locator(".tags a").all_inner_texts()
         
         # Lấy description - giữ nguyên định dạng như trong UI
-        description = ""
+        description = None
         try:
             desc_container = self.page.locator(".description").first
             if desc_container.count() > 0:
@@ -128,14 +128,14 @@ class StoryHandler:
                 description = convert_html_to_formatted_text(html_content)
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lấy description: {e}")
-            description = ""
+            description = None
         
         # Lấy stats - Scores từ aria-label
-        overall_score = ""
-        style_score = ""
-        story_score = ""
-        grammar_score = ""
-        character_score = ""
+        overall_score = None
+        style_score = None
+        story_score = None
+        grammar_score = None
+        character_score = None
         
         try:
             stats_col = self.page.locator(".stats-content .col-sm-6").first
@@ -144,7 +144,7 @@ class StoryHandler:
                 
                 if len(score_spans) >= 1:
                     try:
-                        aria_label = score_spans[0].get_attribute("aria-label") or ""
+                        aria_label = score_spans[0].get_attribute("aria-label") or None
                         if aria_label:
                             numbers = re.findall(r'\d+\.?\d*', aria_label)
                             if numbers:
@@ -204,7 +204,7 @@ class StoryHandler:
         pages = stats_values_locator.nth(5).inner_text()
         
         # Lấy total chapters
-        total_chapters = ""
+        total_chapters = None
         try:
             chapters_label = self.page.locator(".portlet-title .actions span.label.label-default.pull-right").first
             if chapters_label.count() > 0:
@@ -217,53 +217,53 @@ class StoryHandler:
         
         # Tạo story_data (chỉ các fields cơ bản)
         story_data = {
-            "story_id": story_id,
-            "web_story_id": web_story_id,
-            "story_name": title,
-            "story_url": story_url,
-            "cover_image": local_img_path,
+            "storyId": story_id,
+            "webStoryId": web_story_id,
+            "storyName": title,
+            "storyUrl": story_url,
+            "coverImage": local_img_path,
             "category": category,
             "status": status,
             "genres": tags,
             "tags": [], # list tags để trống
             "description": description,
-            "user_id": user_id,  # FK to users
-            "total_chapters": total_chapters,  # Đảm bảo luôn có field
+            "userId": user_id,  # FK to users
+            "totalChapters": total_chapters,  # Đảm bảo luôn có field
         }
         
         # Tạo story_info_data (các fields thống kê/metrics)
-        info_id = generate_id()  # Tạo info_id mới
-        website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else ""
+        info_id = generate_id()  # Tạo infoId mới
+        website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else None
         story_info_data = {
-            "info_id": info_id,
-            "story_id": story_id,  # FK to stories
-            "website_id": website_id,  # FK to websites
-            "total_views": total_views,
-            "average_views": average_views,
+            "infoId": info_id,
+            "storyId": story_id,  # FK to stories
+            "websiteId": website_id,  # FK to websites
+            "totalViews": total_views,
+            "averageViews": average_views,
             "followers": followers,
             "favorites": favorites,
-            "page_views": pages,
-            "overall_score": overall_score,
-            "style_score": style_score,
-            "story_score": story_score,
-            "grammar_score": grammar_score,
-            "character_score": character_score,
-            "voted": "",  # Tổng vote của chap - để trống
-            "freeChapter": "",  # Để trống
-            "time": "",  # Thời gian đọc xong bộ - để trống
-            "release_rate": "",  # Để trống
-            "number_of_reader": "",  # Để trống
-            "rating_total": ratings,  # rating total
-            "total_views_chapters": "",  # Để trống
-            "total_word": "",  # Để trống
-            "average_words": "",  # Để trống
-            "last_updated": "",  # Để trống
-            "total_reviews": "",  # Để trống
-            "user_reading": "",  # Để trống
-            "user_plan_to_read": "",  # Để trống
-            "user_completed": "",  # Để trống
-            "user_paused": "",  # Để trống
-            "user_dropped": "",  # Để trống
+            "pageViews": pages,
+            "overallScore": overall_score,
+            "styleScore": style_score,
+            "storyScore": story_score,
+            "grammarScore": grammar_score,
+            "characterScore": character_score,
+            "voted": None,  # Tổng vote của chap - để trống
+            "freeChapter": None,  # Để trống
+            "timeToFinish": None,  # Thời gian đọc xong bộ - để trống
+            "releaseRate": None,  # Để trống
+            "numberOfReader": None,  # Để trống
+            "ratingTotal": ratings,  # rating total
+            "totalViewsChapters": None,  # Để trống
+            "totalWord": None,  # Để trống
+            "averageWords": None,  # Để trống
+            "lastUpdated": None,  # Để trống
+            "totalReviews": None,  # Để trống
+            "userReading": None,  # Để trống
+            "userPlanToRead": None,  # Để trống
+            "userCompleted": None,  # Để trống
+            "userPaused": None,  # Để trống
+            "userDropped": None,  # Để trống
         }
         
         # Lưu story và story_info ngay khi cào xong metadata
@@ -461,7 +461,7 @@ class StoryHandler:
                         try:
                             next_button = pagination.locator(selector).last
                             if next_button.count() > 0:
-                                href = next_button.get_attribute("href") or ""
+                                href = next_button.get_attribute("href") or None
                                 if "page" in href.lower() or "next" in href.lower() or not href:
                                     break
                         except:
@@ -505,11 +505,11 @@ class StoryHandler:
                             else:
                                 full_url = config.BASE_URL + "/" + url
                             
-                            published_time = ""
+                            published_time = None
                             try:
                                 time_elem = row.locator("time[datetime]").first
                                 if time_elem.count() > 0:
-                                    published_time = time_elem.get_attribute("datetime") or ""
+                                    published_time = time_elem.get_attribute("datetime") or None
                             except:
                                 pass
                             

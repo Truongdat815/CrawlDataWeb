@@ -124,7 +124,7 @@ class RoyalRoadScraper(BaseHandler):
             # Lấy story_id từ DB
             existing_story = self.mongo.get_story_by_web_id(web_story_id)
             if existing_story:
-                story_id = existing_story.get("story_id")
+                story_id = existing_story.get("storyId")
             else:
                 from src.utils import generate_id
                 story_id = generate_id()
@@ -206,18 +206,40 @@ class RoyalRoadScraper(BaseHandler):
         reviews = self.review_handler.scrape_reviews(story_url, story_id)
         safe_print(f"✅ Đã lấy được {len(reviews)} reviews")
         
-        # 6. Scrape profile của các users chưa có đầy đủ thông tin (song song với ThreadPoolExecutor)
-        safe_print("\n📋 Đang scrape profile của các users chưa có đầy đủ thông tin...")
-        users_to_scrape = list(self.mongo.mongo_collection_users.find({
-            "$or": [
-                {"created_date": ""},
-                {"followers": ""}
-            ],
-            "user_url": {"$ne": ""}
-        }))
+        # 6. Scrape profile của các users từ comments chưa có đầy đủ thông tin (song song với ThreadPoolExecutor)
+        safe_print("\n📋 Đang scrape profile của các users từ comments chưa có đầy đủ thông tin...")
+        
+        # Lấy danh sách userId từ comments collection
+        user_ids_from_comments = self.mongo.mongo_collection_comments.distinct("userId")
+        safe_print(f"   Tìm thấy {len(user_ids_from_comments)} users từ comments")
+        
+        users_to_scrape = []
+        if user_ids_from_comments:
+            # Chỉ lấy users từ comments chưa có đầy đủ thông tin
+            users_to_scrape = list(self.mongo.mongo_collection_users.find({
+                "$and": [
+                    {"userId": {"$in": user_ids_from_comments}},
+                    {
+                        "$or": [
+                            {"createdDate": None},
+                            {"createdDate": {"$exists": False}},
+                            {"followers": None},
+                            {"followers": {"$exists": False}}
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"userUrl": {"$ne": None, "$ne": ""}},
+                            {"userUrl": {"$exists": True}}
+                        ]
+                    }
+                ]
+            }))
+            safe_print(f"   Tìm thấy {len(users_to_scrape)} users từ comments cần scrape profile")
+        else:
+            safe_print("   ⏭️  Không có users nào từ comments")
         
         if users_to_scrape:
-            safe_print(f"   Tìm thấy {len(users_to_scrape)} users cần scrape profile")
             safe_print(f"   🚀 Bắt đầu scrape với {self.max_workers} thread...")
             
             # Dictionary để map future -> user info
@@ -227,8 +249,8 @@ class RoyalRoadScraper(BaseHandler):
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 # Submit tất cả users cần scrape
                 for index, user in enumerate(users_to_scrape):
-                    user_url = user.get("user_url")
-                    web_user_id = user.get("web_user_id")
+                    user_url = user.get("userUrl")
+                    web_user_id = user.get("webUserId")
                     
                     if user_url:
                         future = executor.submit(

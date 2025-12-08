@@ -28,6 +28,7 @@ class MongoHandler:
         self.mongo_collection_users = None
         self.mongo_collection_scores = None
         self.mongo_collection_chapter_contents = None
+        self.mongo_collection_rankings = None
         self.royal_road_website_id = None  # Lưu website_id của Royal Road
         
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
@@ -36,14 +37,15 @@ class MongoHandler:
                 self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
                 self.mongo_collection_websites = self.mongo_db["websites"]
                 self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
-                self.mongo_collection_story_info = self.mongo_db["story_info"]
+                self.mongo_collection_story_info = self.mongo_db["storyInfo"]
                 self.mongo_collection_chapters = self.mongo_db["chapters"]
                 self.mongo_collection_comments = self.mongo_db["comments"]
                 self.mongo_collection_reviews = self.mongo_db["reviews"]
                 self.mongo_collection_users = self.mongo_db["users"]
                 self.mongo_collection_scores = self.mongo_db["scores"]
-                self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
-                safe_print("✅ Đã kết nối MongoDB với 9 collections")
+                self.mongo_collection_chapter_contents = self.mongo_db["chapterContents"]
+                self.mongo_collection_rankings = self.mongo_db["rankings"]
+                safe_print("✅ Đã kết nối MongoDB với 10 collections")
                 
                 # Khởi tạo hoặc lấy website "Royal Road"
                 self.royal_road_website_id = self.init_or_get_website("Royal Road")
@@ -61,51 +63,51 @@ class MongoHandler:
     # ========== Check methods ==========
     
     def is_story_scraped(self, web_story_id):
-        """Kiểm tra story đã được cào chưa (check theo web_story_id)"""
+        """Kiểm tra story đã được cào chưa (check theo webStoryId)"""
         if not web_story_id or not self.mongo_collection_stories:
             return False
         try:
-            existing = self.mongo_collection_stories.find_one({"web_story_id": web_story_id})
+            existing = self.mongo_collection_stories.find_one({"webStoryId": web_story_id})
             return existing is not None
         except:
             return False
     
     def is_chapter_scraped(self, web_chapter_id):
-        """Kiểm tra chapter đã được cào chưa (check theo web_chapter_id)"""
+        """Kiểm tra chapter đã được cào chưa (check theo webChapterId)"""
         if not web_chapter_id or not self.mongo_collection_chapters:
             return False
         try:
-            existing = self.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
+            existing = self.mongo_collection_chapters.find_one({"webChapterId": web_chapter_id})
             return existing is not None
         except:
             return False
     
     def is_review_scraped(self, web_review_id):
-        """Kiểm tra review đã được cào chưa (check theo web_review_id)"""
+        """Kiểm tra review đã được cào chưa (check theo webReviewId)"""
         if not web_review_id or not self.mongo_collection_reviews:
             return False
         try:
-            existing = self.mongo_collection_reviews.find_one({"web_review_id": web_review_id})
+            existing = self.mongo_collection_reviews.find_one({"webReviewId": web_review_id})
             return existing is not None
         except:
             return False
     
     def is_comment_scraped(self, web_comment_id):
-        """Kiểm tra comment đã được cào chưa (check theo web_comment_id)"""
+        """Kiểm tra comment đã được cào chưa (check theo webCommentId)"""
         if not web_comment_id or not self.mongo_collection_comments:
             return False
         try:
-            existing = self.mongo_collection_comments.find_one({"web_comment_id": web_comment_id})
+            existing = self.mongo_collection_comments.find_one({"webCommentId": web_comment_id})
             return existing is not None
         except:
             return False
     
     def is_chapter_content_scraped(self, chapter_id):
-        """Kiểm tra chapter content đã được cào chưa (check theo chapter_id)"""
+        """Kiểm tra chapter content đã được cào chưa (check theo chapterId)"""
         if not chapter_id or not self.mongo_collection_chapter_contents:
             return False
         try:
-            existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
+            existing = self.mongo_collection_chapter_contents.find_one({"chapterId": chapter_id})
             return existing is not None
         except:
             return False
@@ -114,12 +116,12 @@ class MongoHandler:
     
     def init_or_get_website(self, website_name):
         """
-        Khởi tạo hoặc lấy website_id của website
+        Khởi tạo hoặc lấy websiteId của website
         Nếu chưa có thì tạo mới, nếu có rồi thì lấy id
         Args:
             website_name: Tên website (ví dụ: "Royal Road")
         Returns:
-            website_id: ID của website (rr_{uuid})
+            websiteId: ID của website (rr_{uuid})
         """
         from src.utils import generate_id
         
@@ -127,19 +129,22 @@ class MongoHandler:
             return None
         
         try:
-            # Tìm website theo tên
-            existing = self.mongo_collection_websites.find_one({"website_name": website_name})
+            # Tìm website theo tên (hỗ trợ cả format cũ và mới)
+            existing = self.mongo_collection_websites.find_one({"websiteName": website_name})
+            if not existing:
+                # Fallback: tìm theo format cũ
+                existing = self.mongo_collection_websites.find_one({"website_name": website_name})
             
             if existing:
-                website_id = existing.get("website_id")
+                website_id = existing.get("websiteId") or existing.get("website_id")
                 safe_print(f"✅ Đã tìm thấy website '{website_name}' với ID: {website_id}")
                 return website_id
             else:
                 # Tạo website mới
                 website_id = generate_id()
                 website_data = {
-                    "website_id": website_id,  # Schema: website_id (khóa chính, format rr_{uuid})
-                    "website_name": website_name  # Schema: website_name
+                    "websiteId": website_id,  # Schema: websiteId (khóa chính, format rr_{uuid})
+                    "websiteName": website_name  # Schema: websiteName
                 }
                 self.mongo_collection_websites.insert_one(website_data)
                 safe_print(f"✅ Đã tạo website mới '{website_name}' với ID: {website_id}")
@@ -156,10 +161,10 @@ class MongoHandler:
             return
         
         try:
-            existing = self.mongo_collection_stories.find_one({"web_story_id": story_data.get("web_story_id")})
+            existing = self.mongo_collection_stories.find_one({"webStoryId": story_data.get("webStoryId")})
             if existing:
                 self.mongo_collection_stories.update_one(
-                    {"web_story_id": story_data.get("web_story_id")},
+                    {"webStoryId": story_data.get("webStoryId")},
                     {"$set": story_data}
                 )
             else:
@@ -168,38 +173,38 @@ class MongoHandler:
             safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
     
     def save_story_info(self, story_info_data):
-        """Lưu story_info vào MongoDB (thống kê và metrics của story)"""
+        """Lưu storyInfo vào MongoDB (thống kê và metrics của story)"""
         if not story_info_data or not self.mongo_collection_story_info:
             return
         
         try:
-            # Tìm theo story_id hoặc website_id
-            story_id = story_info_data.get("story_id")
-            website_id = story_info_data.get("website_id")
+            # Tìm theo storyId hoặc websiteId
+            story_id = story_info_data.get("storyId")
+            website_id = story_info_data.get("websiteId")
             
             existing = None
             if story_id:
-                existing = self.mongo_collection_story_info.find_one({"story_id": story_id})
+                existing = self.mongo_collection_story_info.find_one({"storyId": story_id})
             elif website_id:
-                existing = self.mongo_collection_story_info.find_one({"website_id": website_id})
+                existing = self.mongo_collection_story_info.find_one({"websiteId": website_id})
             
             if existing:
                 # Update existing
                 if story_id:
                     self.mongo_collection_story_info.update_one(
-                        {"story_id": story_id},
+                        {"storyId": story_id},
                         {"$set": story_info_data}
                     )
                 elif website_id:
                     self.mongo_collection_story_info.update_one(
-                        {"website_id": website_id},
+                        {"websiteId": website_id},
                         {"$set": story_info_data}
                     )
             else:
                 # Insert new
                 self.mongo_collection_story_info.insert_one(story_info_data)
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lưu story_info vào MongoDB: {e}")
+            safe_print(f"⚠️ Lỗi khi lưu storyInfo vào MongoDB: {e}")
     
     def save_chapter(self, chapter_data):
         """Lưu chapter vào MongoDB ngay khi cào xong chapter và comments"""
@@ -207,16 +212,16 @@ class MongoHandler:
             return
         
         try:
-            existing = self.mongo_collection_chapters.find_one({"web_chapter_id": chapter_data.get("web_chapter_id")})
+            existing = self.mongo_collection_chapters.find_one({"webChapterId": chapter_data.get("webChapterId")})
             if existing:
                 self.mongo_collection_chapters.update_one(
-                    {"web_chapter_id": chapter_data.get("web_chapter_id")},
+                    {"webChapterId": chapter_data.get("webChapterId")},
                     {"$set": chapter_data}
                 )
-                safe_print(f"      🔄 Đã cập nhật chapter {chapter_data.get('web_chapter_id')} trong MongoDB")
+                safe_print(f"      🔄 Đã cập nhật chapter {chapter_data.get('webChapterId')} trong MongoDB")
             else:
                 self.mongo_collection_chapters.insert_one(chapter_data)
-                safe_print(f"      ✅ Đã lưu chapter {chapter_data.get('web_chapter_id')} vào MongoDB")
+                safe_print(f"      ✅ Đã lưu chapter {chapter_data.get('webChapterId')} vào MongoDB")
         except Exception as e:
             safe_print(f"      ⚠️ Lỗi khi lưu chapter vào MongoDB: {e}")
     
@@ -226,10 +231,10 @@ class MongoHandler:
             return
         
         try:
-            existing = self.mongo_collection_comments.find_one({"web_comment_id": comment_data.get("web_comment_id")})
+            existing = self.mongo_collection_comments.find_one({"webCommentId": comment_data.get("webCommentId")})
             if existing:
                 self.mongo_collection_comments.update_one(
-                    {"web_comment_id": comment_data.get("web_comment_id")},
+                    {"webCommentId": comment_data.get("webCommentId")},
                     {"$set": comment_data}
                 )
             else:
@@ -243,10 +248,10 @@ class MongoHandler:
             return
         
         try:
-            existing = self.mongo_collection_reviews.find_one({"web_review_id": review_data.get("web_review_id")})
+            existing = self.mongo_collection_reviews.find_one({"webReviewId": review_data.get("webReviewId")})
             if existing:
                 self.mongo_collection_reviews.update_one(
-                    {"web_review_id": review_data.get("web_review_id")},
+                    {"webReviewId": review_data.get("webReviewId")},
                     {"$set": review_data}
                 )
             else:
@@ -288,7 +293,7 @@ class MongoHandler:
             safe_print(f"        ⚠️ Lỗi khi lưu user_data vào MongoDB: {e}")
             return None
     
-    def save_score(self, score_id, overall_score="", style_score="", story_score="", grammar_score="", character_score="", review_id=None):
+    def save_score(self, score_id, overall_score=None, style_score=None, story_score=None, grammar_score=None, character_score=None, review_id=None):
         """
         Lưu tất cả 5 scores vào MongoDB trong 1 document duy nhất (chỉ cho review)
         
@@ -306,40 +311,40 @@ class MongoHandler:
         
         try:
             score_data = {
-                "score_id": score_id,  # Schema: id (khóa chính, format rr_{uuid})
-                "overall_score": overall_score,  # Schema: overall score
-                "style_score": style_score,  # Schema: style score
-                "story_score": story_score,  # Schema: story score
-                "grammar_score": grammar_score,  # Schema: grammar score
-                "character_score": character_score  # Schema: character score
+                "scoreId": score_id,  # Schema: scoreId (khóa chính, format rr_{uuid})
+                "overallScore": overall_score,  # Schema: overallScore
+                "styleScore": style_score,  # Schema: styleScore
+                "storyScore": story_score,  # Schema: storyScore
+                "grammarScore": grammar_score,  # Schema: grammarScore
+                "characterScore": character_score  # Schema: characterScore
             }
             
-            # Thêm FK review_id
+            # Thêm FK reviewId
             if review_id:
-                score_data["review_id"] = review_id  # FK to reviews (rr_{uuid})
+                score_data["reviewId"] = review_id  # FK to reviews (rr_{uuid})
             
-            # So sánh theo web_review_id: Tìm review theo review_id, lấy web_review_id, rồi tìm score
+            # So sánh theo webReviewId: Tìm review theo reviewId, lấy webReviewId, rồi tìm score
             web_review_id = None
             if review_id and self.mongo_collection_reviews:
                 try:
-                    review = self.mongo_collection_reviews.find_one({"id": review_id})
+                    review = self.mongo_collection_reviews.find_one({"reviewId": review_id})
                     if review:
-                        web_review_id = review.get("web_review_id")
+                        web_review_id = review.get("webReviewId")
                 except:
                     pass
             
-            # Nếu có web_review_id, tìm review theo web_review_id rồi lấy review_id để so sánh score
+            # Nếu có web_review_id, tìm review theo webReviewId rồi lấy reviewId để so sánh score
             if web_review_id and self.mongo_collection_reviews:
                 try:
-                    review_by_web_id = self.mongo_collection_reviews.find_one({"web_review_id": web_review_id})
+                    review_by_web_id = self.mongo_collection_reviews.find_one({"webReviewId": web_review_id})
                     if review_by_web_id:
-                        existing_review_id = review_by_web_id.get("review_id")
-                        # Tìm score theo review_id
-                        existing = self.mongo_collection_scores.find_one({"review_id": existing_review_id})
+                        existing_review_id = review_by_web_id.get("reviewId")
+                        # Tìm score theo reviewId
+                        existing = self.mongo_collection_scores.find_one({"reviewId": existing_review_id})
                         if existing:
                             # Update nếu đã có
                             self.mongo_collection_scores.update_one(
-                                {"review_id": existing_review_id},
+                                {"reviewId": existing_review_id},
                                 {"$set": score_data}
                             )
                         else:
@@ -349,21 +354,21 @@ class MongoHandler:
                         # Insert mới nếu không tìm thấy review
                         self.mongo_collection_scores.insert_one(score_data)
                 except:
-                    # Fallback: so sánh theo score_id nếu lỗi
-                    existing = self.mongo_collection_scores.find_one({"id": score_id})
+                    # Fallback: so sánh theo scoreId nếu lỗi
+                    existing = self.mongo_collection_scores.find_one({"scoreId": score_id})
                     if existing:
                         self.mongo_collection_scores.update_one(
-                            {"score_id": score_id},
+                            {"scoreId": score_id},
                             {"$set": score_data}
                         )
                     else:
                         self.mongo_collection_scores.insert_one(score_data)
             else:
-                # Fallback: so sánh theo score_id nếu không có web_review_id
-                existing = self.mongo_collection_scores.find_one({"id": score_id})
+                # Fallback: so sánh theo scoreId nếu không có web_review_id
+                existing = self.mongo_collection_scores.find_one({"scoreId": score_id})
                 if existing:
                     self.mongo_collection_scores.update_one(
-                        {"score_id": score_id},
+                        {"scoreId": score_id},
                         {"$set": score_data}
                     )
                 else:
@@ -373,7 +378,7 @@ class MongoHandler:
     
     def save_chapter_content(self, content_id, content, chapter_id):
         """
-        Lưu chapter content vào MongoDB collection chapter_contents
+        Lưu chapter content vào MongoDB collection chapterContents
         Args:
             content_id: ID của content (khóa chính tự gen - rr_{uuid})
             content: Nội dung chapter
@@ -384,33 +389,33 @@ class MongoHandler:
         
         try:
             content_data = {
-                "content_id": content_id,  # Schema: id (khóa chính, format rr_{uuid}, tự gen)
+                "contentId": content_id,  # Schema: contentId (khóa chính, format rr_{uuid}, tự gen)
                 "content": content,  # Schema: content
-                "chapter_id": chapter_id  # Schema: chapter id (FK - rr_{uuid})
+                "chapterId": chapter_id  # Schema: chapterId (FK - rr_{uuid})
             }
             
-            # So sánh theo web_chapter_id: Tìm chapter theo chapter_id, lấy web_chapter_id, rồi tìm content
+            # So sánh theo webChapterId: Tìm chapter theo chapterId, lấy webChapterId, rồi tìm content
             web_chapter_id = None
             if chapter_id and self.mongo_collection_chapters:
                 try:
-                    chapter = self.mongo_collection_chapters.find_one({"id": chapter_id})
+                    chapter = self.mongo_collection_chapters.find_one({"chapterId": chapter_id})
                     if chapter:
-                        web_chapter_id = chapter.get("web_chapter_id")
+                        web_chapter_id = chapter.get("webChapterId")
                 except:
                     pass
             
-            # Nếu có web_chapter_id, tìm chapter theo web_chapter_id rồi lấy chapter_id để so sánh
+            # Nếu có web_chapter_id, tìm chapter theo webChapterId rồi lấy chapterId để so sánh
             if web_chapter_id and self.mongo_collection_chapters:
                 try:
-                    chapter_by_web_id = self.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
+                    chapter_by_web_id = self.mongo_collection_chapters.find_one({"webChapterId": web_chapter_id})
                     if chapter_by_web_id:
-                        existing_chapter_id = chapter_by_web_id.get("chapter_id")
-                        # Tìm content theo chapter_id
-                        existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": existing_chapter_id})
+                        existing_chapter_id = chapter_by_web_id.get("chapterId")
+                        # Tìm content theo chapterId
+                        existing = self.mongo_collection_chapter_contents.find_one({"chapterId": existing_chapter_id})
                         if existing:
                             # Update nếu đã có
                             self.mongo_collection_chapter_contents.update_one(
-                                {"chapter_id": existing_chapter_id},
+                                {"chapterId": existing_chapter_id},
                                 {"$set": content_data}
                             )
                         else:
@@ -420,21 +425,21 @@ class MongoHandler:
                         # Insert mới nếu không tìm thấy chapter
                         self.mongo_collection_chapter_contents.insert_one(content_data)
                 except:
-                    # Fallback: so sánh theo chapter_id nếu lỗi
-                    existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
+                    # Fallback: so sánh theo chapterId nếu lỗi
+                    existing = self.mongo_collection_chapter_contents.find_one({"chapterId": chapter_id})
                     if existing:
                         self.mongo_collection_chapter_contents.update_one(
-                            {"chapter_id": chapter_id},
+                            {"chapterId": chapter_id},
                             {"$set": content_data}
                         )
                     else:
                         self.mongo_collection_chapter_contents.insert_one(content_data)
             else:
-                # Fallback: so sánh theo chapter_id nếu không có web_chapter_id
-                existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
+                # Fallback: so sánh theo chapterId nếu không có web_chapter_id
+                existing = self.mongo_collection_chapter_contents.find_one({"chapterId": chapter_id})
                 if existing:
                     self.mongo_collection_chapter_contents.update_one(
-                        {"chapter_id": chapter_id},
+                        {"chapterId": chapter_id},
                         {"$set": content_data}
                     )
                 else:
@@ -445,29 +450,29 @@ class MongoHandler:
     # ========== Get methods ==========
     
     def get_story_by_web_id(self, web_story_id):
-        """Lấy story theo web_story_id"""
+        """Lấy story theo webStoryId"""
         if not web_story_id or not self.mongo_collection_stories:
             return None
         try:
-            return self.mongo_collection_stories.find_one({"web_story_id": web_story_id})
+            return self.mongo_collection_stories.find_one({"webStoryId": web_story_id})
         except:
             return None
     
     def get_chapter_by_web_id(self, web_chapter_id):
-        """Lấy chapter theo web_chapter_id"""
+        """Lấy chapter theo webChapterId"""
         if not web_chapter_id or not self.mongo_collection_chapters:
             return None
         try:
-            return self.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
+            return self.mongo_collection_chapters.find_one({"webChapterId": web_chapter_id})
         except:
             return None
     
     def get_comment_by_web_id(self, web_comment_id):
-        """Lấy comment theo web_comment_id"""
+        """Lấy comment theo webCommentId"""
         if not web_comment_id or not self.mongo_collection_comments:
             return None
         try:
-            return self.mongo_collection_comments.find_one({"web_comment_id": web_comment_id})
+            return self.mongo_collection_comments.find_one({"webCommentId": web_comment_id})
         except:
             return None
 

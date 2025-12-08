@@ -26,14 +26,18 @@ MONGODB_USERNAME = "hoaithao"
 MONGODB_PASSWORD = "Hoaithao5201314"
 CLUSTER_URL = "royalroad.2aq2mp6.mongodb.net"
 
-MONGODB_DB_NAME = "RoyalRoadData"
+MONGODB_DB_NAME = "my_database"
 MONGODB_COLLECTION_STORIES = "stories"
 
 # Connection string đầy đủ với các options chuẩn
 # Dùng password trực tiếp, KHÔNG encode
+# MONGODB_URI = (
+#     f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
+#     f"@{CLUSTER_URL}/?rappName=RoyalRoad"
+# )
+
 MONGODB_URI = (
-    f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
-    f"@{CLUSTER_URL}/?rappName=RoyalRoad"
+    "mongodb://user:56915001@103.90.224.232:27017/my_database"
 )
 
 # Cho phép override bằng environment variable (ưu tiên)

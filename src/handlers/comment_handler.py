@@ -364,8 +364,8 @@ class CommentHandler:
             if media_elem.count() == 0:
                 return []
             
-            web_comment_id = media_elem.get_attribute("id") or ""
-            if web_comment_id.startswith("comment-container-"):
+            web_comment_id = media_elem.get_attribute("id") or None
+            if web_comment_id and web_comment_id.startswith("comment-container-"):
                 web_comment_id = web_comment_id.replace("comment-container-", "")
             
             if web_comment_id and self.mongo.is_comment_scraped(web_comment_id):
@@ -374,7 +374,7 @@ class CommentHandler:
                     if subcomments_list.count() > 0:
                         reply_comments = subcomments_list.locator("div.comment").all()
                         existing_comment = self.mongo.get_comment_by_web_id(web_comment_id)
-                        existing_comment_id = existing_comment.get("comment_id") if existing_comment else None
+                        existing_comment_id = existing_comment.get("commentId") if existing_comment else None
                         for reply_elem in reply_comments:
                             reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=existing_comment_id, parent_user_id=None, page=page)
                             if reply_list:
@@ -392,7 +392,7 @@ class CommentHandler:
                 # Lưu user cơ bản trước (không scrape profile ngay - sẽ scrape sau khi xong tất cả comments)
                 user_id = self.user_handler.save_user(web_user_id, username, user_url, page=None)
             
-            comment_text = ""
+            comment_text = None
             try:
                 media_body = media_elem.locator(".media-body").first
                 if media_body.count() > 0:
@@ -407,55 +407,61 @@ class CommentHandler:
                                     text_parts.append(para_text)
                             except:
                                 continue
-                        comment_text = "\n\n".join(text_parts)
+                        if text_parts:
+                            comment_text = "\n\n".join(text_parts)
                     else:
                         full_text = media_body.inner_text().strip()
                         
-                        if username and full_text.startswith(username):
-                            comment_text = full_text[len(username):].strip()
-                        else:
-                            comment_text = full_text
-                        
-                        lines = comment_text.split('\n')
-                        cleaned_lines = []
-                        for line in lines:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            if any(x in line.lower() for x in ['years ago', 'months ago', 'days ago', 'hours ago', 
-                                                                'rep (', 'reply', 'report']):
-                                continue
-                            cleaned_lines.append(line)
-                        comment_text = '\n'.join(cleaned_lines).strip()
+                        if full_text:
+                            if username and full_text.startswith(username):
+                                comment_text = full_text[len(username):].strip()
+                            else:
+                                comment_text = full_text
+                            
+                            if comment_text:
+                                lines = comment_text.split('\n')
+                                cleaned_lines = []
+                                for line in lines:
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    if any(x in line.lower() for x in ['years ago', 'months ago', 'days ago', 'hours ago', 
+                                                                        'rep (', 'reply', 'report']):
+                                        continue
+                                    cleaned_lines.append(line)
+                                if cleaned_lines:
+                                    comment_text = '\n'.join(cleaned_lines).strip()
+                                else:
+                                    comment_text = None
             except Exception as e:
-                comment_text = ""
+                comment_text = None
             
-            timestamp = ""
+            timestamp = None
             try:
                 time_elem = media_elem.locator("time, .timestamp, [class*='time'], [class*='date']").first
                 if time_elem.count() > 0:
-                    timestamp = time_elem.get_attribute("datetime") or time_elem.inner_text().strip()
+                    timestamp = time_elem.get_attribute("datetime") or (time_elem.inner_text().strip() if time_elem.inner_text().strip() else None)
             except:
                 pass
             
             reply_to_user_id = parent_user_id if parent_user_id else None
-            is_root = (parent_id is None or parent_id == "")
+            is_root = (parent_id is None)
             
             # lấy website_id của Royal Road
-            website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else ""
+            website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else None
 
             comment_data = {
-                "comment_id": comment_id,
-                "web_comment_id": web_comment_id,
-                "comment_text": comment_text,
+                "commentId": comment_id,
+                "webCommentId": web_comment_id,
+                "commentText": comment_text,
                 "time": timestamp,
-                "chapter_id": chapter_id,
-                "user_id": user_id,
-                "reply_to_user_id": reply_to_user_id if reply_to_user_id else None,
-                "parent_id": parent_id if parent_id else None,
-                "is_root": is_root,
-                "react": "",
-                "website_id": website_id
+                "chapterId": chapter_id,
+                "userId": user_id,
+                "replyToUserId": reply_to_user_id if reply_to_user_id else None,
+                "parentId": parent_id if parent_id else None,
+                "isRoot": is_root,
+                "react": None,
+                "websiteId": website_id
             }
             
             self.mongo.save_comment(comment_data)

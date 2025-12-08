@@ -74,9 +74,9 @@ class ReviewHandler:
             
             for review_elem in review_elements:
                 try:
-                    review_id_attr = review_elem.get_attribute("id") or ""
-                    web_review_id = ""
-                    if review_id_attr.startswith("review-"):
+                    review_id_attr = review_elem.get_attribute("id") or None
+                    web_review_id = None
+                    if review_id_attr and review_id_attr.startswith("review-"):
                         web_review_id = review_id_attr.replace("review-", "")
                     
                     if web_review_id and self.mongo.is_review_scraped(web_review_id):
@@ -103,17 +103,17 @@ class ReviewHandler:
         Schema: review id, title, time, content, user id (FK), chapter id (FK), story id (FK), score id (FK)
         """
         try:
-            web_review_id = ""
+            web_review_id = None
             try:
-                review_id_attr = review_elem.get_attribute("id") or ""
-                if review_id_attr.startswith("review-"):
+                review_id_attr = review_elem.get_attribute("id") or None
+                if review_id_attr and review_id_attr.startswith("review-"):
                     web_review_id = review_id_attr.replace("review-", "")
             except:
                 pass
             
             review_id = generate_id()
             
-            title = ""
+            title = None
             try:
                 title_elem = review_elem.locator("h3, h4, .review-title, [class*='title']").first
                 if title_elem.count() > 0:
@@ -129,7 +129,7 @@ class ReviewHandler:
                 page=self.page
             )
             
-            web_chapter_id = ""
+            web_chapter_id = None
             try:
                 # Lấy chapter link từ review header - theo HTML mẫu: <a href="/fiction/chapter/371224">100. Sacrifice</a>
                 chapter_elem = review_elem.locator("h5.bold.font-red-sunglo a[href*='/chapter/']").first
@@ -138,8 +138,8 @@ class ReviewHandler:
                     chapter_elem = review_elem.locator("a[href*='/chapter/'], .chapter-link, [class*='chapter']").first
                 
                 if chapter_elem.count() > 0:
-                    href = chapter_elem.get_attribute("href") or ""
-                    if "/chapter/" in href:
+                    href = chapter_elem.get_attribute("href") or None
+                    if href and "/chapter/" in href:
                         web_chapter_id = href.split("/chapter/")[1].split("/")[0]
             except:
                 pass
@@ -148,10 +148,10 @@ class ReviewHandler:
             if web_chapter_id:
                 existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
                 if existing_chapter:
-                    # Sửa: Dùng "chapter_id" thay vì "id" (đây là khóa chính trong DB)
-                    chapter_id = existing_chapter.get("chapter_id")
+                    # Sửa: Dùng "chapterId" thay vì "id" (đây là khóa chính trong DB)
+                    chapter_id = existing_chapter.get("chapterId")
             
-            time_str = ""
+            time_str = None
             try:
                 time_elem = review_elem.locator("time, .timestamp, [class*='time'], [class*='date']").first
                 if time_elem.count() > 0:
@@ -159,7 +159,7 @@ class ReviewHandler:
             except:
                 pass
             
-            content = ""
+            content = None
             try:
                 review_inner = review_elem.locator(".review-inner").first
                 if review_inner.count() > 0:
@@ -183,7 +183,7 @@ class ReviewHandler:
                     if overall_container.count() > 0:
                         overall_score_elem = overall_container.locator("div[aria-label*='stars']").first
                         if overall_score_elem.count() > 0:
-                            aria_label = overall_score_elem.get_attribute("aria-label") or ""
+                            aria_label = overall_score_elem.get_attribute("aria-label") or None
                             if aria_label:
                                 numbers = re.findall(r'\d+\.?\d*', aria_label)
                                 if numbers:
@@ -197,25 +197,26 @@ class ReviewHandler:
                         try:
                             label_elem = advanced_score.locator("div[aria-label*='Score']").first
                             if label_elem.count() > 0:
-                                label_text = label_elem.get_attribute("aria-label") or ""
-                                label_lower = label_text.lower()
-                                
-                                value_elem = advanced_score.locator("div[aria-label*='stars']").first
-                                if value_elem.count() > 0:
-                                    aria_label = value_elem.get_attribute("aria-label") or ""
-                                    if aria_label:
-                                        numbers = re.findall(r'\d+\.?\d*', aria_label)
-                                        if numbers:
-                                            score_value = numbers[0]
-                                            
-                                            if "style" in label_lower:
-                                                scores["style_score"] = score_value
-                                            elif "story" in label_lower:
-                                                scores["story_score"] = score_value
-                                            elif "grammar" in label_lower:
-                                                scores["grammar_score"] = score_value
-                                            elif "character" in label_lower:
-                                                scores["character_score"] = score_value
+                                label_text = label_elem.get_attribute("aria-label") or None
+                                if label_text:
+                                    label_lower = label_text.lower()
+                                    
+                                    value_elem = advanced_score.locator("div[aria-label*='stars']").first
+                                    if value_elem.count() > 0:
+                                        aria_label = value_elem.get_attribute("aria-label") or None
+                                        if aria_label:
+                                            numbers = re.findall(r'\d+\.?\d*', aria_label)
+                                            if numbers:
+                                                score_value = numbers[0]
+                                                
+                                                if "style" in label_lower:
+                                                    scores["style_score"] = score_value
+                                                elif "story" in label_lower:
+                                                    scores["story_score"] = score_value
+                                                elif "grammar" in label_lower:
+                                                    scores["grammar_score"] = score_value
+                                                elif "character" in label_lower:
+                                                    scores["character_score"] = score_value
                         except:
                             continue
                 except:
@@ -235,30 +236,30 @@ class ReviewHandler:
                 pass
             
             # lấy website_id của Royal Road
-            website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else ""
+            website_id = self.mongo.royal_road_website_id if self.mongo.royal_road_website_id else None
             
             review_data = {
-                "review_id": review_id,
-                "web_review_id": web_review_id,
+                "reviewId": review_id,
+                "webReviewId": web_review_id,
                 "title": title,
                 "time": time_str,
                 "content": content,
-                "user_id": user_id,
-                "chapter_id": chapter_id,
-                "story_id": story_id,
-                "score_id": score_id,
-                "is_review_swap": is_review_swap,
-                "website_id": website_id
+                "userId": user_id,
+                "chapterId": chapter_id,
+                "storyId": story_id,
+                "scoreId": score_id,
+                "isReviewSwap": is_review_swap,
+                "websiteId": website_id
             }
             
             if score_id:
                 self.mongo.save_score(
                     score_id=score_id,
-                    overall_score=scores.get("overall_score", ""),
-                    style_score=scores.get("style_score", ""),
-                    story_score=scores.get("story_score", ""),
-                    grammar_score=scores.get("grammar_score", ""),
-                    character_score=scores.get("character_score", ""),
+                    overall_score=scores.get("overall_score") or None,
+                    style_score=scores.get("style_score") or None,
+                    story_score=scores.get("story_score") or None,
+                    grammar_score=scores.get("grammar_score") or None,
+                    character_score=scores.get("character_score") or None,
                     review_id=review_id
                 )
             
