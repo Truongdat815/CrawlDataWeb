@@ -16,4 +16,5 @@ STORY_SCHEMA = {
     "description": "description",         # Story description
     "userId": "user.name",                # Author/User ID
     "totalChapters": "numParts",          # Number of chapters
+    "language": None,                     # Language info {id, name}
 }

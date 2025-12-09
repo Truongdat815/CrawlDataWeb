@@ -58,6 +58,7 @@ class StoryScraper(BaseScraper):
                 "description": story_data.get("description", ""),
                 "userId": story_data.get("user", {}).get("name"),
                 "totalChapters": story_data.get("numParts", 0),
+                "language": story_data.get("language"),  # {id, name}
             }
             # Prefer tags/categories from API response if available
             api_tags = story_data.get("tags")

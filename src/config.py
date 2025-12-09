@@ -66,7 +66,7 @@ CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")
 CHECKPOINT_DIR = os.path.join(DATA_DIR, "checkpoints")  # Per-chapter checkpoints directory
 
 # ========== SCRAPING LIMITS ==========
-MAX_CHAPTERS_PER_STORY = 3  # None = Tất cả, số = Tối đa N chapters
+MAX_CHAPTERS_PER_STORY = 8  # None = Tất cả, số = Tối đa N chapters
 MAX_COMMENTS_PER_CHAPTER = 10  # None = Tất cả, số = Tối đa N comments
 MAX_STORIES_PER_BATCH = 2
 

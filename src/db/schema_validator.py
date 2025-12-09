@@ -23,6 +23,7 @@ def get_comment_validator():
                 "commentText": {"bsonType": "string"},
                 "paragraphIndex": {"bsonType": ["int", "null"]},
                 "type": {"enum": ["inline", "chapter_end"]},
+                "isDeleted": {"bsonType": "bool"},
             }
         }
     }
@@ -49,6 +50,7 @@ def get_story_validator():
                 "mature": {"bsonType": "bool"},
                 "status": {"enum": ["completed", "ongoing"]},
                 "time": {"bsonType": ["string", "null"]},
+                "language": {"bsonType": ["object", "null"]},  # {id, name}
             }
         }
     }

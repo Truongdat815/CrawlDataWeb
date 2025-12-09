@@ -222,16 +222,20 @@ class ChapterCheckpointManager:
             }
     
     def finalize_story(self, web_story_id: str):
-        """Finalize checkpoint for story (mark as completed or partial)"""
+        """Finalize checkpoint for story (mark as completed or in-progress)"""
         ckpt = self.get_or_create_checkpoint(web_story_id)
         with self.lock:
-            if ckpt.failed_chapters:
+            # Nếu đã cào đủ chapter (không thiếu, không fail) thì completed
+            if ckpt.total_chapters > 0 and len(ckpt.crawled_chapters) == ckpt.total_chapters and not ckpt.failed_chapters:
+                ckpt.status = "completed"
+                safe_print(f"✅ Story {web_story_id} completed successfully")
+            # Nếu còn thiếu chapter hoặc có chapter fail thì in-progress hoặc partial-fail
+            elif ckpt.failed_chapters:
                 ckpt.status = "partial-fail"
                 safe_print(f"⚠️ Story {web_story_id} completed with {len(ckpt.failed_chapters)} failed chapters")
             else:
-                ckpt.status = "completed"
-                safe_print(f"✅ Story {web_story_id} completed successfully")
-        
+                ckpt.status = "in-progress"
+                safe_print(f"⏳ Story {web_story_id} still in progress: {len(ckpt.crawled_chapters)}/{ckpt.total_chapters} chapters crawled")
         self.save_checkpoint(web_story_id)
     
     def clear_checkpoint(self, web_story_id: str):

@@ -16,4 +16,5 @@ COMMENT_SCHEMA = {
     "isRoot": None,                       # Whether this is a root comment
     "react": "voteCount",                 # Reaction count
     "websiteId": None,                    # Reference to website
+    "isDeleted": None,                    # Whether comment is deleted (default: False)
 }

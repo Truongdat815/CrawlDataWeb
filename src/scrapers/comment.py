@@ -139,6 +139,7 @@ class CommentScraper(BaseScraper):
                 "isRoot": is_root,
                 "react": api_comment.get("sentiments", {}).get(":like:", {}).get("count", 0) if isinstance(api_comment.get("sentiments"), dict) else 0,
                 "websiteId": None,                   # To be set when website collection is implemented
+                "isDeleted": False,                  # Default: comment is not deleted
                 # Keep extra fields for user scraper
                 "_userAvatar": user_avatar,
             }
