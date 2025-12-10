@@ -90,13 +90,13 @@ def download_image(image_url, fiction_id):
                 f.write(response.content)
             
             # Tự động upload lên server
-            # safe_print(f"📤 Đang upload ảnh lên server...")
-            # uploaded_url = upload_image(file_path)
+            safe_print(f"📤 Đang upload ảnh lên server...")
+            uploaded_url = upload_image(file_path)
             
-            # if uploaded_url:
-            #     # Trả về URL từ server
-            #     return uploaded_url
-            # else:
+            if uploaded_url:
+                # Trả về URL từ server
+                return uploaded_url
+            else:
                 # Nếu upload thất bại, trả về đường dẫn local
                 safe_print(f"⚠️ Upload thất bại, sử dụng đường dẫn local: {file_path}")
                 return file_path
