@@ -387,7 +387,8 @@ class ReviewHandler:
                 "storyId": story_id,
                 "scoreId": score_id,
                 "isReviewSwap": is_review_swap,
-                "websiteId": website_id
+                "websiteId": website_id,
+                "isDeleted": False
             }
             
             if score_id:

@@ -461,7 +461,8 @@ class CommentHandler:
                 "parentId": parent_id if parent_id else None,
                 "isRoot": is_root,
                 "react": None,
-                "websiteId": website_id
+                "websiteId": website_id,
+                "isDeleted": False
             }
             
             self.mongo.save_comment(comment_data)

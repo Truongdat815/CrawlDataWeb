@@ -199,24 +199,38 @@ class MongoHandler:
             safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
     
     def save_story_info(self, story_info_data):
-        """Lưu storyInfo vào MongoDB (thống kê và metrics của story)"""
+        """Lưu storyInfo vào MongoDB (thống kê và metrics của story)
+        Mỗi website có story_info riêng cho cùng một story (tìm theo cả storyId VÀ websiteId)
+        """
         if not story_info_data or not self.mongo_collection_story_info:
             return
         
         try:
-            # Tìm theo storyId hoặc websiteId
             story_id = story_info_data.get("storyId")
             website_id = story_info_data.get("websiteId")
             
+            # Tìm theo cả storyId VÀ websiteId để đảm bảo mỗi website có story_info riêng
             existing = None
-            if story_id:
+            if story_id and website_id:
+                existing = self.mongo_collection_story_info.find_one({
+                    "storyId": story_id,
+                    "websiteId": website_id
+                })
+            elif story_id:
+                # Fallback: nếu không có websiteId, tìm theo storyId
                 existing = self.mongo_collection_story_info.find_one({"storyId": story_id})
             elif website_id:
+                # Fallback: nếu không có storyId, tìm theo websiteId
                 existing = self.mongo_collection_story_info.find_one({"websiteId": website_id})
             
             if existing:
-                # Update existing
-                if story_id:
+                # Update existing (tìm theo cả storyId và websiteId nếu có)
+                if story_id and website_id:
+                    self.mongo_collection_story_info.update_one(
+                        {"storyId": story_id, "websiteId": website_id},
+                        {"$set": story_info_data}
+                    )
+                elif story_id:
                     self.mongo_collection_story_info.update_one(
                         {"storyId": story_id},
                         {"$set": story_info_data}
@@ -227,7 +241,7 @@ class MongoHandler:
                         {"$set": story_info_data}
                     )
             else:
-                # Insert new
+                # Insert new (mỗi website có story_info riêng)
                 self.mongo_collection_story_info.insert_one(story_info_data)
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lưu storyInfo vào MongoDB: {e}")

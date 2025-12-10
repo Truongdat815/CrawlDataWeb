@@ -3,7 +3,6 @@ import re
 import requests
 import uuid6
 import html as html_module
-import hashlib
 from urllib.parse import urlparse, urlunparse
 from src.config import IMAGES_DIR, IMAGE_UPLOAD_API_URL, IMAGE_UPLOAD_API_KEY, IMAGE_SERVER_BASE_URL
 
@@ -132,14 +131,69 @@ def normalize_url(url):
     except:
         return url.strip().lower()
 
+def create_simhash(content, hash_bits=64):
+    """
+    Tạo SimHash từ content (locality-sensitive hashing)
+    SimHash cho phép so sánh similarity: văn bản tương tự sẽ có hash gần nhau (lệch ít bit)
+    Args:
+        content: Nội dung text
+        hash_bits: Số bit của hash (mặc định 64)
+    Returns:
+        simhash_int: SimHash dưới dạng integer
+    """
+    if not content:
+        return None
+    
+    try:
+        # Normalize: lowercase, remove whitespace thừa
+        normalized = content.lower().strip()
+        if not normalized:
+            return None
+        
+        # Tách thành từ (tokens)
+        import re
+        # Tách theo word boundaries, giữ lại chữ và số
+        words = re.findall(r'\b\w+\b', normalized)
+        if not words:
+            return None
+        
+        # Feature vector: mỗi bit position có một giá trị tổng
+        feature_vector = [0] * hash_bits
+        
+        # Với mỗi token, hash nó và cập nhật feature vector
+        for word in words:
+            # Hash token thành integer (dùng built-in hash() của Python)
+            # hash() trả về signed integer, chuyển sang unsigned 64-bit
+            token_hash = hash(word.encode('utf-8')) & 0xFFFFFFFFFFFFFFFF
+            
+            # Cập nhật feature vector cho từng bit
+            for i in range(hash_bits):
+                # Kiểm tra bit i của token_hash
+                if token_hash & (1 << i):
+                    feature_vector[i] += 1
+                else:
+                    feature_vector[i] -= 1
+        
+        # Tạo SimHash: bit i = 1 nếu feature_vector[i] > 0, else 0
+        simhash_int = 0
+        for i in range(hash_bits):
+            if feature_vector[i] > 0:
+                simhash_int |= (1 << i)
+        
+        return simhash_int
+    except Exception as e:
+        safe_print(f"⚠️ Lỗi khi tạo simhash: {e}")
+        return None
+
 def create_content_hash(content, max_words=500):
     """
-    Tạo hash string từ chapter content (lấy 500 từ đầu tiên)
+    Tạo SimHash string từ chapter content (lấy 500 từ đầu tiên)
+    SimHash cho phép so sánh similarity: văn bản tương tự sẽ có hash gần nhau (lệch ít bit)
     Args:
         content: Nội dung chapter (text)
         max_words: Số từ tối đa để tạo hash (mặc định 500)
     Returns:
-        hash_string: MD5 hash của content (hexdigest)
+        hash_string: SimHash string (hex của integer, 16 ký tự cho 64-bit)
     """
     if not content:
         return None
@@ -149,11 +203,13 @@ def create_content_hash(content, max_words=500):
         words = content.split()
         # Lấy 500 từ đầu tiên
         content_sample = ' '.join(words[:max_words]) if len(words) > max_words else ' '.join(words)
-        # Normalize: lowercase, remove whitespace thừa
-        normalized = content_sample.lower().strip()
-        # Tạo hash MD5
-        hash_obj = hashlib.md5(normalized.encode('utf-8'))
-        return hash_obj.hexdigest()
+        
+        # Dùng SimHash (locality-sensitive hashing)
+        simhash_int = create_simhash(content_sample, hash_bits=64)
+        if simhash_int is None:
+            return None
+        # Convert integer sang hex string (16 ký tự cho 64-bit)
+        return format(simhash_int, '016x')
     except Exception as e:
         safe_print(f"⚠️ Lỗi khi tạo hash: {e}")
         return None
@@ -161,14 +217,15 @@ def create_content_hash(content, max_words=500):
 def hamming_distance(hash1, hash2):
     """
     Tính Hamming distance (số bit khác nhau) giữa 2 hash string
+    Với SimHash: distance nhỏ = văn bản tương tự, distance lớn = văn bản khác nhau
     Args:
-        hash1: Hash string thứ nhất (hexdigest)
-        hash2: Hash string thứ hai (hexdigest)
+        hash1: Hash string thứ nhất (hex string)
+        hash2: Hash string thứ hai (hex string)
     Returns:
         distance: Số bit khác nhau (0 = giống hệt, càng lớn càng khác)
     """
-    if not hash1 or not hash2 or len(hash1) != len(hash2):
-        return float('inf')  # Khác độ dài = không so sánh được
+    if not hash1 or not hash2:
+        return float('inf')
     
     try:
         # Convert hex string sang integer

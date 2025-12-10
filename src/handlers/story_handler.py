@@ -108,6 +108,7 @@ class StoryHandler:
         # BƯỚC 2: Check Level 2 - Check theo hash (nền tảng khác)
         # Lấy danh sách chapters để lấy chapter 1
         hash_string = None
+        is_hash_match = False
         try:
             chapter_info_list = self.get_chapters_from_current_page()
             if chapter_info_list:
@@ -128,10 +129,13 @@ class StoryHandler:
                     existing_story = self.mongo.find_story_by_hash(hash_string, max_bit_diff=3)
                     if existing_story:
                         story_id = existing_story.get("storyId")
+                        is_hash_match = True
                         safe_print(f"⏭️  Story đã có trong DB (match theo hash - nền tảng khác), storyId: {story_id}")
+                        safe_print(f"📊 Đang cào story info và thêm website ID Royal Road...")
                         # Đây là truyện cũ từ nền tảng khác, KHÔNG tạo story mới
-                        # Return (None, story_id, "hash") để báo là match theo hash
-                        return None, story_id, "hash"
+                        # Nhưng vẫn phải cào story info và lưu với website ID "royal road"
+                        # Tiếp tục scrape story info (bỏ qua phần tạo story mới)
+                        # Sẽ return sau khi scrape xong story info
                     # else:
                     #     # BƯỚC 3: Check Level 3 - Check theo title+author (fallback)
                     #     if title and user_id:
@@ -145,7 +149,7 @@ class StoryHandler:
             safe_print(f"⚠️ Lỗi khi check hash: {e}")
             # Nếu lỗi, vẫn tiếp tục như truyện mới
         
-        # Nếu đến đây nghĩa là truyện mới 100%, tiếp tục lấy metadata để lưu
+        # Nếu đến đây nghĩa là truyện mới 100% HOẶC match theo hash (cần scrape story info)
         # Lấy category
         category = self.page.locator(".fiction-info span").first.inner_text()
         
@@ -260,11 +264,12 @@ class StoryHandler:
             "description": description,
             "userId": user_id,  # FK to users
             "totalChapters": total_chapters,  # Đảm bảo luôn có field
+            "language": "English",
         }
         
         # Thêm hashString nếu có
         if hash_string:
-            story_data["hashString"] = hash_string
+            story_data["storyHash"] = hash_string
         
         # Tạo story_info_data (các fields thống kê/metrics)
         info_id = generate_id()  # Tạo infoId mới
@@ -301,11 +306,17 @@ class StoryHandler:
             "userDropped": None,  # Để trống
         }
         
-        # Lưu story và story_info ngay khi cào xong metadata
-        self.mongo.save_story(story_data)
-        self.mongo.save_story_info(story_info_data)
-        
-        return story_data, story_id, "new"  # Return match_type = "new" cho truyện mới
+        # Lưu story và story_info
+        if is_hash_match:
+            # Match theo hash: Chỉ lưu story_info với website ID "royal road", KHÔNG tạo story mới
+            safe_print(f"💾 Đang lưu story info với website ID Royal Road cho storyId: {story_id}")
+            self.mongo.save_story_info(story_info_data)
+            return None, story_id, "hash"  # Return match_type = "hash"
+        else:
+            # Truyện mới: Lưu cả story và story_info
+            self.mongo.save_story(story_data)
+            self.mongo.save_story_info(story_info_data)
+            return story_data, story_id, "new"  # Return match_type = "new" cho truyện mới
     
     def get_all_chapters_from_pagination(self, story_url):
         """
