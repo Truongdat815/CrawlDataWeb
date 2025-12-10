@@ -3,7 +3,9 @@ import re
 import requests
 import uuid6
 import html as html_module
-from src.config import IMAGES_DIR
+import hashlib
+from urllib.parse import urlparse, urlunparse
+from src.config import IMAGES_DIR, IMAGE_UPLOAD_API_URL, IMAGE_UPLOAD_API_KEY, IMAGE_SERVER_BASE_URL
 
 def clean_text(text):
     """Hàm làm sạch văn bản, xóa khoảng trắng thừa"""
@@ -11,10 +13,67 @@ def clean_text(text):
         return ""
     return text.strip()
 
+def upload_image(file_path):
+    """
+    Upload ảnh lên server qua API.
+    Args:
+        file_path: Đường dẫn đến file ảnh cần upload (ví dụ: "data/images/21220_cover.jpg")
+    Returns:
+        URL của ảnh trên server nếu thành công, None nếu thất bại
+    """
+    if not file_path or not os.path.exists(file_path):
+        safe_print(f"❌ File không tồn tại: {file_path}")
+        return None
+    
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'image': (os.path.basename(file_path), f, 'image/jpeg')}
+            headers = {'x-api-key': IMAGE_UPLOAD_API_KEY}
+            
+            response = requests.post(
+                IMAGE_UPLOAD_API_URL,
+                headers=headers,
+                files=files,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                # API trả về URL trực tiếp hoặc trong JSON
+                image_url = None
+                try:
+                    json_response = response.json()
+                    # Thử các field phổ biến
+                    image_url = json_response.get('url') or json_response.get('data') or json_response.get('image_url')
+                    # Nếu response là string URL
+                    if not image_url and isinstance(json_response, str):
+                        image_url = json_response
+                except (ValueError, AttributeError):
+                    # Nếu response không phải JSON, có thể là URL trực tiếp
+                    response_text = response.text.strip()
+                    if response_text:
+                        image_url = response_text
+                
+                if image_url:
+                    # Nếu là relative path (bắt đầu bằng /), thêm base URL
+                    if image_url.startswith('/'):
+                        image_url = IMAGE_SERVER_BASE_URL + image_url
+                    safe_print(f"✅ Upload thành công: {image_url}")
+                    return image_url
+                else:
+                    safe_print(f"⚠️ Upload thành công nhưng không parse được URL: {response.text}")
+                    return None
+            else:
+                safe_print(f"❌ Lỗi upload: Status {response.status_code}, Response: {response.text}")
+                return None
+                
+    except Exception as e:
+        safe_print(f"❌ Lỗi upload ảnh: {e}")
+        return None
+
 def download_image(image_url, fiction_id):
     """
-    Tải ảnh từ URL và lưu vào folder local.
-    Trả về: Đường dẫn file (Path) để lưu vào JSON.
+    Tải ảnh từ URL, lưu vào folder local, và tự động upload lên server.
+    Trả về: URL của ảnh trên server (nếu upload thành công) hoặc đường dẫn local (nếu upload thất bại).
     """
     if not image_url or "http" not in image_url:
         return None
@@ -29,11 +88,99 @@ def download_image(image_url, fiction_id):
         if response.status_code == 200:
             with open(file_path, 'wb') as f:
                 f.write(response.content)
-            return file_path # Trả về đường dẫn để lưu DB
+            
+            # Tự động upload lên server
+            # safe_print(f"📤 Đang upload ảnh lên server...")
+            # uploaded_url = upload_image(file_path)
+            
+            # if uploaded_url:
+            #     # Trả về URL từ server
+            #     return uploaded_url
+            # else:
+                # Nếu upload thất bại, trả về đường dẫn local
+                safe_print(f"⚠️ Upload thất bại, sử dụng đường dẫn local: {file_path}")
+                return file_path
     except Exception as e:
-        print(f"❌ Lỗi tải ảnh: {e}")
+        safe_print(f"❌ Lỗi tải ảnh: {e}")
     
     return None
+
+def normalize_url(url):
+    """
+    Normalize URL để so sánh: loại bỏ query params, fragment, trailing slash
+    Args:
+        url: URL cần normalize
+    Returns:
+        normalized_url: URL đã được normalize
+    """
+    if not url:
+        return None
+    
+    try:
+        # Parse URL
+        parsed = urlparse(url)
+        # Tạo URL mới không có query và fragment
+        normalized = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.rstrip('/'),  # Loại bỏ trailing slash
+            '',  # params
+            '',  # query
+            ''   # fragment
+        ))
+        return normalized.lower()  # Convert về lowercase để so sánh
+    except:
+        return url.strip().lower()
+
+def create_content_hash(content, max_words=500):
+    """
+    Tạo hash string từ chapter content (lấy 500 từ đầu tiên)
+    Args:
+        content: Nội dung chapter (text)
+        max_words: Số từ tối đa để tạo hash (mặc định 500)
+    Returns:
+        hash_string: MD5 hash của content (hexdigest)
+    """
+    if not content:
+        return None
+    
+    try:
+        # Tách thành từ (split by whitespace)
+        words = content.split()
+        # Lấy 500 từ đầu tiên
+        content_sample = ' '.join(words[:max_words]) if len(words) > max_words else ' '.join(words)
+        # Normalize: lowercase, remove whitespace thừa
+        normalized = content_sample.lower().strip()
+        # Tạo hash MD5
+        hash_obj = hashlib.md5(normalized.encode('utf-8'))
+        return hash_obj.hexdigest()
+    except Exception as e:
+        safe_print(f"⚠️ Lỗi khi tạo hash: {e}")
+        return None
+
+def hamming_distance(hash1, hash2):
+    """
+    Tính Hamming distance (số bit khác nhau) giữa 2 hash string
+    Args:
+        hash1: Hash string thứ nhất (hexdigest)
+        hash2: Hash string thứ hai (hexdigest)
+    Returns:
+        distance: Số bit khác nhau (0 = giống hệt, càng lớn càng khác)
+    """
+    if not hash1 or not hash2 or len(hash1) != len(hash2):
+        return float('inf')  # Khác độ dài = không so sánh được
+    
+    try:
+        # Convert hex string sang integer
+        int1 = int(hash1, 16)
+        int2 = int(hash2, 16)
+        # XOR để tìm bit khác nhau
+        xor_result = int1 ^ int2
+        # Đếm số bit 1 (bit khác nhau)
+        distance = bin(xor_result).count('1')
+        return distance
+    except:
+        return float('inf')
 
 def safe_print(*args, **kwargs):
     """Print function an toàn với encoding UTF-8 trên Windows"""

@@ -31,15 +31,21 @@ MONGODB_COLLECTION_STORIES = "stories"
 
 # Connection string đầy đủ với các options chuẩn
 # Dùng password trực tiếp, KHÔNG encode
-# MONGODB_URI = (
-#     f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
-#     f"@{CLUSTER_URL}/?rappName=RoyalRoad"
-# )
-
 MONGODB_URI = (
-    "mongodb://user:56915001@103.90.224.232:27017/my_database"
+    f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
+    f"@{CLUSTER_URL}/?rappName=RoyalRoad"
 )
+
+# MONGODB_URI = (
+#     "mongodb://user:56915001@103.90.224.232:27017/my_database"
+# )
 
 # Cho phép override bằng environment variable (ưu tiên)
 if os.getenv("MONGODB_URI"):
     MONGODB_URI = os.getenv("MONGODB_URI")
+
+# --- CẤU HÌNH API UPLOAD ẢNH ---
+IMAGE_UPLOAD_API_URL = "https://api-image.techleaf.pro/api/upload"
+IMAGE_UPLOAD_API_KEY = "k8JdR4xP9uA2mQ7wF1zT0bVgN5yHcS3LrE8qWfU6pXjK2dM9sB4hY0vG7tC1n"
+# Base URL để tạo full URL nếu API trả về relative path
+IMAGE_SERVER_BASE_URL = "https://api-image.techleaf.pro"

@@ -76,19 +76,14 @@ class StoryHandler:
         """
         from src.handlers.mongo_handler import MongoHandler
         
-        # Kiểm tra story đã được cào chưa
-        story_id = None
-        if web_story_id and self.mongo.is_story_scraped(web_story_id):
-            safe_print(f"⏭️  Story {web_story_id} đã có trong DB, bỏ qua phần metadata...")
-            # Lấy story_id đã có từ DB
-            existing_story = self.mongo.get_story_by_web_id(web_story_id)
-            if existing_story:
-                story_id = existing_story.get("storyId")
-            else:
-                story_id = generate_id()
-            return None, story_id  # Không cần cào metadata nữa
+        # BƯỚC 1: Check Level 1 - Check theo URL (cùng nền tảng - nhanh nhất)
+        existing_story = self.mongo.find_story_by_url(story_url)
+        if existing_story:
+            story_id = existing_story.get("storyId")
+            safe_print(f"⏭️  Story đã có trong DB (match theo URL), bỏ qua phần metadata...")
+            return None, story_id, "url"  # Return match_type = "url"
         
-        # Story chưa có, tạo id mới và cào toàn bộ metadata
+        # Story chưa có theo URL, lấy metadata để check tiếp
         story_id = generate_id()
         safe_print("... Đang lấy thông tin chung")
         
@@ -110,6 +105,47 @@ class StoryHandler:
         if author_href and author_name:
             user_id = self.user_handler.scrape_and_save_user_from_href(author_href, author_name, self.page)
         
+        # BƯỚC 2: Check Level 2 - Check theo hash (nền tảng khác)
+        # Lấy danh sách chapters để lấy chapter 1
+        hash_string = None
+        try:
+            chapter_info_list = self.get_chapters_from_current_page()
+            if chapter_info_list:
+                first_chapter_url = chapter_info_list[0]["url"]
+                # Lưu URL hiện tại để quay lại sau
+                current_url = self.page.url
+                
+                # Dùng self.page hiện có để vào chapter 1
+                hash_string = self.get_first_chapter_hash(first_chapter_url)
+                
+                # Quay lại trang story sau khi lấy hash
+                if current_url:
+                    self.page.goto(current_url, timeout=config.TIMEOUT)
+                    time.sleep(1)
+                
+                if hash_string:
+                    # Check theo hash với fuzzy match (lệch không quá 3 bit)
+                    existing_story = self.mongo.find_story_by_hash(hash_string, max_bit_diff=3)
+                    if existing_story:
+                        story_id = existing_story.get("storyId")
+                        safe_print(f"⏭️  Story đã có trong DB (match theo hash - nền tảng khác), storyId: {story_id}")
+                        # Đây là truyện cũ từ nền tảng khác, KHÔNG tạo story mới
+                        # Return (None, story_id, "hash") để báo là match theo hash
+                        return None, story_id, "hash"
+                    # else:
+                    #     # BƯỚC 3: Check Level 3 - Check theo title+author (fallback)
+                    #     if title and user_id:
+                    #         existing_story = self.mongo.find_story_by_name_and_author(title, user_id)
+                    #         if existing_story:
+                    #             story_id = existing_story.get("storyId")
+                    #             safe_print(f"⏭️  Story đã có trong DB (match theo tên/tác giả), storyId: {story_id}")
+                    #             # Truyện đã có, KHÔNG tạo story mới
+                    #             return None, story_id
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi check hash: {e}")
+            # Nếu lỗi, vẫn tiếp tục như truyện mới
+        
+        # Nếu đến đây nghĩa là truyện mới 100%, tiếp tục lấy metadata để lưu
         # Lấy category
         category = self.page.locator(".fiction-info span").first.inner_text()
         
@@ -204,23 +240,18 @@ class StoryHandler:
         pages = stats_values_locator.nth(5).inner_text()
         
         # Lấy total chapters
-        total_chapters = None
-        try:
-            chapters_label = self.page.locator(".portlet-title .actions span.label.label-default.pull-right").first
-            if chapters_label.count() > 0:
-                chapters_text = chapters_label.inner_text().strip()
-                numbers = re.findall(r'\d+', chapters_text)
-                if numbers:
-                    total_chapters = numbers[0]
-        except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lấy total chapters: {e}")
+        total_chapters = self.get_total_chapters_from_html()
+        
+        # Normalize URL trước khi lưu
+        from src.utils import normalize_url
+        normalized_story_url = normalize_url(story_url)
         
         # Tạo story_data (chỉ các fields cơ bản)
         story_data = {
             "storyId": story_id,
             "webStoryId": web_story_id,
             "storyName": title,
-            "storyUrl": story_url,
+            "storyUrl": normalized_story_url,  # Lưu URL đã normalize
             "coverImage": local_img_path,
             "category": category,
             "status": status,
@@ -230,6 +261,10 @@ class StoryHandler:
             "userId": user_id,  # FK to users
             "totalChapters": total_chapters,  # Đảm bảo luôn có field
         }
+        
+        # Thêm hashString nếu có
+        if hash_string:
+            story_data["hashString"] = hash_string
         
         # Tạo story_info_data (các fields thống kê/metrics)
         info_id = generate_id()  # Tạo infoId mới
@@ -270,7 +305,7 @@ class StoryHandler:
         self.mongo.save_story(story_data)
         self.mongo.save_story_info(story_info_data)
         
-        return story_data, story_id
+        return story_data, story_id, "new"  # Return match_type = "new" cho truyện mới
     
     def get_all_chapters_from_pagination(self, story_url):
         """
@@ -526,4 +561,58 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lấy chapters từ trang hiện tại: {e}")
             return []
+    
+    def get_total_chapters_from_html(self):
+        """
+        Lấy total chapters từ HTML (selector: .portlet-title .actions span.label.label-default.pull-right)
+        Returns: total_chapters (str hoặc None)
+        """
+        try:
+            chapters_label = self.page.locator(".portlet-title .actions span.label.label-default.pull-right").first
+            if chapters_label.count() > 0:
+                chapters_text = chapters_label.inner_text().strip()
+                numbers = re.findall(r'\d+', chapters_text)
+                if numbers:
+                    return numbers[0]
+            return None
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi lấy total chapters từ HTML: {e}")
+            return None
+    
+    def get_first_chapter_hash(self, first_chapter_url):
+        """
+        Lấy hash từ chapter 1 để check trùng truyện từ nền tảng khác
+        Lấy 500 từ đầu tiên của chapter 1 để tạo hash
+        Dùng self.page hiện có thay vì tạo browser mới để tránh conflict với asyncio
+        Args:
+            first_chapter_url: URL của chapter đầu tiên
+        Returns:
+            hash_string: Hash string của chapter 1 content (500 từ đầu), None nếu lỗi
+        """
+        from src.utils import create_content_hash, convert_html_to_formatted_text
+        
+        try:
+            safe_print("      🔍 Đang lấy hash từ chapter 1 (500 từ đầu) để check trùng...")
+            
+            # Dùng self.page hiện có để vào chapter 1
+            self.page.goto(first_chapter_url, timeout=config.TIMEOUT)
+            self.page.wait_for_selector(".chapter-inner", timeout=10000)
+            time.sleep(2)
+            
+            # Lấy content
+            content_container = self.page.locator(".chapter-inner").first
+            if content_container.count() > 0:
+                html_content = content_container.inner_html()
+                content = convert_html_to_formatted_text(html_content)
+                # Lấy 500 từ đầu tiên để tạo hash
+                hash_string = create_content_hash(content, max_words=500)
+                safe_print(f"      ✅ Đã lấy hash từ 500 từ đầu của chapter 1")
+                return hash_string
+            else:
+                safe_print(f"      ⚠️ Không tìm thấy content trong chapter 1")
+                return None
+            
+        except Exception as e:
+            safe_print(f"      ⚠️ Lỗi khi lấy hash từ chapter 1: {e}")
+            return None
 

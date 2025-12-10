@@ -21,20 +21,101 @@ class ReviewHandler:
         self.mongo = mongo_handler
         self.user_handler = user_handler
     
-    def scrape_reviews(self, story_url, story_id):
+    def get_max_review_page(self, story_url):
+        """Lấy số trang reviews tối đa từ pagination"""
+        try:
+            base_url = story_url.split('?')[0]
+            current_url = self.page.url.split('?')[0] if self.page else ""
+            
+            if base_url not in current_url:
+                self.page.goto(base_url, timeout=config.TIMEOUT)
+                time.sleep(2)
+            
+            # Click vào tab Reviews nếu cần
+            try:
+                reviews_tab = self.page.locator("a[href*='reviews'], button:has-text('Reviews'), .nav-tabs a:has-text('Reviews')").first
+                if reviews_tab.count() > 0:
+                    reviews_tab.click()
+                    time.sleep(3)
+            except:
+                pass
+            
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2)
+            
+            max_page = 1
+            pagination_selectors = [
+                "ul.pagination",
+                ".pagination"
+            ]
+            
+            pagination = None
+            for selector in pagination_selectors:
+                try:
+                    pagination = self.page.locator(selector).first
+                    if pagination.count() > 0:
+                        break
+                except:
+                    continue
+            
+            if pagination and pagination.count() > 0:
+                page_links = pagination.locator("a[data-page]").all()
+                page_numbers = []
+                for link in page_links:
+                    try:
+                        page_num_str = link.get_attribute("data-page")
+                        if page_num_str:
+                            page_num = int(page_num_str)
+                            page_numbers.append(page_num)
+                    except:
+                        continue
+                
+                if not page_numbers:
+                    try:
+                        all_links = pagination.locator("a").all()
+                        for link in all_links:
+                            try:
+                                link_text = link.inner_text().strip()
+                                if link_text.isdigit():
+                                    page_num = int(link_text)
+                                    page_numbers.append(page_num)
+                            except:
+                                continue
+                    except:
+                        pass
+                
+                if page_numbers:
+                    max_page = max(page_numbers)
+                    safe_print(f"        📄 Tìm thấy {max_page} trang reviews")
+                else:
+                    safe_print(f"        📄 Không tìm thấy pagination, giả sử có 1 trang")
+            
+            return max_page
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi lấy số trang reviews: {e}")
+            return 1
+    
+    def scrape_reviews_from_page(self, page_url, story_id):
         """
-        Lấy tất cả reviews từ trang story
-        Schema: review id, title, time, content, user id (FK), chapter id (FK), story id (FK), score id (FK)
+        Lấy reviews từ một trang cụ thể
         """
         reviews = []
         try:
-            safe_print("      📝 Đang lấy reviews từ trang story...")
-            
-            self.page.goto(story_url, timeout=config.TIMEOUT)
+            self.page.goto(page_url, timeout=config.TIMEOUT)
             time.sleep(2)
             
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(2)
+            
+            # Click vào tab Reviews nếu cần (cho trang đầu tiên)
+            if "reviews=" not in page_url or "reviews=1" in page_url:
+                try:
+                    reviews_tab = self.page.locator("a[href*='reviews'], button:has-text('Reviews'), .nav-tabs a:has-text('Reviews')").first
+                    if reviews_tab.count() > 0:
+                        reviews_tab.click()
+                        time.sleep(3)
+                except:
+                    pass
             
             review_selectors = [
                 ".review",
@@ -50,27 +131,9 @@ class ReviewHandler:
                     elements = self.page.locator(selector).all()
                     if elements:
                         review_elements = elements
-                        safe_print(f"      ✅ Tìm thấy {len(elements)} reviews với selector: {selector}")
                         break
                 except:
                     continue
-            
-            if not review_elements:
-                try:
-                    reviews_tab = self.page.locator("a[href*='reviews'], button:has-text('Reviews'), .nav-tabs a:has-text('Reviews')").first
-                    if reviews_tab.count() > 0:
-                        reviews_tab.click()
-                        time.sleep(3)
-                        for selector in review_selectors:
-                            try:
-                                elements = self.page.locator(selector).all()
-                                if elements:
-                                    review_elements = elements
-                                    break
-                            except:
-                                continue
-                except:
-                    pass
             
             for review_elem in review_elements:
                 try:
@@ -90,8 +153,83 @@ class ReviewHandler:
                     safe_print(f"        ⚠️ Lỗi khi parse review: {e}")
                     continue
             
-            safe_print(f"      ✅ Đã lấy được {len(reviews)} reviews")
             return reviews
+            
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi lấy reviews từ trang: {e}")
+            return []
+    
+    def scrape_reviews(self, story_url, story_id):
+        """
+        Lấy tất cả reviews từ TẤT CẢ các trang phân trang
+        Schema: review id, title, time, content, user id (FK), chapter id (FK), story id (FK), score id (FK)
+        """
+        try:
+            safe_print("      📝 Đang lấy reviews từ trang story...")
+            
+            self.page.goto(story_url, timeout=config.TIMEOUT)
+            time.sleep(2)
+            
+            # Click vào tab Reviews
+            try:
+                reviews_tab = self.page.locator("a[href*='reviews'], button:has-text('Reviews'), .nav-tabs a:has-text('Reviews')").first
+                if reviews_tab.count() > 0:
+                    reviews_tab.click()
+                    time.sleep(3)
+            except:
+                pass
+            
+            max_page = self.get_max_review_page(story_url)
+            all_reviews = []
+            
+            for page_num in range(1, max_page + 1):
+                safe_print(f"        📄 Đang lấy trang reviews {page_num}/{max_page}...")
+                
+                if page_num == 1:
+                    base_url = story_url.split('?')[0]
+                    # Thêm sorting=top&reviews=1 cho trang đầu
+                    if '?' in story_url:
+                        existing_params = story_url.split('?', 1)[1]
+                        params_list = []
+                        for param in existing_params.split('&'):
+                            if not param.startswith('reviews=') and not param.startswith('sorting='):
+                                params_list.append(param)
+                        if params_list:
+                            other_params = '&'.join(params_list)
+                            page_url = f"{base_url}?{other_params}&sorting=top&reviews={page_num}"
+                        else:
+                            page_url = f"{base_url}?sorting=top&reviews={page_num}"
+                    else:
+                        page_url = f"{base_url}?sorting=top&reviews={page_num}"
+                else:
+                    base_url = story_url.split('?')[0]
+                    if '?' in story_url:
+                        existing_params = story_url.split('?', 1)[1]
+                        params_list = []
+                        for param in existing_params.split('&'):
+                            if not param.startswith('reviews=') and not param.startswith('sorting='):
+                                params_list.append(param)
+                        if params_list:
+                            other_params = '&'.join(params_list)
+                            page_url = f"{base_url}?{other_params}&sorting=top&reviews={page_num}"
+                        else:
+                            page_url = f"{base_url}?sorting=top&reviews={page_num}"
+                    else:
+                        page_url = f"{base_url}?sorting=top&reviews={page_num}"
+                
+                if page_num > 1:
+                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
+                
+                page_reviews = self.scrape_reviews_from_page(page_url, story_id)
+                all_reviews.extend(page_reviews)
+                
+                safe_print(f"        ✅ Trang {page_num}: Lấy được {len(page_reviews)} reviews")
+                
+                if page_num < max_page:
+                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
+            
+            safe_print(f"      ✅ Tổng cộng lấy được {len(all_reviews)} reviews từ {max_page} trang")
+            return all_reviews
             
         except Exception as e:
             safe_print(f"      ⚠️ Lỗi khi lấy reviews: {e}")

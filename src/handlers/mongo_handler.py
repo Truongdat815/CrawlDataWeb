@@ -156,18 +156,44 @@ class MongoHandler:
     # ========== Save methods ==========
     
     def save_story(self, story_data):
-        """Lưu story vào MongoDB (có thể update nhiều lần khi có thêm chapters/reviews)"""
+        """
+        Lưu story vào MongoDB (có thể update nhiều lần khi có thêm chapters/reviews)
+        Check theo storyUrl (đã normalize) để tránh trùng, fallback theo webStoryId
+        Note: storyId là tự sinh nên không cần check theo storyId
+        """
         if not story_data or not self.mongo_collection_stories:
             return
         
         try:
-            existing = self.mongo_collection_stories.find_one({"webStoryId": story_data.get("webStoryId")})
+            story_url = story_data.get("storyUrl")
+            existing = None
+            
+            # Ưu tiên check theo URL (chính xác nhất)
+            if story_url:
+                existing = self.mongo_collection_stories.find_one({"storyUrl": story_url})
+            
+            # Nếu không tìm thấy theo URL, check theo webStoryId (fallback)
+            if not existing:
+                web_story_id = story_data.get("webStoryId")
+                if web_story_id:
+                    existing = self.mongo_collection_stories.find_one({"webStoryId": web_story_id})
+            
             if existing:
-                self.mongo_collection_stories.update_one(
-                    {"webStoryId": story_data.get("webStoryId")},
-                    {"$set": story_data}
-                )
+                # Update existing story - dùng filter theo URL hoặc webStoryId
+                if story_url:
+                    self.mongo_collection_stories.update_one(
+                        {"storyUrl": story_url},
+                        {"$set": story_data}
+                    )
+                else:
+                    web_story_id = story_data.get("webStoryId")
+                    if web_story_id:
+                        self.mongo_collection_stories.update_one(
+                            {"webStoryId": web_story_id},
+                            {"$set": story_data}
+                        )
             else:
+                # Insert new story
                 self.mongo_collection_stories.insert_one(story_data)
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
@@ -458,6 +484,127 @@ class MongoHandler:
         except:
             return None
     
+    def get_story_by_id(self, story_id):
+        """Lấy story theo storyId"""
+        if not story_id or not self.mongo_collection_stories:
+            return None
+        try:
+            return self.mongo_collection_stories.find_one({"storyId": story_id})
+        except:
+            return None
+    
+    def find_story_by_url(self, story_url):
+        """
+        Tìm story theo URL (Level 1: Check cùng nền tảng)
+        Args:
+            story_url: URL của story
+        Returns:
+            existing_story: Story document nếu tìm thấy, None nếu không
+        """
+        if not story_url or not self.mongo_collection_stories:
+            return None
+        
+        try:
+            from src.utils import normalize_url
+            normalized_url = normalize_url(story_url)
+            if not normalized_url:
+                return None
+            
+            return self.mongo_collection_stories.find_one({"storyUrl": normalized_url})
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi tìm story theo URL: {e}")
+            return None
+    
+    def find_story_by_hash(self, hash_string, max_bit_diff=3):
+        """
+        Tìm story theo hash với fuzzy match (Level 2: Check nền tảng khác)
+        So sánh hash với tất cả hash trong DB, nếu lệch không quá max_bit_diff bit thì coi như trùng
+        Args:
+            hash_string: Hash string từ chapter 1
+            max_bit_diff: Số bit lệch tối đa để coi như trùng (mặc định 3)
+        Returns:
+            existing_story: Story document nếu tìm thấy, None nếu không
+        """
+        if not hash_string or not self.mongo_collection_stories:
+            return None
+        
+        try:
+            from src.utils import hamming_distance
+            
+            # Lấy tất cả stories có hashString
+            all_stories = list(self.mongo_collection_stories.find({"hashString": {"$exists": True, "$ne": None}}))
+            
+            # So sánh với từng hash trong DB
+            for story in all_stories:
+                db_hash = story.get("hashString")
+                if db_hash:
+                    distance = hamming_distance(hash_string, db_hash)
+                    if distance <= max_bit_diff:
+                        safe_print(f"      ✅ Tìm thấy story trùng (hash lệch {distance} bit <= {max_bit_diff} bit)")
+                        return story
+            
+            return None
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi tìm story theo hash: {e}")
+            return None
+    
+    def find_story_by_name_and_author(self, story_name, user_id):
+        """
+        Tìm story theo tên và tác giả (Level 3: Fallback check nền tảng khác)
+        Args:
+            story_name: Tên story
+            user_id: ID của author (userId)
+        Returns:
+            existing_story: Story document nếu tìm thấy, None nếu không
+        """
+        if not story_name or not user_id or not self.mongo_collection_stories:
+            return None
+        
+        try:
+            return self.mongo_collection_stories.find_one({
+                "storyName": story_name,
+                "userId": user_id
+            })
+        except Exception as e:
+            safe_print(f"⚠️ Lỗi khi tìm story theo tên/tác giả: {e}")
+            return None
+    
+    def find_existing_story(self, story_url, hash_string=None, story_name=None, user_id=None):
+        """
+        Tìm story đã có trong DB - check theo thứ tự ưu tiên:
+        1. Check theo URL (cùng nền tảng - nhanh nhất)
+        2. Check theo hash với fuzzy match (nền tảng khác - chính xác nhất)
+        3. Check theo title+author (nền tảng khác - fallback)
+        
+        Args:
+            story_url: URL của story
+            hash_string: Hash string từ chapter 1 (optional)
+            story_name: Tên story (optional)
+            user_id: ID của author (optional)
+        Returns:
+            tuple: (existing_story, match_type)
+                - existing_story: Story document nếu tìm thấy, None nếu không
+                - match_type: "url", "hash", "name", hoặc None
+        """
+        # Level 1: Check theo URL (cùng nền tảng - nhanh nhất)
+        existing = self.find_story_by_url(story_url)
+        if existing:
+            return existing, "url"
+        
+        # Level 2: Check theo hash với fuzzy match (nền tảng khác - chính xác nhất)
+        if hash_string:
+            existing = self.find_story_by_hash(hash_string, max_bit_diff=3)
+            if existing:
+                return existing, "hash"
+        
+        # Level 3: Check theo title+author (nền tảng khác - fallback)
+        if story_name and user_id:
+            existing = self.find_story_by_name_and_author(story_name, user_id)
+            if existing:
+                return existing, "name"
+        
+        return None, None
+    
     def get_chapter_by_web_id(self, web_chapter_id):
         """Lấy chapter theo webChapterId"""
         if not web_chapter_id or not self.mongo_collection_chapters:
@@ -475,4 +622,26 @@ class MongoHandler:
             return self.mongo_collection_comments.find_one({"webCommentId": web_comment_id})
         except:
             return None
+    
+    def update_story_total_chapters(self, story_id, total_chapters):
+        """
+        Cập nhật totalChapters trong collection stories
+        Args:
+            story_id: storyId của story
+            total_chapters: Số chapters mới (lấy từ HTML, str hoặc int)
+        """
+        if not story_id or not total_chapters or not self.mongo_collection_stories:
+            return
+        
+        try:
+            # Convert to string để đảm bảo format nhất quán
+            total_chapters_str = str(total_chapters) if total_chapters else None
+            if total_chapters_str:
+                self.mongo_collection_stories.update_one(
+                    {"storyId": story_id},
+                    {"$set": {"totalChapters": total_chapters_str}}
+                )
+                safe_print(f"      ✅ Đã cập nhật totalChapters = {total_chapters_str} cho story {story_id}")
+        except Exception as e:
+            safe_print(f"      ⚠️ Lỗi khi cập nhật totalChapters: {e}")
 
