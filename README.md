@@ -1,9 +1,31 @@
-# RoyalRoad Scraper
+# Webnovel Scraper V7 🚀
 
-Công cụ tự động cào dữ liệu từ RoyalRoad.com bao gồm:
-- Thông tin truyện (metadata, stats, description)
-- Tất cả chapters (nội dung, comments)
-- Ảnh bìa truyện
+**Latest Version:** V7 (Human-Assist Cloudflare Bypass)  
+**Updated:** December 10, 2025
+
+Công cụ tự động cào dữ liệu từ Webnovel.com với khả năng:
+- ✅ **Vượt qua Cloudflare** với sự hỗ trợ của người dùng
+- ✅ **Tự động tìm Chapter 1** từ reader sidebar
+- ✅ **Scraping hoàn chỉnh:** metadata, chapters, comments, replies
+- ✅ **Resume từ checkpoint** khi bị gián đoạn
+- ✅ **Ảnh bìa truyện** tự động download
+
+## 🆕 What's New in V7?
+
+### Giải Quyết Vấn Đề Cloudflare
+Phiên bản trước (V6) bị chặn bởi Cloudflare "Under Attack Mode". **V7 fix triệt để:**
+
+```
+🛡️ Cloudflare detected → Wait 60s auto-bypass
+                       ↓
+Still blocked? → 🛑 Prompt user to solve CAPTCHA manually
+                       ↓
+User clicks captcha → ✅ Auto-resume scraping!
+```
+
+**Xem chi tiết:** [CLOUDFLARE_FIX_V7.md](CLOUDFLARE_FIX_V7.md)
+
+---
 
 ## Cài đặt
 

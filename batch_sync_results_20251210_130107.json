@@ -1,0 +1,17 @@
+[
+  {
+    "file": "final_wn_33921120008813005_019af837-d328-7e01-8650-128a66e51f8e_Samsara_Tower_Only_I_Know_the_Plot!.json",
+    "success": false,
+    "error": "storyName is required in scraped_data"
+  },
+  {
+    "file": "final_wn_34078380808505505_019af820-1493-7649-a58c-69157e90aba3_Avatar_TLAB_Tai_Lung.json",
+    "success": false,
+    "error": "storyName is required in scraped_data"
+  },
+  {
+    "file": "final_wn_34257207400299105_019af7f4-22a4-7242-a3b2-a29b10794727_House_of_the_Dragon_oh_Geez!.json",
+    "success": false,
+    "error": "storyName is required in scraped_data"
+  }
+]

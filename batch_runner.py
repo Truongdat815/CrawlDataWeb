@@ -28,7 +28,7 @@ def extract_book_id(url):
 
 
 def already_scraped(book_id):
-    """Check if book already exists in data/json/"""
+    """Check if book already exists strictly for Webnovel platform"""
     if not book_id:
         return False
     
@@ -36,10 +36,15 @@ def already_scraped(book_id):
     if not json_dir.exists():
         return False
     
-    # Look for any JSON file containing this book ID
+    # [STRICT CHECK] Chỉ tìm file có chứa "wn_{book_id}"
+    # Điều này đảm bảo ta chỉ check trùng trên nền tảng Webnovel của bạn
+    target_platform_id = f"wn_{book_id}"
+    
     for json_file in json_dir.glob('*.json'):
-        if book_id in json_file.name:
+        # Check đúng định dạng wn_12345...
+        if target_platform_id in json_file.name:
             return True
+            
     return False
 
 
