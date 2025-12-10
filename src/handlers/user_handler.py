@@ -4,7 +4,7 @@ User handler - xử lý user scraping và lưu trữ
 import time
 from playwright.sync_api import sync_playwright
 from src import config
-from src.utils import safe_print, generate_id
+from src.utils import safe_print, generate_id, goto_with_retry, wait_for_selector_with_retry
 
 
 class UserHandler:
@@ -197,11 +197,13 @@ class UserHandler:
                 else:
                     user_url = config.BASE_URL + "/" + user_url
             
-            # Tìm user theo webUserId
-            existing = self.mongo.mongo_collection_users.find_one({"webUserId": web_user_id})
-            if not existing:
-                # Fallback: tìm theo format cũ
-                existing = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+            # Tìm user theo userUrl (chỉ check theo URL)
+            existing = None
+            if user_url:
+                existing = self.mongo.mongo_collection_users.find_one({"userUrl": user_url})
+                if not existing:
+                    # Fallback: tìm theo format cũ
+                    existing = self.mongo.mongo_collection_users.find_one({"user_url": user_url})
             
             if existing:
                 # Update các fields nếu có thay đổi
@@ -212,7 +214,8 @@ class UserHandler:
                     update_data["userUrl"] = user_url
                 
                 if update_data:
-                    query = {"webUserId": web_user_id} if "webUserId" in existing else {"web_user_id": web_user_id}
+                    # Query theo userUrl để update
+                    query = {"userUrl": user_url} if "userUrl" in existing else {"user_url": user_url}
                     self.mongo.mongo_collection_users.update_one(
                         query,
                         {"$set": update_data}
@@ -293,28 +296,26 @@ class UserHandler:
             return None
         
         try:
-            # Lấy web_user_id từ URL
-            if "/profile/" in user_url:
-                web_user_id = user_url.split("/profile/")[1].split("/")[0] if "/profile/" in user_url else ""
-            else:
-                return None
+            # Normalize user_url (đảm bảo là full URL)
+            if user_url and not user_url.startswith("http"):
+                if user_url.startswith("/"):
+                    user_url = config.BASE_URL + user_url
+                else:
+                    user_url = config.BASE_URL + "/" + user_url
             
-            if not web_user_id:
-                return None
-            
-            # Tìm user hiện có trong DB
-            existing_user = self.mongo.mongo_collection_users.find_one({"webUserId": web_user_id})
+            # Tìm user hiện có trong DB theo userUrl
+            existing_user = self.mongo.mongo_collection_users.find_one({"userUrl": user_url})
             if not existing_user:
                 # Fallback: tìm theo format cũ
-                existing_user = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+                existing_user = self.mongo.mongo_collection_users.find_one({"user_url": user_url})
             if not existing_user:
-                safe_print(f"        ⚠️ User {web_user_id} chưa có trong DB, cần tạo trước")
+                safe_print(f"        ⚠️ User với URL {user_url} chưa có trong DB, cần tạo trước")
                 return None
             
             # Kiểm tra xem user đã có đầy đủ thông tin chưa
             has_full_info = existing_user.get("createdDate") or existing_user.get("created_date") or existing_user.get("followers")
             if has_full_info:
-                safe_print(f"        ⏭️  User {web_user_id} đã có đầy đủ thông tin, bỏ qua scrape profile")
+                safe_print(f"        ⏭️  User với URL {user_url} đã có đầy đủ thông tin, bỏ qua scrape profile")
                 return existing_user.get("userId") or existing_user.get("user_id")
             
             user_id = existing_user.get("userId") or existing_user.get("user_id")
@@ -326,7 +327,7 @@ class UserHandler:
             try:
                 # Navigate trong cùng worker thread - mỗi worker thread có playwright instance riêng
                 # Page object thuộc về thread đó, nên page.goto() nên hoạt động được
-                page.goto(user_url, timeout=60000)
+                goto_with_retry(page, user_url, 60000, max_retries=3, retry_delay=5, context_name="User")
                 import time
                 time.sleep(2)
             except Exception as e:
@@ -351,7 +352,7 @@ class UserHandler:
             activity_count = activity_table.count()
             author_info_count = author_info_table.count()
             if personal_info_count == 0 and activity_count == 0 and author_info_count == 0:
-                safe_print(f"        ⚠️ User {web_user_id}: Không tìm thấy table nào trên profile page")
+                safe_print(f"        ⚠️ User với URL {user_url}: Không tìm thấy table nào trên profile page")
             
             # ========== Personal Information ==========
             # Lấy created_date từ Personal Information table
@@ -360,7 +361,10 @@ class UserHandler:
                 if personal_info_table.count() > 0:
                     joined_time = personal_info_table.locator("tbody tr:has-text('Joined:') time[datetime]").first
                     if joined_time.count() > 0:
-                        created_date = joined_time.get_attribute("datetime") or None
+                        datetime_attr = joined_time.get_attribute("datetime") or None
+                        if datetime_attr:
+                            from src.utils import parse_and_format_datetime
+                            created_date = parse_and_format_datetime(datetime_attr)
             except:
                 pass
             
@@ -560,18 +564,18 @@ class UserHandler:
             
             # Cập nhật vào MongoDB
             if update_data:
-                query = {"webUserId": web_user_id} if "webUserId" in existing_user else {"web_user_id": web_user_id}
+                query = {"userUrl": user_url} if "userUrl" in existing_user else {"user_url": user_url}
                 self.mongo.mongo_collection_users.update_one(
                     query,
                     {"$set": update_data}
                 )
                 # Debug: in ra các fields đã cập nhật
-                safe_print(f"        ✅ Đã cập nhật profile cho user {web_user_id}: {list(update_data.keys())}")
+                safe_print(f"        ✅ Đã cập nhật profile cho user với URL {user_url}: {list(update_data.keys())}")
             
             # Quay lại trang trước (URL của truyện)
             if current_url:
                 try:
-                    page.goto(current_url, timeout=60000)
+                    goto_with_retry(page, current_url, 60000, max_retries=3, retry_delay=5, context_name="User")
                     time.sleep(1)  # Đợi một chút để trang load
                 except Exception as e:
                     safe_print(f"        ⚠️ Không thể quay lại trang trước: {e}")
@@ -589,7 +593,7 @@ class UserHandler:
             # Vẫn cố gắng quay lại trang trước nếu có lỗi và có current_url
             try:
                 if 'current_url' in locals() and current_url:
-                    page.goto(current_url, timeout=60000)
+                    goto_with_retry(page, current_url, 60000, max_retries=3, retry_delay=5, context_name="User")
             except:
                 pass
             return user_id if 'user_id' in locals() else None
@@ -609,13 +613,20 @@ class UserHandler:
             return None
         
         try:
-            # Tìm user hiện có trong DB
-            existing_user = self.mongo.mongo_collection_users.find_one({"webUserId": web_user_id})
+            # Normalize user_url (đảm bảo là full URL)
+            if user_url and not user_url.startswith("http"):
+                if user_url.startswith("/"):
+                    user_url = config.BASE_URL + user_url
+                else:
+                    user_url = config.BASE_URL + "/" + user_url
+            
+            # Tìm user hiện có trong DB theo userUrl
+            existing_user = self.mongo.mongo_collection_users.find_one({"userUrl": user_url})
             if not existing_user:
                 # Fallback: tìm theo format cũ
-                existing_user = self.mongo.mongo_collection_users.find_one({"web_user_id": web_user_id})
+                existing_user = self.mongo.mongo_collection_users.find_one({"user_url": user_url})
             if not existing_user:
-                safe_print(f"        ⚠️ User {web_user_id} chưa có trong DB")
+                safe_print(f"        ⚠️ User với URL {user_url} chưa có trong DB")
                 return None
             
             user_id = existing_user.get("userId") or existing_user.get("user_id")
@@ -639,7 +650,10 @@ class UserHandler:
                 if personal_info_table.count() > 0:
                     joined_time = personal_info_table.locator("tbody tr:has-text('Joined:') time[datetime]").first
                     if joined_time.count() > 0:
-                        created_date = joined_time.get_attribute("datetime") or None
+                        datetime_attr = joined_time.get_attribute("datetime") or None
+                        if datetime_attr:
+                            from src.utils import parse_and_format_datetime
+                            created_date = parse_and_format_datetime(datetime_attr)
             except:
                 pass
             
@@ -839,13 +853,13 @@ class UserHandler:
             
             # Cập nhật vào MongoDB
             if update_data:
-                query = {"webUserId": web_user_id} if "webUserId" in existing_user else {"web_user_id": web_user_id}
+                query = {"userUrl": user_url} if "userUrl" in existing_user else {"user_url": user_url}
                 self.mongo.mongo_collection_users.update_one(
                     query,
                     {"$set": update_data}
                 )
                 # Debug: in ra các fields đã cập nhật
-                safe_print(f"        ✅ Đã cập nhật profile cho user {web_user_id}: {list(update_data.keys())}")
+                safe_print(f"        ✅ Đã cập nhật profile cho user với URL {user_url}: {list(update_data.keys())}")
             
             return user_id
             
@@ -879,13 +893,13 @@ class UserHandler:
             safe_print(f"    🔄 Thread-{index}: Đang scrape profile user {web_user_id}")
             
             # Navigate đến profile page
-            worker_page.goto(user_url, timeout=60000)
+            goto_with_retry(worker_page, user_url, 60000, max_retries=3, retry_delay=5, context_name="User")
             time.sleep(2)
             
             # Đợi page load xong - kiểm tra xem có table không
             try:
                 # Đợi ít nhất một trong các table xuất hiện
-                worker_page.wait_for_selector("div.portlet table", timeout=10000)
+                wait_for_selector_with_retry(worker_page, "div.portlet table", 10000, max_retries=3, retry_delay=2, context_name=f"User Thread-{index}")
             except:
                 # Nếu không có table, có thể page chưa load hoặc profile không có thông tin
                 pass

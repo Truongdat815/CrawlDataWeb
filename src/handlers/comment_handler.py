@@ -3,7 +3,7 @@ Comment handler - xử lý comment scraping
 """
 import time
 from src import config
-from src.utils import safe_print, generate_id
+from src.utils import safe_print, generate_id, goto_with_retry
 
 
 class CommentHandler:
@@ -27,7 +27,7 @@ class CommentHandler:
             current_url = self.page.url.split('?')[0] if self.page else ""
             
             if base_url not in current_url:
-                self.page.goto(base_url, timeout=config.TIMEOUT)
+                goto_with_retry(self.page, base_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Comment")
                 time.sleep(2)
             
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -93,7 +93,7 @@ class CommentHandler:
             current_url = page.url.split('?')[0]
             
             if base_url not in current_url:
-                page.goto(base_url, timeout=config.TIMEOUT)
+                goto_with_retry(page, base_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Comment")
                 time.sleep(2)
             
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -154,7 +154,7 @@ class CommentHandler:
         comments = []
         
         try:
-            self.page.goto(page_url, timeout=config.TIMEOUT)
+            goto_with_retry(self.page, page_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Comment")
             time.sleep(2)
             
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -198,7 +198,7 @@ class CommentHandler:
         
         try:
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
-            page.goto(page_url, timeout=config.TIMEOUT)
+            goto_with_retry(page, page_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Comment")
             time.sleep(2)
             
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -244,7 +244,7 @@ class CommentHandler:
         try:
             current_url = self.page.url if self.page else ""
             if url not in current_url:
-                self.page.goto(url, timeout=config.TIMEOUT)
+                goto_with_retry(self.page, url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Comment")
                 time.sleep(2)
             
             safe_print(f"      💬 Đang lấy comments ({comment_type}-level)...")
@@ -297,7 +297,7 @@ class CommentHandler:
             current_url = page.url
             if url not in current_url:
                 time.sleep(config.DELAY_BETWEEN_REQUESTS)
-                page.goto(url, timeout=config.TIMEOUT)
+                goto_with_retry(page, url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Comment")
                 time.sleep(2)
             
             safe_print(f"      💬 Đang lấy comments ({comment_type}-level)...")
@@ -368,15 +368,19 @@ class CommentHandler:
             if web_comment_id and web_comment_id.startswith("comment-container-"):
                 web_comment_id = web_comment_id.replace("comment-container-", "")
             
-            if web_comment_id and self.mongo.is_comment_scraped(web_comment_id):
+            # Check comment đã có chưa theo cặp (webCommentId, chapterId)
+            if web_comment_id and chapter_id and self.mongo.is_comment_scraped(web_comment_id, chapter_id):
+                # Comment đã có, nhưng vẫn cào reply với cùng chapter_id
                 try:
                     subcomments_list = comment_elem.locator("ul.subcomments").first
                     if subcomments_list.count() > 0:
                         reply_comments = subcomments_list.locator("div.comment").all()
-                        existing_comment = self.mongo.get_comment_by_web_id(web_comment_id)
+                        existing_comment = self.mongo.get_comment_by_web_id(web_comment_id, chapter_id)
                         existing_comment_id = existing_comment.get("commentId") if existing_comment else None
+                        existing_user_id = existing_comment.get("userId") if existing_comment else None
                         for reply_elem in reply_comments:
-                            reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=existing_comment_id, parent_user_id=None, page=page)
+                            # Vẫn cào reply với cùng chapter_id
+                            reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=existing_comment_id, parent_user_id=existing_user_id, page=page)
                             if reply_list:
                                 result_list.extend(reply_list)
                 except:
@@ -440,7 +444,10 @@ class CommentHandler:
             try:
                 time_elem = media_elem.locator("time, .timestamp, [class*='time'], [class*='date']").first
                 if time_elem.count() > 0:
-                    timestamp = time_elem.get_attribute("datetime") or (time_elem.inner_text().strip() if time_elem.inner_text().strip() else None)
+                    datetime_attr = time_elem.get_attribute("datetime")
+                    if datetime_attr:
+                        from src.utils import parse_and_format_datetime
+                        timestamp = parse_and_format_datetime(datetime_attr)
             except:
                 pass
             

@@ -36,13 +36,13 @@ MONGODB_URI = (
     f"@{CLUSTER_URL}/?rappName=RoyalRoad"
 )
 
-# MONGODB_URI = (
-#     "mongodb://user:56915001@103.90.224.232:27017/my_database"
-# )
+MONGODB_URI = (
+    "mongodb://user:56915001@103.90.224.232:27017/my_database"
+)
 
 # Cho phép override bằng environment variable (ưu tiên)
-if os.getenv("MONGODB_URI"):
-    MONGODB_URI = os.getenv("MONGODB_URI")
+# if os.getenv("MONGODB_URI"):
+#     MONGODB_URI = os.getenv("MONGODB_URI")
 
 # --- CẤU HÌNH API UPLOAD ẢNH ---
 IMAGE_UPLOAD_API_URL = "https://api-image.techleaf.pro/api/upload"

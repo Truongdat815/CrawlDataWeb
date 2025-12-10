@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import requests
 import uuid6
 import html as html_module
@@ -258,6 +259,290 @@ def generate_id():
     Returns: string với format "rr_{uuid}"
     """
     return f"rr_{uuid6.uuid7().hex}"
+
+def goto_with_retry(page, url, timeout, max_retries=3, retry_delay=5, context_name=""):
+    """
+    Navigate đến URL với retry mechanism khi timeout
+    
+    Args:
+        page: Playwright page object
+        url: URL cần navigate
+        timeout: Timeout cho mỗi lần thử (ms)
+        max_retries: Số lần retry tối đa (mặc định 3)
+        retry_delay: Delay giữa các lần retry (giây, mặc định 5)
+        context_name: Tên context để log (ví dụ: "Thread-1", "Chapter 5")
+    
+    Returns:
+        None nếu thành công
+    
+    Raises:
+        Exception nếu hết retry vẫn lỗi
+    """
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            page.goto(url, timeout=timeout)
+            if retry_count > 0:
+                safe_print(f"      ✅ {context_name}: Retry thành công sau {retry_count} lần thử")
+            return
+        except Exception as e:
+            retry_count += 1
+            last_error = e
+            error_msg = str(e)
+            
+            # Chỉ retry nếu là timeout hoặc network error
+            is_timeout = "timeout" in error_msg.lower() or "Timeout" in error_msg
+            is_network = "network" in error_msg.lower() or "net::" in error_msg
+            
+            if retry_count < max_retries and (is_timeout or is_network):
+                safe_print(f"      ⚠️ {context_name}: Timeout/Network error lần {retry_count}/{max_retries}, thử lại sau {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                # Nếu không phải timeout/network hoặc hết retry, raise lỗi
+                if not (is_timeout or is_network):
+                    # Lỗi khác không phải timeout, raise ngay
+                    raise
+                # Hết retry, raise lỗi cuối cùng
+                safe_print(f"      ❌ {context_name}: Hết retry ({max_retries} lần), không thể load URL")
+                raise last_error
+    
+    # Nếu đến đây thì đã hết retry
+    raise last_error
+
+def wait_for_selector_with_retry(page, selector, timeout, max_retries=3, retry_delay=2, context_name=""):
+    """
+    Wait for selector với retry mechanism khi timeout
+    
+    Args:
+        page: Playwright page object
+        selector: CSS selector
+        timeout: Timeout cho mỗi lần thử (ms)
+        max_retries: Số lần retry tối đa (mặc định 3)
+        retry_delay: Delay giữa các lần retry (giây, mặc định 2)
+        context_name: Tên context để log
+    
+    Returns:
+        None nếu thành công
+    
+    Raises:
+        Exception nếu hết retry vẫn lỗi
+    """
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            page.wait_for_selector(selector, timeout=timeout)
+            if retry_count > 0:
+                safe_print(f"      ✅ {context_name}: Wait selector thành công sau {retry_count} lần thử")
+            return
+        except Exception as e:
+            retry_count += 1
+            last_error = e
+            error_msg = str(e)
+            
+            is_timeout = "timeout" in error_msg.lower() or "Timeout" in error_msg
+            
+            if retry_count < max_retries and is_timeout:
+                safe_print(f"      ⚠️ {context_name}: Timeout khi chờ selector, thử lại sau {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                if not is_timeout:
+                    raise
+                safe_print(f"      ❌ {context_name}: Hết retry khi chờ selector ({max_retries} lần)")
+                raise last_error
+    
+    raise last_error
+
+def parse_and_format_date(date_str):
+    """
+    Parse và format date từ string (có thể từ title attribute hoặc text content của thẻ <time>)
+    Format input: "6/30/2025, 1:48:03 AM" hoặc "4/24/2024, 3:28 AM" (MM/DD/YYYY)
+    Format output: "30/6/2025, 1:48 AM" (DD/MM/YYYY, chỉ giờ:phút, bỏ giây)
+    
+    Args:
+        date_str: String date, ví dụ "6/30/2025, 1:48:03 AM" hoặc "4/24/2024, 3:28 AM"
+    Returns:
+        Formatted date string với format DD/MM/YYYY hoặc None nếu parse lỗi
+    """
+    if not date_str:
+        return None
+    
+    try:
+        # Parse format: "6/30/2025, 1:48:03 AM" hoặc "4/24/2024, 3:28 AM"
+        # Tách phần date và time
+        parts = date_str.split(',', 1)
+        if len(parts) != 2:
+            return None
+        
+        date_part = parts[0].strip()  # "6/30/2025"
+        time_part = parts[1].strip()  # "1:48:03 AM"
+        
+        # Parse date: MM/DD/YYYY
+        date_components = date_part.split('/')
+        if len(date_components) != 3:
+            return None
+        
+        month = int(date_components[0])
+        day = int(date_components[1])
+        year = int(date_components[2])
+        
+        # Parse time: "1:48:03 AM" -> chỉ lấy giờ:phút và AM/PM
+        # Tách theo dấu hai chấm
+        time_parts = time_part.split(':')
+        if len(time_parts) >= 2:
+            hour = time_parts[0].strip()
+            # Phần minute có thể là "48" hoặc "48:03 AM" hoặc "48 AM"
+            minute_with_rest = time_parts[1].strip()
+            
+            # Tách minute và phần còn lại (giây và AM/PM)
+            minute_rest_parts = minute_with_rest.split()
+            minute = minute_rest_parts[0]  # Lấy phần đầu (phút)
+            
+            # Tìm AM/PM trong time_part
+            am_pm = ""
+            if "AM" in time_part.upper():
+                am_pm = "AM"
+            elif "PM" in time_part.upper():
+                am_pm = "PM"
+            
+            # Format time chỉ với giờ:phút AM/PM
+            if am_pm:
+                formatted_time = f"{hour}:{minute} {am_pm}"
+            else:
+                formatted_time = f"{hour}:{minute}"
+        else:
+            formatted_time = time_part
+        
+        # Format lại: DD/MM/YYYY, giờ:phút AM/PM
+        formatted_date = f"{day}/{month}/{year}, {formatted_time}"
+        return formatted_date
+    except Exception as e:
+        safe_print(f"⚠️ Lỗi khi parse date từ title: {e}")
+        return None
+
+def parse_and_format_datetime(datetime_str):
+    """
+    Parse và format date từ datetime attribute của thẻ <time>
+    Format input: "2024-10-15T21:21:47.0000000Z" (ISO 8601)
+    Format output: "16/10/2024, 4:21 AM" (DD/MM/YYYY, HH:MM AM/PM)
+    
+    Args:
+        datetime_str: String từ datetime attribute, ví dụ "2024-10-15T21:21:47.0000000Z"
+    Returns:
+        Formatted date string với format DD/MM/YYYY, HH:MM AM/PM hoặc None nếu parse lỗi
+    """
+    if not datetime_str:
+        return None
+    
+    try:
+        from datetime import datetime
+        
+        # Parse ISO format, xử lý cả Z và timezone
+        if datetime_str.endswith('Z'):
+            datetime_str = datetime_str.replace('Z', '+00:00')
+        
+        # Parse ISO format
+        dt = datetime.fromisoformat(datetime_str)
+        
+        # Format lại: DD/MM/YYYY, HH:MM AM/PM
+        hour = dt.hour
+        minute = dt.minute
+        am_pm = "AM" if hour < 12 else "PM"
+        hour_12 = hour if hour <= 12 else hour - 12
+        if hour_12 == 0:
+            hour_12 = 12
+        
+        formatted_date = f"{dt.day}/{dt.month}/{dt.year}, {hour_12}:{minute:02d} {am_pm}"
+        return formatted_date
+    except Exception as e:
+        safe_print(f"⚠️ Lỗi khi parse datetime: {e}")
+        return None
+
+def parse_and_format_comment_date(title_str):
+    """
+    Parse và format date từ title attribute của thẻ <time> trong comment
+    Format input: "Sunday, October 28, 2018 9:35:24 PM"
+    Format output: "28/10/2018, 9:35 PM" (DD/MM/YYYY, chỉ giờ:phút, bỏ giây)
+    
+    Args:
+        title_str: String từ title attribute, ví dụ "Sunday, October 28, 2018 9:35:24 PM"
+    Returns:
+        Formatted date string với format DD/MM/YYYY hoặc None nếu parse lỗi
+    """
+    if not title_str:
+        return None
+    
+    try:
+        # Parse format: "Sunday, October 28, 2018 9:35:24 PM"
+        # Tách theo dấu phẩy
+        parts = title_str.split(',')
+        if len(parts) < 3:
+            return None
+        
+        # Bỏ qua phần đầu (day name: "Sunday")
+        month_day_part = parts[1].strip()  # "October 28"
+        year_time_part = parts[2].strip()  # "2018 9:35:24 PM"
+        
+        # Parse month và day: "October 28"
+        month_day_parts = month_day_part.split()
+        if len(month_day_parts) != 2:
+            return None
+        
+        month_name = month_day_parts[0]  # "October"
+        day = int(month_day_parts[1])    # "28"
+        
+        # Convert month name sang số
+        month_map = {
+            "January": 1, "February": 2, "March": 3, "April": 4,
+            "May": 5, "June": 6, "July": 7, "August": 8,
+            "September": 9, "October": 10, "November": 11, "December": 12
+        }
+        month = month_map.get(month_name)
+        if not month:
+            return None
+        
+        # Parse year và time: "2018 9:35:24 PM"
+        year_time_parts = year_time_part.split()
+        if len(year_time_parts) < 2:
+            return None
+        
+        year = int(year_time_parts[0])  # "2018"
+        time_str = ' '.join(year_time_parts[1:])  # "9:35:24 PM"
+        
+        # Parse time: "9:35:24 PM" -> chỉ lấy giờ:phút và AM/PM
+        time_parts = time_str.split(':')
+        if len(time_parts) >= 2:
+            hour = time_parts[0].strip()
+            minute_with_rest = time_parts[1].strip()
+            
+            # Tách minute và phần còn lại (giây và AM/PM)
+            minute_rest_parts = minute_with_rest.split()
+            minute = minute_rest_parts[0]  # Lấy phần đầu (phút)
+            
+            # Tìm AM/PM trong time_str
+            am_pm = ""
+            if "AM" in time_str.upper():
+                am_pm = "AM"
+            elif "PM" in time_str.upper():
+                am_pm = "PM"
+            
+            # Format time chỉ với giờ:phút AM/PM
+            if am_pm:
+                formatted_time = f"{hour}:{minute} {am_pm}"
+            else:
+                formatted_time = f"{hour}:{minute}"
+        else:
+            formatted_time = time_str
+        
+        # Format lại: DD/MM/YYYY, giờ:phút AM/PM
+        formatted_date = f"{day}/{month}/{year}, {formatted_time}"
+        return formatted_date
+    except Exception as e:
+        safe_print(f"⚠️ Lỗi khi parse date từ comment title: {e}")
+        return None
 
 def convert_html_to_formatted_text(html_content):
     """

@@ -10,8 +10,8 @@ def main():
     
     # ===== PHẦN MỚI: Cào trực tiếp một URL truyện =====
     # Đặt URL truyện bạn muốn cào vào đây
-    # story_url = "https://www.royalroad.com/fiction/120083/the-theogenesis-theorem-litrpg-progression-high"
-    story_url = "https://www.royalroad.com/fiction/10012/monoks-bones-discovery"
+    story_url = "https://www.royalroad.com/fiction/120083/the-theogenesis-theorem-litrpg-progression-high"
+    # story_url = "https://www.royalroad.com/fiction/10012/monoks-bones-discovery"
     # ==================================================
     
     # Khởi tạo bot

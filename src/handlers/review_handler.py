@@ -4,7 +4,7 @@ Review handler - xử lý review scraping
 import time
 import re
 from src import config
-from src.utils import safe_print, generate_id, convert_html_to_formatted_text
+from src.utils import safe_print, generate_id, convert_html_to_formatted_text, goto_with_retry
 
 
 class ReviewHandler:
@@ -28,7 +28,7 @@ class ReviewHandler:
             current_url = self.page.url.split('?')[0] if self.page else ""
             
             if base_url not in current_url:
-                self.page.goto(base_url, timeout=config.TIMEOUT)
+                goto_with_retry(self.page, base_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Review")
                 time.sleep(2)
             
             # Click vào tab Reviews nếu cần
@@ -101,7 +101,7 @@ class ReviewHandler:
         """
         reviews = []
         try:
-            self.page.goto(page_url, timeout=config.TIMEOUT)
+            goto_with_retry(self.page, page_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Review")
             time.sleep(2)
             
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -142,7 +142,8 @@ class ReviewHandler:
                     if review_id_attr and review_id_attr.startswith("review-"):
                         web_review_id = review_id_attr.replace("review-", "")
                     
-                    if web_review_id and self.mongo.is_review_scraped(web_review_id):
+                    # Check review đã có chưa theo cặp (webReviewId, storyId)
+                    if web_review_id and story_id and self.mongo.is_review_scraped(web_review_id, story_id):
                         continue
                     
                     review_data = self.parse_single_review(review_elem, story_id)
@@ -167,7 +168,7 @@ class ReviewHandler:
         try:
             safe_print("      📝 Đang lấy reviews từ trang story...")
             
-            self.page.goto(story_url, timeout=config.TIMEOUT)
+            goto_with_retry(self.page, story_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Review")
             time.sleep(2)
             
             # Click vào tab Reviews
@@ -267,7 +268,7 @@ class ReviewHandler:
                 page=self.page
             )
             
-            web_chapter_id = None
+            chapter_url = None
             try:
                 # Lấy chapter link từ review header - theo HTML mẫu: <a href="/fiction/chapter/371224">100. Sacrifice</a>
                 chapter_elem = review_elem.locator("h5.bold.font-red-sunglo a[href*='/chapter/']").first
@@ -278,23 +279,35 @@ class ReviewHandler:
                 if chapter_elem.count() > 0:
                     href = chapter_elem.get_attribute("href") or None
                     if href and "/chapter/" in href:
-                        web_chapter_id = href.split("/chapter/")[1].split("/")[0]
+                        # Tạo full URL từ href
+                        from src import config
+                        if href.startswith("/"):
+                            chapter_url = config.BASE_URL + href
+                        elif href.startswith("http"):
+                            chapter_url = href
+                        else:
+                            chapter_url = config.BASE_URL + "/" + href
             except:
                 pass
             
             chapter_id = None
-            if web_chapter_id:
-                existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
+            if chapter_url:
+                existing_chapter = self.mongo.get_chapter_by_url(chapter_url)
                 if existing_chapter:
                     # Sửa: Dùng "chapterId" thay vì "id" (đây là khóa chính trong DB)
                     chapter_id = existing_chapter.get("chapterId")
             
             time_str = None
             try:
-                time_elem = review_elem.locator("time, .timestamp, [class*='time'], [class*='date']").first
+                # Tìm time element trong review-meta hoặc trực tiếp trong review
+                time_elem = review_elem.locator(".review-meta time, time").first
                 if time_elem.count() > 0:
-                    time_str = time_elem.get_attribute("datetime") or time_elem.inner_text().strip()
-            except:
+                    datetime_attr = time_elem.get_attribute("datetime")
+                    if datetime_attr:
+                        from src.utils import parse_and_format_datetime
+                        time_str = parse_and_format_datetime(datetime_attr)
+            except Exception as e:
+                safe_print(f"        ⚠️ Lỗi khi parse review time: {e}")
                 pass
             
             content = None

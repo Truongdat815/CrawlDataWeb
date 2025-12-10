@@ -4,7 +4,7 @@ Story handler - xử lý story metadata và chapter list discovery
 import time
 import re
 from src import config
-from src.utils import safe_print, generate_id, convert_html_to_formatted_text
+from src.utils import safe_print, generate_id, convert_html_to_formatted_text, goto_with_retry, wait_for_selector_with_retry
 from src import utils
 
 
@@ -121,7 +121,7 @@ class StoryHandler:
                 
                 # Quay lại trang story sau khi lấy hash
                 if current_url:
-                    self.page.goto(current_url, timeout=config.TIMEOUT)
+                    goto_with_retry(self.page, current_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Story")
                     time.sleep(1)
                 
                 if hash_string:
@@ -328,7 +328,7 @@ class StoryHandler:
         
         try:
             safe_print(f"    📄 Đang lấy chapters từ trang 1 (trang story chính)...")
-            self.page.goto(story_url, timeout=config.TIMEOUT)
+            goto_with_retry(self.page, story_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Story")
             time.sleep(2)
             
             page_chapters = self.get_chapters_from_current_page()
@@ -363,7 +363,7 @@ class StoryHandler:
         except Exception as e:
             safe_print(f"    ⚠️ Lỗi khi lấy chapters từ pagination: {e}")
             try:
-                self.page.goto(story_url, timeout=config.TIMEOUT)
+                goto_with_retry(self.page, story_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Story")
                 time.sleep(2)
                 return self.get_chapters_from_current_page()
             except:
@@ -555,7 +555,10 @@ class StoryHandler:
                             try:
                                 time_elem = row.locator("time[datetime]").first
                                 if time_elem.count() > 0:
-                                    published_time = time_elem.get_attribute("datetime") or None
+                                    datetime_attr = time_elem.get_attribute("datetime")
+                                    if datetime_attr:
+                                        from src.utils import parse_and_format_datetime
+                                        published_time = parse_and_format_datetime(datetime_attr)
                             except:
                                 pass
                             
@@ -606,8 +609,8 @@ class StoryHandler:
             safe_print("      🔍 Đang lấy hash từ chapter 1 (500 từ đầu) để check trùng...")
             
             # Dùng self.page hiện có để vào chapter 1
-            self.page.goto(first_chapter_url, timeout=config.TIMEOUT)
-            self.page.wait_for_selector(".chapter-inner", timeout=10000)
+            goto_with_retry(self.page, first_chapter_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Story")
+            wait_for_selector_with_retry(self.page, ".chapter-inner", 10000, max_retries=3, retry_delay=2, context_name="Story")
             time.sleep(2)
             
             # Lấy content

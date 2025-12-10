@@ -4,7 +4,7 @@ Chapter handler - xử lý chapter content scraping
 import time
 from playwright.sync_api import sync_playwright
 from src import config
-from src.utils import safe_print, generate_id, convert_html_to_formatted_text
+from src.utils import safe_print, generate_id, convert_html_to_formatted_text, goto_with_retry, wait_for_selector_with_retry
 
 
 class ChapterHandler:
@@ -44,7 +44,21 @@ class ChapterHandler:
             
             safe_print(f"    🔄 Thread-{index}: Đang cào chương {index + 1}")
             
-            # Lấy web_chapter_id từ URL TRƯỚC để kiểm tra chapter đã có chưa
+            # Kiểm tra chapter đã có trong DB chưa theo URL - nếu có rồi thì chỉ scrape comments
+            if url and self.mongo.is_chapter_scraped(url):
+                safe_print(f"      ⏭️  Thread-{index}: Chapter với URL {url} đã có trong DB, chỉ scrape comments")
+                existing_chapter = self.mongo.get_chapter_by_url(url)
+                existing_chapter_id = existing_chapter.get("chapterId") if existing_chapter else None
+                if existing_chapter_id:
+                    # Navigate đến chapter URL để scrape comments
+                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
+                    goto_with_retry(worker_page, url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name=f"Thread-{index}")
+                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
+                    # Chỉ scrape comments, không scrape chapter content
+                    self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", existing_chapter_id)
+                return None
+            
+            # Lấy web_chapter_id từ URL để lưu vào chapter_data
             web_chapter_id = None
             try:
                 url_parts = url.split("/chapter/")
@@ -53,34 +67,31 @@ class ChapterHandler:
             except:
                 web_chapter_id = None
             
-            # Kiểm tra chapter đã có trong DB chưa - nếu có rồi thì chỉ scrape comments
-            if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
-                safe_print(f"      ⏭️  Thread-{index}: Chapter {web_chapter_id} đã có trong DB, chỉ scrape comments")
-                existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_id)
-                existing_chapter_id = existing_chapter.get("chapterId") if existing_chapter else None
-                if existing_chapter_id:
-                    # Navigate đến chapter URL để scrape comments
-                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
-                    worker_page.goto(url, timeout=config.TIMEOUT)
-                    time.sleep(config.DELAY_BETWEEN_REQUESTS)
-                    # Chỉ scrape comments, không scrape chapter content
-                    self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", existing_chapter_id)
-                return None
-            
             # Chapter chưa có trong DB, scrape chapter content
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
-            worker_page.goto(url, timeout=config.TIMEOUT)
-            worker_page.wait_for_selector(".chapter-inner", timeout=10000)
+            goto_with_retry(worker_page, url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name=f"Thread-{index}")
+            wait_for_selector_with_retry(worker_page, ".chapter-inner", 10000, max_retries=3, retry_delay=2, context_name=f"Thread-{index}")
             time.sleep(config.DELAY_BETWEEN_REQUESTS)
             
             title = worker_page.locator("h1").first.inner_text()
             
             published_time = published_time_from_table
+            # Nếu published_time_from_table chưa được format (có thể là ISO format), format lại
+            if published_time and ("T" in published_time or published_time.endswith("Z")):
+                try:
+                    from src.utils import parse_and_format_datetime
+                    published_time = parse_and_format_datetime(published_time)
+                except:
+                    pass
+            
             if not published_time:
                 try:
-                    time_elem = worker_page.locator("time[datetime]").first
+                    time_elem = worker_page.locator("time").first
                     if time_elem.count() > 0:
-                        published_time = time_elem.get_attribute("datetime") or None
+                        datetime_attr = time_elem.get_attribute("datetime")
+                        if datetime_attr:
+                            from src.utils import parse_and_format_datetime
+                            published_time = parse_and_format_datetime(datetime_attr)
                 except:
                     pass
             
@@ -125,7 +136,7 @@ class ChapterHandler:
             }
             
             self.mongo.save_chapter(chapter_data)
-            safe_print(f"      ✅ Thread-{index}: Đã lưu chapter {web_chapter_id} vào DB")
+            safe_print(f"      ✅ Thread-{index}: Đã lưu chapter với URL {url} vào DB")
             
             # Sau khi lưu chapter vào DB, mới scrape comments
             safe_print(f"      💬 Thread-{index}: Đang lấy comments cho chương")

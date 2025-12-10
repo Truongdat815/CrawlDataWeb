@@ -5,7 +5,7 @@ Sử dụng các handlers để thực hiện scraping
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src import config
-from src.utils import safe_print
+from src.utils import safe_print, goto_with_retry
 
 # Import handlers
 from src.handlers.base_handler import BaseHandler
@@ -66,7 +66,7 @@ class RoyalRoadScraper(BaseHandler):
             start_from: Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên, 5 = bỏ qua 5 bộ đầu)
         """
         safe_print(f"📚 Đang truy cập trang best-rated: {best_rated_url}")
-        self.page.goto(best_rated_url, timeout=config.TIMEOUT)
+        goto_with_retry(self.page, best_rated_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Scraper")
         time.sleep(2)
         
         # Lấy danh sách các bộ truyện từ trang best-rated
@@ -111,7 +111,7 @@ class RoyalRoadScraper(BaseHandler):
         Luồng đi: Vào trang truyện -> Lấy Info -> Lấy List Chapter -> Vào từng Chapter -> Lấy Content.
         """
         safe_print(f"🌍 Đang truy cập truyện: {story_url}")
-        self.page.goto(story_url, timeout=config.TIMEOUT)
+        goto_with_retry(self.page, story_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Scraper")
         
         # 1. Lấy web_story_id từ URL (Ví dụ: 21220)
         web_story_id = story_url.split("/")[4]
@@ -175,18 +175,10 @@ class RoyalRoadScraper(BaseHandler):
             # Check từng chapter để đảm bảo không bỏ sót
             for index, chapter_info in enumerate(chapter_info_list):
                 chap_url = chapter_info["url"]
-                # Lấy web_chapter_id từ URL
-                web_chapter_id = ""
-                try:
-                    url_parts = chap_url.split("/chapter/")
-                    if len(url_parts) > 1:
-                        web_chapter_id = url_parts[1].split("/")[0]
-                except:
-                    pass
                 
-                # Kiểm tra chapter đã có chưa (check theo web_chapter_id)
-                if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
-                    safe_print(f"    ⏭️  Bỏ qua chapter {index + 1} (đã có trong DB): {web_chapter_id}")
+                # Kiểm tra chapter đã có chưa (check theo URL)
+                if chap_url and self.mongo.is_chapter_scraped(chap_url):
+                    safe_print(f"    ⏭️  Bỏ qua chapter {index + 1} (đã có trong DB): {chap_url}")
                 else:
                     chapters_to_scrape.append((index, chapter_info))
             
@@ -261,7 +253,7 @@ class RoyalRoadScraper(BaseHandler):
         
         # 9. Sau khi lưu tất cả chapters, quay lại URL của truyện để scrape reviews
         safe_print("... Đang quay lại trang truyện để lấy reviews")
-        self.page.goto(story_url, timeout=config.TIMEOUT)
+        goto_with_retry(self.page, story_url, config.TIMEOUT, max_retries=3, retry_delay=5, context_name="Scraper")
         time.sleep(2)
         
         safe_print("... Đang lấy reviews cho toàn bộ truyện")
