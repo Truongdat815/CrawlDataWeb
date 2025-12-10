@@ -29,6 +29,7 @@ class MongoHandler:
         self.mongo_collection_chapter_contents = None
         self.mongo_collection_websites = None
         self.mongo_collection_rankings = None
+        self.mongo_collection_glossaries = None
         self.scribblehub_website_id = None  # Lưu website_id của ScribbleHub
         
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
@@ -45,13 +46,14 @@ class MongoHandler:
                 self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
                 self.mongo_collection_websites = self.mongo_db["websites"]
                 self.mongo_collection_rankings = self.mongo_db["rankings"]
+                self.mongo_collection_glossaries = self.mongo_db["glossaries"]
                 
                 # Kiểm tra và tạo ScribbleHub website nếu chưa có
                 scribblehub_id = self.ensure_scribblehub_website()
                 if scribblehub_id:
                     self.scribblehub_website_id = scribblehub_id
                 
-                safe_print("✅ Đã kết nối MongoDB với 10 collections")
+                safe_print("✅ Đã kết nối MongoDB với 11 collections")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -155,24 +157,35 @@ class MongoHandler:
         """
         Lưu chapter vào MongoDB ngay khi cào xong chapter và comments
         ✅ Khóa chính: chapter_id (không phải "id")
+        📦 Collection: "chapters"
         """
-        if not chapter_data or not self.mongo_collection_chapters:
+        if not chapter_data:
+            safe_print(f"      ⚠️ Không có chapter_data để lưu")
+            return
+        
+        if not self.mongo_collection_chapters:
+            safe_print(f"      ⚠️ MongoDB collection 'chapters' chưa được khởi tạo")
             return
         
         try:
+            web_chapter_id = chapter_data.get("web_chapter_id", "")
+            chapter_name = chapter_data.get("chapter_name", "")[:50]  # Lấy 50 ký tự đầu
+            
             # Tìm theo web_chapter_id (unique identifier từ web)
-            existing = self.mongo_collection_chapters.find_one({"web_chapter_id": chapter_data.get("web_chapter_id")})
+            existing = self.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
             if existing:
                 self.mongo_collection_chapters.update_one(
-                    {"web_chapter_id": chapter_data.get("web_chapter_id")},
+                    {"web_chapter_id": web_chapter_id},
                     {"$set": chapter_data}
                 )
-                safe_print(f"      🔄 Đã cập nhật chapter {chapter_data.get('web_chapter_id')} trong MongoDB")
+                safe_print(f"      🔄 Đã cập nhật chapter trong MongoDB collection 'chapters': {web_chapter_id} - {chapter_name}...")
             else:
                 self.mongo_collection_chapters.insert_one(chapter_data)
-                safe_print(f"      ✅ Đã lưu chapter {chapter_data.get('web_chapter_id')} vào MongoDB")
+                safe_print(f"      ✅ Đã lưu chapter vào MongoDB collection 'chapters': {web_chapter_id} - {chapter_name}...")
         except Exception as e:
-            safe_print(f"      ⚠️ Lỗi khi lưu chapter vào MongoDB: {e}")
+            safe_print(f"      ⚠️ Lỗi khi lưu chapter vào MongoDB collection 'chapters': {e}")
+            import traceback
+            safe_print(f"      {traceback.format_exc()}")
     
     def save_comment(self, comment_data):
         """
@@ -369,12 +382,18 @@ class MongoHandler:
     def save_chapter_content(self, content_id, content, chapter_id):
         """
         Lưu chapter content vào MongoDB collection chapter_contents
+        📦 Collection: "chapter_contents"
         Args:
             content_id: ID của content (khóa chính tự gen - rr_{uuid})
             content: Nội dung chapter
             chapter_id: ID của chapter (FK - rr_{uuid})
         """
-        if not content_id or not content or not chapter_id or not self.mongo_collection_chapter_contents:
+        if not content_id or not content or not chapter_id:
+            safe_print(f"      ⚠️ Không có đủ thông tin để lưu chapter content (content_id: {content_id}, chapter_id: {chapter_id}, content length: {len(content) if content else 0})")
+            return
+        
+        if not self.mongo_collection_chapter_contents:
+            safe_print(f"      ⚠️ MongoDB collection 'chapter_contents' chưa được khởi tạo")
             return
         
         try:
@@ -411,10 +430,12 @@ class MongoHandler:
                         else:
                             # Insert mới
                             self.mongo_collection_chapter_contents.insert_one(content_data)
+                            safe_print(f"      ✅ Đã lưu chapter content vào MongoDB collection 'chapter_contents' (chapter_id: {chapter_id}, content length: {len(content)} ký tự)")
                     else:
                         # Insert mới nếu không tìm thấy chapter
                         self.mongo_collection_chapter_contents.insert_one(content_data)
-                except:
+                        safe_print(f"      ✅ Đã lưu chapter content vào MongoDB collection 'chapter_contents' (chapter_id: {chapter_id}, content length: {len(content)} ký tự)")
+                except Exception as e:
                     # Fallback: so sánh theo chapter_id nếu lỗi
                     existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
                     if existing:
@@ -422,8 +443,10 @@ class MongoHandler:
                             {"chapter_id": chapter_id},
                             {"$set": content_data}
                         )
+                        safe_print(f"      🔄 Đã cập nhật chapter content trong MongoDB collection 'chapter_contents' (chapter_id: {chapter_id})")
                     else:
                         self.mongo_collection_chapter_contents.insert_one(content_data)
+                        safe_print(f"      ✅ Đã lưu chapter content vào MongoDB collection 'chapter_contents' (chapter_id: {chapter_id}, content length: {len(content)} ký tự)")
             else:
                 # Fallback: so sánh theo chapter_id nếu không có web_chapter_id
                 existing = self.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
@@ -432,10 +455,14 @@ class MongoHandler:
                         {"chapter_id": chapter_id},
                         {"$set": content_data}
                     )
+                    safe_print(f"      🔄 Đã cập nhật chapter content trong MongoDB collection 'chapter_contents' (chapter_id: {chapter_id})")
                 else:
                     self.mongo_collection_chapter_contents.insert_one(content_data)
+                    safe_print(f"      ✅ Đã lưu chapter content vào MongoDB collection 'chapter_contents' (chapter_id: {chapter_id}, content length: {len(content)} ký tự)")
         except Exception as e:
-            safe_print(f"      ⚠️ Lỗi khi lưu chapter content vào MongoDB: {e}")
+            safe_print(f"      ⚠️ Lỗi khi lưu chapter content vào MongoDB collection 'chapter_contents': {e}")
+            import traceback
+            safe_print(f"      {traceback.format_exc()}")
     
     # ========== Get methods ==========
     
@@ -523,4 +550,36 @@ class MongoHandler:
             return self.mongo_collection_comments.find_one({"web_comment_id": web_comment_id})
         except:
             return None
+    
+    def save_glossary(self, glossary_data):
+        """
+        Lưu glossary item vào MongoDB
+        ✅ Schema: glossary_id (PK), story_id (FK), category, title, description, order
+        """
+        if not glossary_data or not self.mongo_collection_glossaries:
+            return
+        
+        try:
+            # Tìm theo story_id + category + title để tránh trùng
+            existing = self.mongo_collection_glossaries.find_one({
+                "story_id": glossary_data.get("story_id"),
+                "category": glossary_data.get("category"),
+                "title": glossary_data.get("title")
+            })
+            
+            if existing:
+                # Update nếu đã có
+                self.mongo_collection_glossaries.update_one(
+                    {
+                        "story_id": glossary_data.get("story_id"),
+                        "category": glossary_data.get("category"),
+                        "title": glossary_data.get("title")
+                    },
+                    {"$set": glossary_data}
+                )
+            else:
+                # Insert mới
+                self.mongo_collection_glossaries.insert_one(glossary_data)
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi lưu glossary vào MongoDB: {e}")
 

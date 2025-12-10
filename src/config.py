@@ -34,11 +34,11 @@ ENABLE_HUMAN_BEHAVIOR = True  # Bật giả lập hành vi người dùng
 
 # ========== CẤU HÌNH CLOUDFLARE ==========
 # Thời gian đợi Cloudflare challenge (giây) - TĂNG LÊN để pass challenge tốt hơn
-CLOUDFLARE_MAX_WAIT = 180  # Thời gian tối đa đợi Cloudflare challenge (tăng lên 180 giây = 3 phút)
-CLOUDFLARE_CHECK_DELAY = 5  # Delay sau khi goto để kiểm tra Cloudflare
-CLOUDFLARE_CHALLENGE_DELAY = 15  # Delay thêm nếu phát hiện challenge
-CLOUDFLARE_POST_PASS_DELAY = 15  # Delay sau khi detect challenge pass
-CLOUDFLARE_VERIFY_WAIT = 30  # Thời gian đợi sau khi verify (TĂNG lên 30 giây để đảm bảo)
+CLOUDFLARE_MAX_WAIT = 300  # Thời gian tối đa đợi Cloudflare challenge (tăng lên 300 giây = 5 phút)
+CLOUDFLARE_CHECK_DELAY = 10  # Delay sau khi goto để kiểm tra Cloudflare (tăng lên 10s)
+CLOUDFLARE_CHALLENGE_DELAY = 20  # Delay thêm nếu phát hiện challenge (tăng lên 20s)
+CLOUDFLARE_POST_PASS_DELAY = 30  # Delay sau khi detect challenge pass (tăng lên 30s)
+CLOUDFLARE_VERIFY_WAIT = 60  # Thời gian đợi sau khi verify (TĂNG lên 60 giây để đảm bảo)
 
 # ========== CẤU HÌNH COOKIES & SESSION ==========
 # Lưu cookies sau khi verify để không phải verify lại
@@ -50,8 +50,11 @@ ENABLE_COOKIE_PERSISTENCE = True  # Bật lưu cookies
 # → Cookies được giữ tự động
 # → Verify 1 lần duy nhất, scrape suốt không loop
 USE_PERSISTENT_CONTEXT = True  # Bật persistent context (real browser mode)
-USER_DATA_DIR = "user-data"  # Thư mục lưu Chrome profile (tự động tạo)
+USE_CURRENT_CHROME_PROFILE = False  # Tạo Chrome mới với anti-detection mạnh để vượt Cloudflare
+USER_DATA_DIR = "user-data"  # Thư mục lưu Chrome profile
+# ⚠️ QUAN TRỌNG: Nếu USE_CURRENT_CHROME_PROFILE = True, sẽ LUÔN thử kết nối đến Chrome đang chạy trước
 # Hoặc dùng Chrome profile có sẵn: "C:/Users/YourName/AppData/Local/Google/Chrome/User Data"
+# ⚠️ LƯU Ý: Nếu USE_CURRENT_CHROME_PROFILE = True, sẽ dùng profile Chrome hiện tại của bạn
 
 # ========== CẤU HÌNH SCRAPING METHOD ==========
 # ✅ CÁCH 5: Dùng requests cho chapter scraping (không dùng Playwright)

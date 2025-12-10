@@ -79,36 +79,50 @@ class ChapterHandler:
             
             content = ""
             try:
-                # ✅ Lấy từ div.chp_raw (có nhiều thẻ p, giữ đúng format như UI)
+                # ✅ Ưu tiên lấy toàn bộ HTML trong #chp_raw/.chp_raw
+                # và loại bỏ phần author notes (.wi_authornotes) bên trong
                 content_container = page.locator("#chp_raw, .chp_raw").first
                 if content_container.count() > 0:
+                    try:
+                        # Xóa tất cả .wi_authornotes bên trong chp_raw (Patreon, lời tác giả, v.v.)
+                        page.evaluate(
+                            """
+                            (el) => {
+                                if (!el) return;
+                                const notes = el.querySelectorAll('.wi_authornotes');
+                                notes.forEach(n => n.remove());
+                            }
+                            """,
+                            content_container,
+                        )
+                    except Exception as _e:
+                        # Nếu có lỗi khi evaluate JS thì bỏ qua, tiếp tục dùng HTML hiện tại
+                        pass
+
+                    # Lấy lại HTML sau khi đã loại bỏ author notes
                     html_content = content_container.inner_html()
-                    # convert_html_to_formatted_text sẽ giữ đúng format:
-                    # - Mỗi <p> = một đoạn văn, các đoạn cách nhau bằng một dòng trống
-                    # - <br> = xuống dòng
-                    # - Giữ nguyên cấu trúc như trong UI
                     content = convert_html_to_formatted_text(html_content)
-                    safe_print(f"      ✅ Đã lấy content từ .chp_raw ({len(content)} ký tự)")
+                    safe_print(f"      ✅ Đã lấy content từ #chp_raw/.chp_raw ({len(content)} ký tự, đã bỏ author notes)")
                 else:
-                    # Fallback 1: Thử .chapter-inner
+                    # Fallback 1: Thử .chapter-inner với helper convert_html_to_formatted_text
                     try:
                         content_container = page.locator(".chapter-inner").first
                         if content_container.count() > 0:
                             html_content = content_container.inner_html()
                             content = convert_html_to_formatted_text(html_content)
-                            safe_print(f"      ⚠️ Dùng fallback .chapter-inner")
+                            safe_print("      ⚠️ Dùng fallback .chapter-inner")
                         else:
-                            # Fallback 2: Lấy text thô
+                            # Fallback 2: Lấy text thô toàn trang
                             content = page.locator("body").inner_text()
-                            safe_print(f"      ⚠️ Dùng fallback body text")
-                    except:
+                            safe_print("      ⚠️ Dùng fallback body text")
+                    except Exception:
                         pass
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi lấy content: {e}")
                 try:
                     # Fallback cuối cùng
                     content = page.locator("body").inner_text()
-                except:
+                except Exception:
                     pass
             
             # 5. Lấy published_time nếu chưa có
@@ -133,14 +147,28 @@ class ChapterHandler:
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi khi lấy web_chapter_id: {e}")
             
-            # 7. Kiểm tra đã có chưa
-            if web_chapter_id and self.mongo.is_chapter_scraped(web_chapter_id):
-                safe_print(f"      ⏭️  Bỏ qua (Đã tồn tại): {web_chapter_id}")
-                return None
+            # 7. Kiểm tra chapter đã có trong DB chưa (có thể chỉ có metadata từ table of contents)
+            chapter_id = None
+            existing_chapter = None
+            if web_chapter_id and self.mongo.mongo_collection_chapters:
+                try:
+                    existing_chapter = self.mongo.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
+                    if existing_chapter:
+                        chapter_id = existing_chapter.get("chapter_id")
+                        # Kiểm tra xem đã có content chưa
+                        if chapter_id and self.mongo.mongo_collection_chapter_contents:
+                            content_doc = self.mongo.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
+                            if content_doc and content_doc.get("content"):
+                                safe_print(f"      ⏭️  Bỏ qua (Đã có content): {web_chapter_id}")
+                                return None
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi khi kiểm tra chapter trong DB: {e}")
             
-            chapter_id = generate_id()
+            # Nếu chưa có chapter_id, tạo mới
+            if not chapter_id:
+                chapter_id = generate_id()
             
-            # 8. Lưu Content
+            # 8. Lưu Content (chỉ nếu chưa có)
             if content and chapter_id:
                 if not self.mongo.is_chapter_content_scraped(chapter_id):
                     content_id = generate_id()
@@ -154,13 +182,13 @@ class ChapterHandler:
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi khi scrape comments: {e}")
             
-            # 10. Lưu Info
+            # 10. Lưu/Update Info (update nếu đã có metadata, insert nếu chưa có)
             chapter_data = {
-                "id": chapter_id,
+                "chapter_id": chapter_id,
                 "web_chapter_id": web_chapter_id,
                 "order": order,
-                "name": title,
-                "url": url,
+                "chapter_name": chapter_name,
+                "chapter_url": url,
                 "published_time": published_time,
                 "story_id": story_id,
                 "voted": "",

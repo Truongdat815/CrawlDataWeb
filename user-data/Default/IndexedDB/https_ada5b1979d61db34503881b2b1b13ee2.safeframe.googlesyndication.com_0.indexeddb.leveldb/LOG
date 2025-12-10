@@ -1,0 +1,6 @@
+2025/12/05-07:32:41.174 57fc Creating DB D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\IndexedDB\https_ada5b1979d61db34503881b2b1b13ee2.safeframe.googlesyndication.com_0.indexeddb.leveldb since it was missing.
+2025/12/05-07:32:41.182 57fc Reusing MANIFEST D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\IndexedDB\https_ada5b1979d61db34503881b2b1b13ee2.safeframe.googlesyndication.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/12/05-07:32:43.699 5c30 Level-0 table #5: started
+2025/12/05-07:32:43.703 5c30 Level-0 table #5: 460 bytes OK
+2025/12/05-07:32:43.705 5c30 Delete type=0 #3
+2025/12/05-07:32:43.706 5c30 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

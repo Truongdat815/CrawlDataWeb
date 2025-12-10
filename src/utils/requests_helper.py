@@ -74,13 +74,17 @@ def scrape_chapter_with_requests(session, url):
         title_elem = soup.select_one('h1')
         title = title_elem.get_text(strip=True) if title_elem else ""
         
-        # Lấy content từ div.chp_raw (giữ đúng format như UI)
+        # Lấy content từ div.chp_raw (#chp_raw hoặc .chp_raw)
         content_elem = soup.select_one('#chp_raw, .chp_raw')
         if content_elem:
+            # Xóa các author notes bên trong (wi_authornotes) nếu có
+            for note in content_elem.select('.wi_authornotes'):
+                note.decompose()
+
             html_content = str(content_elem)
             content = convert_html_to_formatted_text(html_content)
         else:
-            # Fallback: Thử .chapter-inner
+            # Fallback: Thử .chapter-inner với helper convert_html_to_formatted_text
             content_elem = soup.select_one('.chapter-inner')
             if content_elem:
                 html_content = str(content_elem)
