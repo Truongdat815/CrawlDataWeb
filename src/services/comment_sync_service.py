@@ -24,19 +24,37 @@ class CommentSyncService:
                     web_comments = []
             except Exception:
                 web_comments = []
-        db_comments = list(self.db["comments"].find({"webChapterId": web_chapter_id}))
+        # Determine internal chapterId from chapters collection if available
+        chapter_id = None
+        try:
+            chap = self.db["chapters"].find_one({"webChapterId": str(web_chapter_id)})
+            if chap and chap.get("chapterId"):
+                chapter_id = chap.get("chapterId")
+        except Exception:
+            chapter_id = None
+
+        # Comments collection historically keyed by chapterId (internal). If we
+        # have chapterId, query by that; otherwise fallback to webChapterId field.
+        if chapter_id:
+            db_comments = list(self.db["comments"].find({"chapterId": str(chapter_id)}))
+        else:
+            db_comments = list(self.db["comments"].find({"webChapterId": web_chapter_id}))
 
         web_map = {c["webCommentId"]: c for c in web_comments}
         db_map = {c["webCommentId"]: c for c in db_comments}
 
-        self._sync_new_comments(web_map, db_map, web_chapter_id)
+        # Pass chapter_id so inserted comments include internal chapterId when available
+        self._sync_new_comments(web_map, db_map, web_chapter_id, chapter_id)
         self._sync_edited_comments(web_map, db_map)
         self._sync_deleted_comments(web_map, db_map)
 
-    def _sync_new_comments(self, web_map, db_map, web_chapter_id):
+    def _sync_new_comments(self, web_map, db_map, web_chapter_id, chapter_id=None):
         for web_id, web_comment in web_map.items():
             if web_id not in db_map:
+                # Ensure required fields for comments collection
                 web_comment["webChapterId"] = web_chapter_id
+                if chapter_id:
+                    web_comment["chapterId"] = str(chapter_id)
                 web_comment["isDeleted"] = False
                 self.db["comments"].insert_one(web_comment)
 
