@@ -1454,6 +1454,31 @@ class WattpadScraper:
                             should_crawl = True
 
                         if not should_crawl:
+                            # If content exists, still sync comments (new/edited/deleted)
+                            try:
+                                if fetch_comments and web_chapter_id and (self.mongo_db is not None):
+                                    # Try to fetch comments for this chapter via available methods.
+                                    web_comments = None
+                                    try:
+                                        fetcher = getattr(self.comment_scraper, 'fetch_comments', None)
+                                        if callable(fetcher):
+                                            web_comments = fetcher(web_chapter_id)
+                                        else:
+                                            # Fallback to scraper_engine's v5 fetch (uses Playwright/session)
+                                            web_comments = self.fetch_comments_from_api_v5(web_chapter_id, chapter_id=chapter_id)
+                                    except Exception:
+                                        try:
+                                            web_comments = self.fetch_comments_from_api_v5(web_chapter_id, chapter_id=chapter_id)
+                                        except Exception:
+                                            web_comments = []
+
+                                    from .services.comment_sync_service import CommentSyncService
+                                    comment_sync = CommentSyncService(self.mongo_db, self.comment_scraper)
+                                    comment_sync.sync_comments(web_chapter_id, web_comments=web_comments)
+                                    safe_print(f"      ✅ Synced comments for existing chapter webChapterId={web_chapter_id}")
+                            except Exception as e:
+                                safe_print(f"      ⚠️ Lỗi khi sync comments for existing chapter {web_chapter_id}: {e}")
+
                             dup_checker.close()
                             safe_print(f"      ℹ️ Skipping chapter (already has content): webChapterId={web_chapter_id}")
                             continue  # Skip to next chapter
@@ -1583,6 +1608,16 @@ class WattpadScraper:
                                     user_name = comment.get("userName")  # Extract userName from comment (display name)
                                     safe_print(f"      [DEBUG] Saving comment to MongoDB commentId={comment.get('commentId')} user={user_name}")
                                     self.comment_scraper.save_comment_to_mongo(comment, user_name=user_name)
+
+                        # Step 3g: Sync comments (new/edited/deleted) using CommentSyncService
+                        if fetch_comments and web_chapter_id and self.comment_scraper and (self.mongo_db is not None):
+                            try:
+                                from .services.comment_sync_service import CommentSyncService
+                                comment_sync = CommentSyncService(self.mongo_db, self.comment_scraper)
+                                comment_sync.sync_comments(web_chapter_id)
+                                safe_print(f"      ✅ Comment sync completed for webChapterId={web_chapter_id}")
+                            except Exception as e:
+                                safe_print(f"      ⚠️ Lỗi khi sync comments: {e}")
                         
                     except Exception as e:
                         safe_print(f"      ⚠️ Lỗi: {e}")

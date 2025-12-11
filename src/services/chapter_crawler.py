@@ -106,6 +106,15 @@ class ChapterCrawler:
                 safe_print(f"[CHAPTER_CRAWLER] ℹ️ No chapters discovered after fallbacks for {web_story_id}")
                 return {"total_parts": 0, "inserted": 0}
 
+        # Respect MAX_CHAPTERS_PER_STORY configuration when populating metadata
+        try:
+            max_ch = getattr(config, 'MAX_CHAPTERS_PER_STORY', None)
+            original_total = len(parts)
+            if max_ch and isinstance(max_ch, int) and max_ch > 0:
+                parts = parts[:max_ch]
+        except Exception:
+            original_total = len(parts)
+
         inserted = 0
         total = len(parts)
         col = None

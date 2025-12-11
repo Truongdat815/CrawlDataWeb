@@ -5,14 +5,25 @@ class CommentSyncService:
         self.db = db
         self.comment_scraper = comment_scraper
 
-    def sync_comments(self, web_chapter_id):
+    def sync_comments(self, web_chapter_id, web_comments=None):
         """
         Đồng bộ:
         - Comment mới
         - Comment chỉnh sửa
         - Comment bị xóa
         """
-        web_comments = self.comment_scraper.fetch_comments(web_chapter_id)
+        # If caller provided fetched web_comments, use them. Otherwise try to
+        # delegate to the comment_scraper if it implements a fetch method.
+        if web_comments is None:
+            try:
+                fetcher = getattr(self.comment_scraper, 'fetch_comments', None)
+                if callable(fetcher):
+                    web_comments = fetcher(web_chapter_id)
+                else:
+                    # No fetch available on comment_scraper; caller should pass web_comments
+                    web_comments = []
+            except Exception:
+                web_comments = []
         db_comments = list(self.db["comments"].find({"webChapterId": web_chapter_id}))
 
         web_map = {c["webCommentId"]: c for c in web_comments}
