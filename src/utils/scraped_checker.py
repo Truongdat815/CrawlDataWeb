@@ -6,20 +6,51 @@ Helper functions to check if story/chapter already scraped
 Optimized: Load all IDs into memory once instead of querying DB multiple times
 """
 
+import logging
 from src import config
 from pymongo import MongoClient
-from src.scrapers.base import safe_print
+from ..scrapers.base import safe_print
 
 
 class ScrapedChecker:
-    """Check if story/chapter/content already exists in database (optimized with caching)"""
-    
-    def __init__(self):
-        """Initialize MongoDB connection and cache all IDs in memory"""
+    """Check if story/chapter/content already exists in database (optimized with caching)
+
+    Accepts optional injected `db` or `client` for testing so unit tests can avoid
+    creating a real MongoClient connection.
+    """
+
+    def get_current_web_comment_ids(self, chapter_id):
+        """Trả về danh sách webCommentId của các comment thuộc chapter_id hiện tại trong DB"""
+        if not self.is_connected:
+            return []
         try:
-            self.client = MongoClient(config.MONGODB_URI)
-            self.db = self.client[config.MONGODB_DB_NAME]
-            self.is_connected = True
+            comments = self.db["comments"].find({"chapterId": str(chapter_id)}, {"webCommentId": 1})
+            return [c.get("webCommentId") for c in comments if c.get("webCommentId")]
+        except Exception:
+            logging.exception("⚠️ Lỗi khi lấy webCommentId cho chapter %s", chapter_id)
+            return []
+    
+    def __init__(self, client=None, db=None):
+        """Initialize MongoDB connection and cache all IDs in memory.
+
+        Optional args for tests:
+            client: a MongoClient-like object
+            db: a database-like object (used directly if provided)
+        """
+        try:
+            # Allow injecting a db or client for unit tests
+            if db is not None:
+                self.client = None
+                self.db = db
+                self.is_connected = True
+            elif client is not None:
+                self.client = client
+                self.db = client[config.MONGODB_DB_NAME]
+                self.is_connected = True
+            else:
+                self.client = MongoClient(config.MONGODB_URI)
+                self.db = self.client[config.MONGODB_DB_NAME]
+                self.is_connected = True
             
             # ✅ CACHE: Load all IDs vào memory một lần
             self.story_ids = set()
@@ -27,8 +58,8 @@ class ScrapedChecker:
             self.chapter_content_ids = set()
             
             self._load_cache()
-        except Exception as e:
-            safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
+        except Exception:
+            logging.exception("⚠️ Không thể kết nối MongoDB hoặc load cache")
             self.is_connected = False
     
     def _load_cache(self):
@@ -51,8 +82,8 @@ class ScrapedChecker:
             chapter_contents_collection = self.db["chapter_contents"]
             self.chapter_content_ids = set(doc["contentId"] for doc in chapter_contents_collection.find({}, {"contentId": 1}))
             safe_print(f"   💾 Loaded {len(self.chapter_content_ids)} chapter content IDs to cache")
-        except Exception as e:
-            safe_print(f"⚠️ Lỗi load cache: {e}")
+        except Exception:
+            logging.exception("⚠️ Lỗi load cache")
     
     def story_exists(self, story_id):
         """Check if story đã được cào (check cache, NOT query DB)
@@ -131,8 +162,8 @@ class ScrapedChecker:
                 "comments_count": comments_count,
                 "last_updated": story.get("time")
             }
-        except Exception as e:
-            safe_print(f"⚠️ Lỗi get story status: {e}")
+        except Exception:
+            logging.exception("⚠️ Lỗi get story status")
             return None
     
     def close(self):

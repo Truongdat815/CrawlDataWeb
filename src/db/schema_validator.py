@@ -3,7 +3,7 @@ MongoDB schema validators
 Defines validation rules for MongoDB collections
 """
 
-from src.schemas import comment_schema, story_schema, chapter_schema, user_schema
+from ..schemas import comment_schema, story_schema, chapter_schema, user_schema
 
 
 def get_comment_validator():
@@ -50,7 +50,7 @@ def get_story_validator():
                 "mature": {"bsonType": "bool"},
                 "status": {"enum": ["completed", "ongoing"]},
                 "time": {"bsonType": ["string", "null"]},
-                "language": {"bsonType": ["object", "null"]},  # {id, name}
+                "language": {"bsonType": ["string", "null"]},  # language name string
             }
         }
     }

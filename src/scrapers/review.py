@@ -3,7 +3,7 @@ Review scraper module - handles story reviews and ratings.
 """
 
 import time
-from src.scrapers.base import BaseScraper, safe_print
+from .base import BaseScraper, safe_print
 from src import config
 
 

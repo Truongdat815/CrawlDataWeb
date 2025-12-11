@@ -10,13 +10,13 @@ Each module handles one collection:
 - website: Website source management (multi-source support)
 """
 
-from src.scrapers.story import StoryScraper
-from src.scrapers.chapter import ChapterScraper
-from src.scrapers.comment import CommentScraper
-from src.scrapers.user import UserScraper
-from src.scrapers.chapter_content import ChapterContentScraper
-from src.scrapers.website import WebsiteScraper
-from src.scrapers.base import BaseScraper, safe_print
+from .story import StoryScraper
+from .chapter import ChapterScraper
+from .comment import CommentScraper
+from .user import UserScraper
+from .chapter_content import ChapterContentScraper
+from .website import WebsiteScraper
+from .base import BaseScraper, safe_print
 
 __all__ = [
     'StoryScraper',

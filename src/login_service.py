@@ -7,7 +7,7 @@ import os
 import json
 import time
 from pathlib import Path
-from src.scrapers.base import safe_print
+from .scrapers.base import safe_print
 from src import config
 
 

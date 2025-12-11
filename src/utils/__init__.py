@@ -1,7 +1,7 @@
 # Utils package
 import os
 import requests
-from src.config import IMAGES_DIR
+from ..config import IMAGES_DIR
 
 def download_image(image_url, fiction_id):
     """
@@ -30,7 +30,7 @@ def download_image(image_url, fiction_id):
                 f.write(response.content)
             return file_path  # Trả về đường dẫn để lưu vào JSON
     except Exception as e:
-        from src.scrapers.base import safe_print
+        from ..scrapers.base import safe_print
         safe_print(f"      ⚠️ Lỗi tải ảnh: {e}")
     
     return None

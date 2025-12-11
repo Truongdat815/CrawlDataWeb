@@ -3,7 +3,7 @@
 Website Scraper - Quản lý thông tin websites
 """
 
-from src.scrapers.base import BaseScraper, safe_print
+from .base import BaseScraper, safe_print
 import uuid
 from datetime import datetime
 

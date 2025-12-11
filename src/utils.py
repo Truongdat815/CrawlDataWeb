@@ -1,6 +1,6 @@
 import os
 import requests
-from src.config import IMAGES_DIR
+from .config import IMAGES_DIR
 
 def clean_text(text):
     """Hàm làm sạch văn bản, xóa khoảng trắng thừa"""

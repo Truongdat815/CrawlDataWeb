@@ -16,11 +16,11 @@ Schema:
 - pages: number of pages
 """
 
-from src.scrapers.base import BaseScraper, safe_print
+from .base import BaseScraper, safe_print
 from src import config
-from src.utils.validation import validate_against_schema
-from src.schemas.chapter_schema import CHAPTER_SCHEMA
-from src.scrapers.website import WebsiteScraper
+from ..utils.validation import validate_against_schema
+from ..schemas.chapter_schema import CHAPTER_SCHEMA
+from .website import WebsiteScraper
 from bs4 import BeautifulSoup
 import re
 
@@ -179,7 +179,7 @@ class ChapterScraper(BaseScraper):
         Args:
             chapter_data: dict chứa thông tin chapter (Wattpad schema)
         """
-        if not chapter_data or not self.collection_exists("chapters"):
+        if chapter_data is None or not self.collection_exists("chapters"):
             return
         
         try:

@@ -3,11 +3,11 @@ Story Info scraper module - handles story statistics and metrics for Wattpad.
 Responsible for: views, votes, ratings, scores, reader stats, etc.
 """
 
-from src.scrapers.base import BaseScraper, safe_print
+from .base import BaseScraper, safe_print
 from src import config
-from src.utils.validation import validate_against_schema
-from src.schemas.story_info_schema import STORY_INFO_SCHEMA
-from src.scrapers.website import WebsiteScraper
+from ..utils.validation import validate_against_schema
+from ..schemas.story_info_schema import STORY_INFO_SCHEMA
+from .website import WebsiteScraper
 from bs4 import BeautifulSoup
 
 

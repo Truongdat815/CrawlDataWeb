@@ -17,4 +17,5 @@ STORY_SCHEMA = {
     "userId": "user.name",                # Author/User ID
     "totalChapters": "numParts",          # Number of chapters
     "language": None,                     # Language info {id, name}
+    "storyHash": None,                    # SHA256 hex computed from first 500 chars of first chapter
 }

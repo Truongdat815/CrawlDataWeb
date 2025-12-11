@@ -7,10 +7,11 @@ import hashlib
 import re
 import requests
 from bs4 import BeautifulSoup
-from src.scrapers.base import BaseScraper, safe_print
 from src import config
-from src.utils.validation import validate_against_schema
-from src.schemas.chapter_content_schema import CHAPTER_CONTENT_SCHEMA
+from .base import BaseScraper, safe_print
+from ..utils.validation import validate_against_schema
+from ..schemas.chapter_content_schema import CHAPTER_CONTENT_SCHEMA
+from ..utils.story_hash import update_story_hash_from_chapter_content
 
 
 class ChapterContentScraper(BaseScraper):
@@ -471,8 +472,16 @@ class ChapterContentScraper(BaseScraper):
                     {"$set": content_data}
                 )
                 safe_print(f"  📝 Cập nhật chapter content: {content_data.get('contentId')}")
+                # Do NOT update storyHash when this is an update
+                # (only compute storyHash when inserting a NEW chapter content)
+                safe_print(f"    ℹ️ Skipping storyHash update on content update (per config)")
             else:
                 collection.insert_one(content_data)
                 safe_print(f"  ✨ Thêm mới chapter content: {content_data.get('contentId')}")
+                # After inserting first/new chapter content, attempt to generate storyHash
+                try:
+                    update_story_hash_from_chapter_content(self.mongo_db, content_data)
+                except Exception:
+                    pass
         except Exception as e:
             safe_print(f"        ⚠️  Lỗi khi lưu chapter content vào MongoDB: {e}")

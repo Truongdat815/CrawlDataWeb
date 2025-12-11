@@ -12,11 +12,11 @@ Schema:
 - type: "inline" or "chapter_end"
 """
 
-from src.scrapers.base import BaseScraper, safe_print
-from src import config
-from src.utils.validation import validate_against_schema
-from src.schemas.comment_schema import COMMENT_SCHEMA
-from src.scrapers.website import WebsiteScraper
+from .base import BaseScraper, safe_print
+from .. import config
+from ..utils.validation import validate_against_schema
+from ..schemas.comment_schema import COMMENT_SCHEMA
+from .website import WebsiteScraper
 import uuid
 import requests
 
@@ -52,7 +52,7 @@ class CommentScraper(BaseScraper):
                 username = api_data.get("username")
                 
                 # Generate userId từ username (UUID v7)
-                from src.scrapers.website import WebsiteScraper
+                from .website import WebsiteScraper
                 user_id = WebsiteScraper.generate_user_id(username)
                 
                 # Map theo USER_SCHEMA

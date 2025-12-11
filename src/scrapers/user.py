@@ -5,10 +5,10 @@ Schema:
 - userName: display name
 """
 
-from src.scrapers.base import BaseScraper, safe_print
-from src import config
-from src.utils.validation import validate_against_schema
-from src.schemas.user_schema import USER_SCHEMA
+from .base import BaseScraper, safe_print
+from .. import config
+from ..utils.validation import validate_against_schema
+from ..schemas.user_schema import USER_SCHEMA
 import requests
 
 
@@ -125,7 +125,7 @@ class UserScraper(BaseScraper):
                 username = api_data.get("username")
                 
                 # Generate userId từ username (UUID v7)
-                from src.scrapers.website import WebsiteScraper
+                from .website import WebsiteScraper
                 user_id = WebsiteScraper.generate_user_id(username)
                 
                 # Map theo USER_SCHEMA
@@ -188,7 +188,7 @@ class UserScraper(BaseScraper):
                     safe_print(f"✅ Lưu user mới từ API: {username}")
                 else:
                     # Fallback: lưu thông tin cơ bản nếu API fail
-                    from src.scrapers.website import WebsiteScraper
+                    from .website import WebsiteScraper
                     user_id = WebsiteScraper.generate_user_id(username)
                     user_data = {
                         "userId": user_id,

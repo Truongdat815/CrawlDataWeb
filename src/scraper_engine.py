@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import re
@@ -11,8 +12,11 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from src import config, utils
-from src.login_service import WattpadLoginService, login_if_needed
+from . import config, utils
+from .login_service import WattpadLoginService, login_if_needed
+from .scrapers.base import safe_print
+from .scrapers.user import UserScraper
+from .scrapers.website import WebsiteScraper
 
 # Import MongoDB
 try:
@@ -25,13 +29,17 @@ except ImportError:
     MONGODB_AVAILABLE = False
 
 # Import scrapers
-from src.scrapers import (
-    StoryScraper, ChapterScraper, CommentScraper, 
-    UserScraper, ChapterContentScraper, WebsiteScraper, safe_print
-)
 
-# Import duplicate checker
-from src.utils.duplicate_checker import DuplicateChecker
+# Import new services and scrapers
+from .scrapers.story import StoryScraper
+from .scrapers.chapter import ChapterScraper
+from .scrapers.chapter_content import ChapterContentScraper
+from .scrapers.comment import CommentScraper
+from .services.duplicate_checker import DuplicateChecker
+from .services.chapter_crawler import ChapterCrawler
+from .services.comment_sync_service import CommentSyncService
+from .services.user_sync_service import UserSyncService
+from .pipelines.chapter_pipeline import ChapterPipeline
 
 # Import playwright-stealth if available
 try:
@@ -191,18 +199,99 @@ class BrowserManager:
             self.browser_cache.clear()
 
 
+from .utils.story_hash import extract_text_from_wattpad_html, compute_story_hash_from_text
+
+
 class WattpadScraper:
     """Wattpad API-based scraper using modular components"""
-    
-    def __init__(self, max_workers=None):
+    def __init__(self, db=None, max_workers=None):
+        self.db = db
         self.context = None
         self.page = None
         self.playwright = None
         self.max_workers = max_workers or config.MAX_CHAPTER_WORKERS
-        
         # Rate limiter
         self.rate_limiter = RateLimiter()
-        
+        # HTTP session
+        self.http = requests.Session()
+        self.http.headers.update({
+            "User-Agent": config.DEFAULT_USER_AGENT,
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+        })
+        # Proxy config
+        if config.HTTP_PROXY or config.HTTPS_PROXY:
+            proxies = {}
+            if config.HTTP_PROXY:
+                proxies["http"] = config.HTTP_PROXY
+            if config.HTTPS_PROXY:
+                proxies["https"] = config.HTTPS_PROXY
+            self.http.proxies.update(proxies)
+            safe_print(f"🌐 Proxy configured: {config.HTTPS_PROXY or config.HTTP_PROXY}")
+        self._current_proxy = None
+        # Login service
+        self.login_service = WattpadLoginService()
+        # Scrapers (set in start, but initialize as None)
+        self.story_scraper = None
+        self.story_info_scraper = None
+        self.chapter_scraper = None
+        self.comment_scraper = None
+        self.user_scraper = None
+        self.chapter_content_scraper = None
+        self.website_scraper = None
+        # MongoDB collections
+        self.mongo_collection_stories = None
+        self.mongo_collection_story_info = None
+        self.mongo_collection_chapters = None
+        self.mongo_collection_chapter_contents = None
+        self.mongo_collection_comments = None
+        self.mongo_collection_users = None
+        self.mongo_collection_websites = None
+        # MongoDB client
+        self.mongo_client = None
+        self.mongo_db = None
+        if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
+            try:
+                if MongoClient is not None:
+                    self.mongo_client = MongoClient(config.MONGODB_URI)
+                    self.mongo_db = self.mongo_client[config.MONGODB_DB_NAME]
+                    self.mongo_collection_stories = self.mongo_db[config.MONGODB_COLLECTION_STORIES]
+                    self.mongo_collection_story_info = self.mongo_db["story_info"]
+                    self.mongo_collection_chapters = self.mongo_db["chapters"]
+                    self.mongo_collection_chapter_contents = self.mongo_db["chapter_contents"]
+                    self.mongo_collection_comments = self.mongo_db["comments"]
+                    self.mongo_collection_users = self.mongo_db["users"]
+                    self.mongo_collection_websites = self.mongo_db["websites"]
+                    safe_print("✅ Đã kết nối MongoDB với 7 collections (stories, story_info, chapters, chapter_contents, comments, users, websites)")
+            except Exception as e:
+                safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
+                safe_print("   Tiếp tục lưu vào file JSON...")
+                self.mongo_client = None
+
+        # Ensure `self.db` references the active MongoDB database when available.
+        # Some callers (e.g. ParallelCrawler) construct WattpadScraper without
+        # passing a `db` argument, so default to the internal `mongo_db`.
+        if self.db is None and self.mongo_db is not None:
+            self.db = self.mongo_db
+        # If still None, log a warning so DuplicateChecker doesn't receive None unexpectedly
+        if self.db is None:
+            try:
+                import logging
+                logging.warning("WattpadScraper initialized without a DB (self.db is None). Some features will use file-only storage.")
+            except Exception:
+                pass
+
+    def fetch_story_links_from_page(self, page_url):
+        """
+        Stub method to fetch story links from a page URL.
+        Args:
+            page_url (str): The URL of the page to scrape.
+        Returns:
+            list: List of story URLs (empty for now).
+        """
+        safe_print(f"[STUB] fetch_story_links_from_page called for: {page_url}")
+        return []
+        # Rate limiter
+        self.rate_limiter = RateLimiter()
         # Reusable HTTP session for connection pooling + default headers
         self.http = requests.Session()
         self.http.headers.update({
@@ -218,30 +307,24 @@ class WattpadScraper:
                 proxies["https"] = config.HTTPS_PROXY
             self.http.proxies.update(proxies)
             safe_print(f"🌐 Proxy configured: {config.HTTPS_PROXY or config.HTTP_PROXY}")
-        
         # Track current proxy used for Playwright context
         self._current_proxy = None
-        
         # Initialize login service
         self.login_service = WattpadLoginService()
-        
         # Initialize scrapers (will be set in start())
         self.story_scraper = None
         self.chapter_scraper = None
         self.comment_scraper = None
         self.user_scraper = None
         self.chapter_content_scraper = None
-        
         # Legacy collections (backward compatibility)
         self.mongo_collection_stories = None
         self.mongo_collection_chapters = None
         self.mongo_collection_comments = None
         self.mongo_collection_users = None
-        
         # Khởi tạo MongoDB client nếu được bật
         self.mongo_client = None
         self.mongo_db = None
-        
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
             try:
                 if MongoClient is not None:
@@ -260,6 +343,46 @@ class WattpadScraper:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
                 self.mongo_client = None
+
+    def check_update_chapters(self, story_id):
+        """
+        Hàm này được gọi khi phát hiện storyUrl hoặc storyHash đã tồn tại trong DB
+        Tự động kiểm tra và cập nhật chapter/comment nếu có thay đổi
+        """
+        # Lấy dữ liệu story từ API
+        api_story_data = self.fetch_story_from_api(story_id)
+        if not api_story_data:
+            safe_print(f"❌ Không lấy được dữ liệu story từ API cho storyId={story_id}")
+            return None
+        # Lấy danh sách chapters từ API
+        api_chapters = api_story_data.get("parts", [])
+        db = self.mongo_db
+        # Khởi tạo services và scrapers mới
+        services = {
+            "duplicate_checker": DuplicateChecker(db),
+            "comment_service": CommentSyncService(db, CommentScraper(self.page, db)),
+            "user_service": UserSyncService(db, None)
+        }
+        # Nếu DB báo thiếu chương, tự động gọi ChapterCrawler.finish_story
+        try:
+            web_story_id = str(api_story_data.get("id") or api_story_data.get("webStoryId") or story_id)
+            dup = services["duplicate_checker"]
+            dup_status = dup.check_story(web_story_id)
+            if dup_status and dup_status.get("exists") and (dup_status.get("chapters_count", 0) == 0):
+                safe_print(f"[SCRAPER_ENGINE] ℹ️ Story {web_story_id} has 0 chapters in DB — running finish_story to populate metadata")
+                chapter_crawler = ChapterCrawler(self)
+                res = chapter_crawler.finish_story(web_story_id, story_id)
+                safe_print(f"[SCRAPER_ENGINE] ✅ finish_story result: {res}")
+        except Exception as e:
+            safe_print(f"[SCRAPER_ENGINE] ⚠️ Error while auto-finishing story {story_id}: {e}")
+        scrapers = {
+            "chapter": ChapterScraper(self.page, db),
+            "content": ChapterContentScraper(self.page, db)
+        }
+        pipeline = ChapterPipeline(db, scrapers, services)
+        for chapter in api_chapters:
+            pipeline.process(chapter)
+        return True
 
     def _build_proxy_dict(self, proxy_server=None):
         """Helper to build proxy dict for Playwright from proxy server string or config."""
@@ -420,7 +543,7 @@ class WattpadScraper:
             safe_print("   Tiếp tục mà không có Playwright (chỉ dùng API)")
 
         # Khởi tạo scrapers (dù có Playwright hay không)
-        from src.scrapers.story_info import StoryInfoScraper
+        from .scrapers.story_info import StoryInfoScraper
         self.story_scraper = StoryScraper(self.page, self.mongo_db)
         self.story_info_scraper = StoryInfoScraper(self.page, self.mongo_db)
         self.chapter_scraper = ChapterScraper(self.page, self.mongo_db)
@@ -668,7 +791,32 @@ class WattpadScraper:
         def make_request():
             response = self.http.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
-            return response.json()
+            # Inspect raw text to aid debugging when API returns minimal payload
+            try:
+                text = response.text
+            except Exception:
+                text = None
+
+            # Parse JSON and log raw text when payload appears minimal
+            data = None
+            try:
+                data = response.json()
+            except Exception:
+                # If JSON parsing fails, log raw text for debugging and re-raise
+                logging.exception("fetch_story_from_api: failed to parse JSON for %s; raw response truncated:", story_id)
+                if text:
+                    logging.debug(text[:2000])
+                raise
+
+            try:
+                if isinstance(data, dict):
+                    minimal_keys = set(data.keys()) <= {"id", "webStoryId", "storyId"}
+                    if minimal_keys or len(data) <= 2:
+                        logging.debug("fetch_story_from_api: minimal payload for %s — raw response (truncated): %s", story_id, (text[:2000] if text else "<no-text>"))
+            except Exception:
+                logging.exception("fetch_story_from_api: error inspecting payload for %s", story_id)
+
+            return data
         
         try:
             return retry_request(make_request)
@@ -860,27 +1008,22 @@ class WattpadScraper:
         Returns:
             List of chapter data (limited by MAX_CHAPTERS_PER_STORY)
         """
-        # Hiện tại endpoint /parts không work public
-        # Sẽ fallback tới prefetched data trong scrape_story()
-        
-        url = f"{config.BASE_URL}/api/v3/stories/{story_id}/parts"
-        
+        # Sử dụng endpoint đúng: /api/v3/stories/{story_id} để lấy danh sách parts
+        url = f"{config.BASE_URL}/api/v3/stories/{story_id}"
+        params = {"fields": "id,title,parts"}
         try:
-            # Apply rate limiting
             self.rate_limiter.wait_if_needed()
-            
             def make_request():
-                response = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
+                response = self.http.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
                 response.raise_for_status()
                 return response.json()
-            
             data = retry_request(make_request)
             if data and "parts" in data:
                 return data["parts"]
             else:
                 return []
         except Exception as e:
-            safe_print(f"⚠️ API /parts không khả dụng: {e}")
+            safe_print(f"⚠️ API /stories/{{id}} không khả dụng: {e}")
             return []
 
     def fetch_categories(self):
@@ -932,7 +1075,20 @@ class WattpadScraper:
             Complete story data dict
         """
         import re
-        
+        # ======= CHECK TRÙNG STORY URL TRÊN DB (CÙNG NỀN TẢNG) =======
+        # Ưu tiên kiểm tra trước khi check hash
+        story_url_to_check = story_url
+        if not story_url_to_check and isinstance(story_id, str) and story_id.startswith('http'):
+            story_url_to_check = story_id
+        if hasattr(self, 'mongo_collection_stories') and self.mongo_collection_stories is not None and story_url_to_check:
+            existing_url = self.mongo_collection_stories.find_one({'storyUrl': story_url_to_check})
+            if existing_url:
+                safe_print(f"⚠️ [CONSOLE] Truyện với storyUrl này đã tồn tại trong DB (storyId={existing_url.get('storyId')}, storyName={existing_url.get('storyName')}). Chuyển sang chế độ check update.")
+                safe_print(f"[CONSOLE] Đang gọi check_update_chapters cho storyId={existing_url.get('storyId')}")
+                return self.check_update_chapters(existing_url.get('storyId'))
+
+        first_chapter_html = None
+
         # Handle nếu story_id là URL
         if isinstance(story_id, str) and story_id.startswith('http'):
             # Extract ID từ URL: https://www.wattpad.com/STORYID-title
@@ -943,17 +1099,30 @@ class WattpadScraper:
             else:
                 safe_print(f"❌ Không thể extract story ID từ URL: {story_id}")
                 return None
-        
+
         safe_print(f"\n{'='*60}")
         safe_print(f"📖 Bắt đầu cào story ID: {story_id}")
         safe_print(f"{'='*60}")
-        
+
         # Variable to store freeChapter info from first chapter
         free_chapter_from_html = None
-        
+
         # ✅ CHECK: Story đã được cào hay chưa
-        dup_checker = DuplicateChecker()
-        story_status = dup_checker.check_story(story_id)
+        dup_checker = DuplicateChecker(self.db)
+        # Determine webStoryId before checking; DuplicateChecker expects webStoryId
+        web_story_id_to_check = None
+        try:
+            if isinstance(story_id, str) and story_id.isdigit():
+                web_story_id_to_check = story_id
+            else:
+                if self.mongo_collection_stories is not None:
+                    doc = self.mongo_collection_stories.find_one({"storyId": str(story_id)})
+                    if doc and doc.get("webStoryId"):
+                        web_story_id_to_check = doc.get("webStoryId")
+        except Exception:
+            web_story_id_to_check = None
+
+        story_status = dup_checker.check_story(web_story_id_to_check) if web_story_id_to_check else None
         if story_status:
             # If story exists, check whether chapters and contents are complete
             try:
@@ -971,9 +1140,9 @@ class WattpadScraper:
                 # Try to determine web_story_id from DB (preferred)
                 web_story_id = None
                 try:
-                    if self.mongo_collection_stories:
+                    if self.mongo_collection_stories is not None:
                         story_doc = self.mongo_collection_stories.find_one({"storyId": str(story_id)})
-                        if story_doc:
+                        if story_doc is not None:
                             web_story_id = story_doc.get("webStoryId") or story_doc.get("web_story_id") or story_doc.get("web_id")
                 except Exception:
                     web_story_id = None
@@ -993,37 +1162,102 @@ class WattpadScraper:
                     return story_status
 
                 # Import ChapterCrawler lazily to avoid circular imports
-                from src.utils.chapter_crawler import ChapterCrawler
+                from .services.chapter_crawler import ChapterCrawler
 
                 chapter_crawler = ChapterCrawler(self)
-                result = chapter_crawler.crawl_chapters(story_id=str(story_id), web_story_id=str(web_story_id), fetch_comments=fetch_comments)
+                try:
+                    finish_res = chapter_crawler.finish_story(web_story_id, story_id)
+                    safe_print(f"[SCRAPER_ENGINE] ✅ finish_story result: {finish_res}")
+                except Exception as e:
+                    safe_print(f"[SCRAPER_ENGINE] ⚠️ Error running ChapterCrawler.finish_story: {e}")
+                    finish_res = None
                 dup_checker.close()
-                return result
+                # NOTE: Do not return early here. finish_story only populates
+                # chapter metadata in the DB; we must continue the full
+                # `scrape_story` flow so chapter content is fetched and saved.
+                safe_print(f"ℹ️ Continuing full scrape to fetch chapter content after finish_story")
             except Exception as e:
                 safe_print(f"⚠️ Error while delegating to ChapterCrawler: {e}")
                 dup_checker.close()
                 return story_status
         dup_checker.close()
-        
+
         # 1. Fetch story metadata từ API
         story_data = self.fetch_story_from_api(story_id)
         if not story_data:
             safe_print(f"❌ Không thể lấy metadata cho story {story_id}")
             return None
-        
+
+        # Some Wattpad API responses may be minimal (only contain id/webStoryId).
+        # If so, try progressive fallbacks to obtain chapters/metadata:
+        # 1) Call fetch_chapters_from_api to get `parts` list
+        # 2) If Playwright available, fetch `window.prefetched` from chapter URL
+        # 3) As last resort, call ChapterCrawler.finish_story to populate minimal chapter metadata
+        try:
+            if isinstance(story_data, dict):
+                minimal_keys = set(story_data.keys()) <= {"id", "webStoryId", "storyId"}
+                # Also treat very small payloads as minimal
+                if minimal_keys or len(story_data) <= 2:
+                    safe_print(f"⚠️ API returned minimal metadata for {story_id}; attempting fallbacks to obtain chapters")
+
+                    # Try fetch_chapters_from_api (parts from API)
+                    try:
+                        parts = self.fetch_chapters_from_api(story_id)
+                        if parts:
+                            safe_print(f"   ✅ Obtained {len(parts)} parts via fetch_chapters_from_api fallback")
+                            story_data["parts"] = parts
+                        else:
+                            # Try prefetched HTML (requires Playwright page)
+                            chapter_url = None
+                            # Build a plausible chapter URL from last part id or story id
+                            if story_data.get("id"):
+                                chapter_url = f"{config.BASE_URL}/{story_data.get('id')}"
+                            elif story_data.get("webStoryId"):
+                                chapter_url = f"{config.BASE_URL}/{story_data.get('webStoryId')}"
+
+                            if chapter_url and self.page:
+                                prefetched = self.fetch_html_prefetched_data(chapter_url)
+                                if prefetched:
+                                    safe_print(f"   ✅ Obtained prefetched data via Playwright fallback")
+                                    extra_info = StoryScraper.extract_story_info_from_prefetched(prefetched, story_id)
+                                    # Merge possible parts into story_data
+                                    if extra_info and extra_info.get("parts"):
+                                        story_data["parts"] = extra_info.get("parts")
+
+                            # If still no parts, try ChapterCrawler.finish_story to populate minimal chapters
+                            if not story_data.get("parts"):
+                                try:
+                                    safe_print(f"   ℹ️ Attempting ChapterCrawler.finish_story as final fallback for {story_id}")
+                                    from .services.chapter_crawler import ChapterCrawler
+                                    chapter_crawler = ChapterCrawler(self)
+                                    finish_res = chapter_crawler.finish_story(str(story_data.get("id") or story_id), story_id)
+                                    safe_print(f"   ✅ finish_story result: {finish_res}")
+                                    # After finish_story, try loading chapters from DB
+                                    if self.mongo_collection_chapters is not None:
+                                        db_parts = list(self.mongo_collection_chapters.find({"storyId": str(finish_res or story_id)}))
+                                        if db_parts:
+                                            story_data["parts"] = db_parts
+                                except Exception as e:
+                                    safe_print(f"   ⚠️ finish_story fallback failed: {e}")
+                    except Exception as e:
+                        safe_print(f"   ⚠️ Error during fallback attempts: {e}")
+        except Exception:
+            # Defensive: do not fail scraping because fallback checks raised
+            safe_print(f"⚠️ Unexpected error in fallback logic for story {story_id}")
+
         # Lấy story URL từ API response nếu không được provide
         if not story_url and story_data.get("url"):
             story_url = story_data["url"]
             if not story_url.startswith("http"):
                 story_url = config.BASE_URL + story_url
-        
+
         if story_url:
             safe_print(f"   URL: {story_url}")
-        
+
         # Try to fetch from HTML prefetched data (tags, categories, chapters)
         extra_info = None
         prefetched_data = None
-        
+
         # Để fetch prefetched, cần URL của CHAPTER, không phải story overview
         # Nếu có lastPublishedPart, dùng chapter URL đó
         chapter_url_for_prefetch = None
@@ -1040,13 +1274,13 @@ class WattpadScraper:
                 chapter_url_for_prefetch = f"{config.BASE_URL}/{part_id}"
         else:
             safe_print(f"   ℹ️ Không có lastPublishedPart, bỏ qua prefetched data")
-        
+
         if chapter_url_for_prefetch:
             safe_print(f"   🌐 Đang fetch HTML prefetched data...")
             prefetched_data = self.fetch_html_prefetched_data(chapter_url_for_prefetch)
             if prefetched_data:
                 extra_info = StoryScraper.extract_story_info_from_prefetched(prefetched_data, story_id)
-                
+
                 # 2a. Extract author from prefetched data (cho truyện free/premium có prefetched)
                 user_info_from_prefetch = UserScraper.extract_user_info_from_prefetched(prefetched_data)
                 if user_info_from_prefetch and user_info_from_prefetch.get("userName"):
@@ -1057,13 +1291,13 @@ class WattpadScraper:
                             user_info_from_prefetch.get("avatar")
                         )
                         safe_print(f"   ✅ Saved author from prefetched: {user_info_from_prefetch['userName']}")
-        
+
         # 2b. Extract and save author/user info from API response (fallback + bổ sung)
         if story_data.get("user"):
             user_data = story_data["user"]
             user_name = user_data.get("name")
             avatar = user_data.get("avatar")
-            
+
             if user_name and self.user_scraper:
                 self.user_scraper.save_user_to_mongo(
                     user_name,  # Use username as userId
@@ -1071,21 +1305,21 @@ class WattpadScraper:
                     avatar
                 )
                 safe_print(f"   ✅ Saved author from API: {user_name}")
-        
+
         # 3. Process story metadata (kèm tags + categories)
         if self.story_scraper is None:
             safe_print(f"❌ Story scraper chưa được khởi tạo")
             return None
         processed_story = StoryScraper.map_api_to_story(story_data, extra_info)
-        
+
         if not processed_story:
             safe_print(f"❌ Lỗi khi xử lý story metadata")
             return None
-        
+
         # 4. CHECK PAID CONTENT trước khi fetch chapters
         is_paid_story = False
         has_full_access = True
-        
+
         if fetch_chapters:
             safe_print(f"   💰 Đang kiểm tra paid content...")
             paid_info = self.check_paid_content(story_id)
@@ -1211,10 +1445,17 @@ class WattpadScraper:
                     try:
                         safe_print(f"\n   📖 [{idx}/{max_to_fetch}] Cào chapter: {chapter.get('chapterName')}")
                         
-                        # ✅ CHECK: Chapter đã được cào hay chưa
-                        dup_checker = DuplicateChecker()
-                        if dup_checker.check_chapter(chapter_id, chapter.get('chapterName')):
+                        # ✅ CHECK: Chapter đã được cào hay chưa (chỉ skip nếu đã có content)
+                        dup_checker = DuplicateChecker(self.mongo_db)
+                        # Use should_crawl_chapter to decide whether to fetch content
+                        try:
+                            should_crawl = dup_checker.should_crawl_chapter(web_chapter_id)
+                        except Exception:
+                            should_crawl = True
+
+                        if not should_crawl:
                             dup_checker.close()
+                            safe_print(f"      ℹ️ Skipping chapter (already has content): webChapterId={web_chapter_id}")
                             continue  # Skip to next chapter
                         dup_checker.close()
                         
@@ -1272,14 +1513,29 @@ class WattpadScraper:
                         
                         if chapter_text:
                             # Map vào schema
+                            safe_print(f"      [DEBUG] Mapping chapter_text to chapter_content for chapter_id={chapter_id}")
                             chapter_content = self.chapter_content_scraper.map_html_to_chapter_content(chapter_text, chapter_id)
-                            
+                            # Save first chapter HTML/text for hashing
+                            if idx == 1:
+                                    first_chapter_html = chapter_text
+                                    # TÍNH HASH VÀ GÁN VÀO STORY NGAY SAU KHI LẤY CHAPTER 1
+                                    safe_print(f"   [DEBUG] chapter_text (raw) chapter 1: {repr(chapter_text)}")
+                                    # Nếu có thẻ <p> thì extract, còn không thì dùng trực tiếp
+                                    if '<p>' in chapter_text:
+                                        clean_text = extract_text_from_wattpad_html(chapter_text)
+                                    else:
+                                        clean_text = chapter_text
+                                    safe_print(f"   [DEBUG] clean_text chapter 1: {repr(clean_text)}")
+                                    story_hash = compute_story_hash_from_text(clean_text)
+                                    safe_print(f"   [DEBUG] storyHash (chapter 1): {story_hash}")
+                                    processed_story['storyHash'] = story_hash
+                                    safe_print(f"   ✅ storyHash (chapter 1): {story_hash}")
                             if chapter_content and chapter_content.get("content"):
                                 content_len = len(chapter_content.get('content', ''))
                                 safe_print(f"      ✅ Content (API): {content_len} bytes")
-                                
                                 # Save chapter_content to MongoDB
                                 if self.chapter_content_scraper:
+                                    safe_print(f"      [DEBUG] Saving chapter_content to MongoDB for chapter_id={chapter_id}")
                                     self.chapter_content_scraper.save_chapter_content_to_mongo(chapter_content)
                             else:
                                 safe_print(f"      ⚠️ Không thể parse content từ API")
@@ -1292,22 +1548,26 @@ class WattpadScraper:
                         chapter_comments = None
                         if fetch_comments:
                             safe_print(f"      💬 Đang lấy comments...")
-                            
                             # Use API v5 with Playwright (only method)
                             # ✅ IMPORTANT: Pass webChapterId (for API) and chapterId (UUID for DB)
                             chapter_comments = None
                             try:
                                 chapter_comments = self.fetch_comments_from_api_v5(
-                                    web_chapter_id=web_chapter_id or chapter_id,
+                                    web_chapter_id=web_chapter_id,
                                     chapter_id=chapter_id
                                 )
                             except Exception as e:
                                 safe_print(f"      ⚠️ Lỗi API v5: {e}")
-                            
                             if chapter_comments:
                                 # ✅ LƯUÍ: Không lưu comments trong chapter object
                                 # Comments sẽ được lưu riêng vào comments collection
                                 safe_print(f"      ✅ Comments: {len(chapter_comments)} comments")
+                                # ====== Chỉ check comment deleted nếu chapter đã từng cào (tồn tại trong DB) ======
+                                try:
+                                    # CommentChecker không còn tồn tại, nếu cần kiểm tra comment deleted hãy dùng CommentSyncService hoặc bỏ qua đoạn này
+                                    pass
+                                except Exception as e:
+                                    safe_print(f"      ⚠️ Lỗi khi check/update comment deleted: {e}")
                         
                         # Step 3e: Save chapter to MongoDB (NGAY SAU KHI HOÀN THÀNH)
                         if self.chapter_scraper:
@@ -1321,6 +1581,7 @@ class WattpadScraper:
                             else:
                                 for comment in chapter_comments:
                                     user_name = comment.get("userName")  # Extract userName from comment (display name)
+                                    safe_print(f"      [DEBUG] Saving comment to MongoDB commentId={comment.get('commentId')} user={user_name}")
                                     self.comment_scraper.save_comment_to_mongo(comment, user_name=user_name)
                         
                     except Exception as e:
@@ -1332,6 +1593,17 @@ class WattpadScraper:
                 # processed_story["chapters"] = chapters  # REMOVED - chapters in separate collection
                 safe_print(f"\n   ✅ Hoàn thành cào {len(chapters)} chapters")
         
+        # ======= CHECK STORYHASH TRƯỚC KHI LƯU DB =======
+        if 'storyHash' in processed_story and processed_story['storyHash']:
+            existing = None
+            if self.mongo_collection_stories is not None:
+                existing = self.mongo_collection_stories.find_one({'storyHash': processed_story['storyHash']})
+            if existing:
+                safe_print(f"\n⚠️ [CONSOLE] Truyện với storyHash này đã tồn tại trong DB (storyId={existing.get('storyId')}, storyName={existing.get('storyName')}). Gọi check update chapter.")
+                # Nếu có hàm check_update_chapters thì gọi, không thì trả về luôn
+                safe_print(f"[CONSOLE] Đang gọi check_update_chapters cho storyId={existing.get('storyId')} (WattpadScraper)")
+                return self.check_update_chapters(existing.get('storyId'))
+
         # Save story to MongoDB (WITHOUT chapters array)
         if self.story_scraper:
             safe_print(f"   💾 Đang lưu story vào MongoDB...")
@@ -1351,83 +1623,15 @@ class WattpadScraper:
                         story_info["websiteId"] = website_id
                     self.story_info_scraper.save_story_info(story_info)
         
+        # storyHash đã được tạo duy nhất khi cào chapter 1 ở trên, không gen lại nữa
+        if 'storyHash' not in processed_story:
+            processed_story['storyHash'] = None
+            safe_print(f"   ⚠️ Không lấy được nội dung chapter đầu tiên để hash")
         safe_print(f"✅ Hoàn thành cào story: {processed_story.get('storyName')}")
         return processed_story
 
     # ==================== PAGE SCRAPING METHODS ====================
     
-    @staticmethod
-    def fetch_story_links_from_page(page_url, max_stories=None):
-        """
-        Quét trang Wattpad để lấy danh sách story links (STATIC - không cần rate limiter)
-        
-        Args:
-            page_url: URL trang danh sách stories
-            max_stories: Max số stories để lấy (None = tất cả, hoặc dùng config.MAX_STORIES_PER_BATCH)
-        
-        Returns:
-            List of story URLs
-        """
-        if max_stories is None:
-            max_stories = config.MAX_STORIES_PER_BATCH
-        
-        def make_request():
-            response = requests.get(
-                page_url,
-                timeout=config.REQUEST_TIMEOUT,
-                headers={"User-Agent": config.DEFAULT_USER_AGENT}
-            )
-            response.raise_for_status()
-            return response.content
-        
-        try:
-            content = retry_request(make_request)
-            if not content:
-                return []
-            
-            # Parse HTML
-            soup = BeautifulSoup(content, 'html.parser')
-            story_links = []
-            
-            # Tìm story links - các cách khác nhau tùy vào layout trang
-            # Cách 1: Links có dạng /story/{id}-{title}
-            for link in soup.find_all('a', href=True):
-                href_raw = link.get('href')
-                if href_raw is None:
-                    continue
-                
-                # Convert to string if needed
-                href = str(href_raw) if href_raw else ''
-                if not href:
-                    continue
-                
-                # Match story URLs
-                if re.search(r'/story/\d+', href) or re.search(r'/\d+\-', href):
-                    # Ensure full URL
-                    if not href.startswith('http'):
-                        href = config.BASE_URL + href
-                    
-                    # Extract story ID để check duplicate
-                    story_id_match = re.search(r'/(\d+)', href)
-                    if story_id_match:
-                        story_id = story_id_match.group(1)
-                        
-                        # Check if already added
-                        existing = [url for url in story_links if story_id in url]
-                        if not existing:
-                            story_links.append(href)
-                            
-                            # Check limit
-                            if max_stories and len(story_links) >= max_stories:
-                                break
-            
-            safe_print(f"✅ Tìm được {len(story_links)} stories trên trang")
-            return story_links
-            
-        except Exception as e:
-            safe_print(f"⚠️ Lỗi khi quét trang: {e}")
-            return []
-
     def scrape_stories_from_page(self, page_url, fetch_chapters=True, fetch_comments=True):
         """
         Quét tất cả stories từ 1 trang
