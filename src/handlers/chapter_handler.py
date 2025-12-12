@@ -174,7 +174,52 @@ class ChapterHandler:
                     content_id = generate_id()
                     self.mongo.save_chapter_content(content_id, content, chapter_id)
             
-            # 9. Scrape comments (dùng page hiện tại)
+            # 9. Lấy views và voted từ chapter page
+            views = None
+            voted = None
+            
+            try:
+                # Lấy views từ .fic_stats .st_item có fa fa-eye
+                fic_stats = page.locator(".fic_stats").first
+                if fic_stats.count() > 0:
+                    stats_items = fic_stats.locator(".st_item").all()
+                    for item in stats_items:
+                        try:
+                            icon = item.locator("i").first
+                            if icon.count() > 0:
+                                icon_classes = icon.get_attribute("class") or ""
+                                item_text = item.inner_text().strip()
+                                
+                                # Lấy views từ fa-eye
+                                if "fa-eye" in icon_classes:
+                                    # Parse: "27k Views" hoặc "27 Views" → "27k" hoặc "27"
+                                    # Lấy số và đơn vị (k, M, etc.)
+                                    view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
+                                    if view_match:
+                                        views = view_match.group(1).strip()
+                                    else:
+                                        # Fallback: lấy số đầu tiên
+                                        numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
+                                        if numbers:
+                                            views = numbers[0].strip()
+                        except:
+                            continue
+                
+                # Lấy voted từ .rate_more
+                try:
+                    rate_more = page.locator(".rate_more").first
+                    if rate_more.count() > 0:
+                        rate_text = rate_more.inner_text().strip()
+                        # Parse: "42 ratings" hoặc "42" → "42"
+                        vote_match = re.search(r'(\d+)', rate_text)
+                        if vote_match:
+                            voted = vote_match.group(1).strip()
+                except:
+                    pass
+            except Exception as e:
+                safe_print(f"      ⚠️ Lỗi khi lấy views/voted: {e}")
+            
+            # 10. Scrape comments (dùng page hiện tại)
             total_comments = 0
             try:
                 comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
@@ -182,7 +227,7 @@ class ChapterHandler:
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi khi scrape comments: {e}")
             
-            # 10. Lưu/Update Info (update nếu đã có metadata, insert nếu chưa có)
+            # 11. Lưu/Update Info (update nếu đã có metadata, insert nếu chưa có)
             chapter_data = {
                 "chapter_id": chapter_id,
                 "web_chapter_id": web_chapter_id,
@@ -191,8 +236,8 @@ class ChapterHandler:
                 "chapter_url": url,
                 "published_time": published_time,
                 "story_id": story_id,
-                "voted": "",
-                "views": "",
+                "voted": voted,
+                "views": views,
                 "total_comments": str(total_comments)
             }
             
@@ -277,32 +322,45 @@ class ChapterHandler:
             total_comments = 0
             
             # Lấy views và voted từ requests (cần parse HTML)
-            views = ""
-            voted = ""
+            views = None
+            voted = None
+            
             try:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(session.get(url).text, 'html.parser')
-                stats_container = soup.select_one(".chapter_stats")
-                if stats_container:
-                    stats_items = stats_container.select(".chp_stats_feature")
+                
+                # Lấy views từ .fic_stats .st_item có fa-eye
+                fic_stats = soup.select_one(".fic_stats")
+                if fic_stats:
+                    stats_items = fic_stats.select(".st_item")
                     for item in stats_items:
                         icon = item.select_one("i")
-                        if icon and "fa-eye" in icon.get("class", []):
-                            text = item.get_text(strip=True)
-                            numbers = re.findall(r'\d+', text)
-                            if numbers:
-                                views = numbers[0]
-                        elif icon and "fa-heart" in icon.get("class", []):
-                            heart_cnt = item.select_one("#heart_cnt")
-                            if heart_cnt:
-                                voted = heart_cnt.get_text(strip=True)
-                            else:
-                                text = item.get_text(strip=True)
-                                numbers = re.findall(r'\d+', text)
-                                if numbers:
-                                    voted = numbers[0]
-            except:
-                pass
+                        if icon:
+                            icon_classes = icon.get("class", [])
+                            item_text = item.get_text(strip=True)
+                            
+                            # Lấy views từ fa-eye
+                            if "fa-eye" in icon_classes:
+                                # Parse: "27k Views" hoặc "27 Views" → "27k" hoặc "27"
+                                view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
+                                if view_match:
+                                    views = view_match.group(1).strip()
+                                else:
+                                    # Fallback: lấy số đầu tiên
+                                    numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
+                                    if numbers:
+                                        views = numbers[0].strip()
+                
+                # Lấy voted từ .rate_more
+                rate_more = soup.select_one(".rate_more")
+                if rate_more:
+                    rate_text = rate_more.get_text(strip=True)
+                    # Parse: "42 ratings" hoặc "42" → "42"
+                    vote_match = re.search(r'(\d+)', rate_text)
+                    if vote_match:
+                        voted = vote_match.group(1).strip()
+            except Exception as e:
+                safe_print(f"      ⚠️ Lỗi khi lấy views/voted bằng requests: {e}")
             
             chapter_data_dict = {
                 "chapter_id": chapter_id,  # Khóa chính (không phải "id")
@@ -413,6 +471,50 @@ class ChapterHandler:
             
             chapter_id = generate_id()
             
+            # Lấy views và voted từ chapter page
+            views = None
+            voted = None
+            
+            try:
+                # Lấy views từ .fic_stats .st_item có fa-eye
+                fic_stats = worker_page.locator(".fic_stats").first
+                if fic_stats.count() > 0:
+                    stats_items = fic_stats.locator(".st_item").all()
+                    for item in stats_items:
+                        try:
+                            icon = item.locator("i").first
+                            if icon.count() > 0:
+                                icon_classes = icon.get_attribute("class") or ""
+                                item_text = item.inner_text().strip()
+                                
+                                # Lấy views từ fa-eye
+                                if "fa-eye" in icon_classes:
+                                    # Parse: "27k Views" hoặc "27 Views" → "27k" hoặc "27"
+                                    view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
+                                    if view_match:
+                                        views = view_match.group(1).strip()
+                                    else:
+                                        # Fallback: lấy số đầu tiên
+                                        numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
+                                        if numbers:
+                                            views = numbers[0].strip()
+                        except:
+                            continue
+                
+                # Lấy voted từ .rate_more
+                try:
+                    rate_more = worker_page.locator(".rate_more").first
+                    if rate_more.count() > 0:
+                        rate_text = rate_more.inner_text().strip()
+                        # Parse: "42 ratings" hoặc "42" → "42"
+                        vote_match = re.search(r'(\d+)', rate_text)
+                        if vote_match:
+                            voted = vote_match.group(1).strip()
+                except:
+                    pass
+            except Exception as e:
+                safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy views/voted: {e}")
+            
             comments_list = self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
             total_comments = len(comments_list) if comments_list else 0
             
@@ -429,8 +531,8 @@ class ChapterHandler:
                 "url": url,
                 "published_time": published_time,
                 "story_id": story_id,
-                "voted": "",
-                "views": "",
+                "voted": voted,
+                "views": views,
                 "total_comments": str(total_comments)
             }
             

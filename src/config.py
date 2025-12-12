@@ -67,20 +67,15 @@ ENABLE_MANUAL_VERIFY = True  # Bật chế độ đợi verify thủ công
 
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
-MONGODB_USERNAME = "ngohoangtruongdat2_db_user"
-MONGODB_PASSWORD = "DatMongo2025!"
-CLUSTER_URL = "project.uoeyhrh.mongodb.net"
 
-MONGODB_DB_NAME = "RoyalRoadData"
+# Connection string mới từ leader
+MONGODB_URI = "mongodb://user:56915001@103.90.224.232:27017/my_database"
+
+# Database name từ connection string
+MONGODB_DB_NAME = "my_database"
+
 MONGODB_COLLECTION_STORIES = "stories"
 MONGODB_COLLECTION_STORY_INFO = "story_info"
-
-# Connection string đầy đủ với các options chuẩn
-# Dùng password trực tiếp, KHÔNG encode
-MONGODB_URI = (
-    f"mongodb+srv://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
-    f"@{CLUSTER_URL}/?retryWrites=true&w=majority&appName=Project"
-)
 
 # Cho phép override bằng environment variable (ưu tiên)
 if os.getenv("MONGODB_URI"):

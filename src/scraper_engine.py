@@ -170,7 +170,7 @@ class ScribbleHubScraper(BaseHandler):
                     if user_id:
                         # Cập nhật user_id vào story_data
                         story_data["user_id"] = user_id
-                        self.mongo.save_story(story_data)
+                        self.mongo.save_story(story_data, None, None)  # Chưa có chapter 1 ở đây
                         safe_print(f"✅ Đã cập nhật user_id: {user_id}")
                     else:
                         safe_print("⚠️ Không thể lấy author user_id")
@@ -230,8 +230,8 @@ class ScribbleHubScraper(BaseHandler):
                     "chapter_url": chapter_url,
                     "published_time": published_time,
                     "story_id": story_id,
-                    "voted": "",
-                    "views": "",
+                    "voted": None,  # Sẽ được update khi scrape chapter content
+                    "views": None,  # Sẽ được update khi scrape chapter content
                     "total_comments": "0"
                 }
                 
@@ -406,8 +406,51 @@ class ScribbleHubScraper(BaseHandler):
                 except Exception as e:
                     safe_print(f"⚠️ Không thể lấy story_data từ DB: {e}")
             
+            # ✅ Lấy chapter 1 content và URL để check duplicate
+            chapter_1_content = None
+            chapter_1_url = None
+            
+            if chapter_info_list and len(chapter_info_list) > 0:
+                # Tìm chapter 1 (order = 1)
+                chapter_1_info = None
+                for ch in chapter_info_list:
+                    if str(ch.get("order", "")) == "1":
+                        chapter_1_info = ch
+                        break
+                
+                if chapter_1_info:
+                    chapter_1_url = chapter_1_info.get("url", "")
+                    
+                    # Scrape chapter 1 content để check duplicate (chỉ nếu chưa có trong DB)
+                    if chapter_1_url:
+                        try:
+                            # Kiểm tra xem chapter 1 đã có content trong DB chưa
+                            web_chapter_1_id = chapter_1_info.get("web_chapter_id", "")
+                            if web_chapter_1_id:
+                                existing_chapter = self.mongo.get_chapter_by_web_id(web_chapter_1_id)
+                                if existing_chapter:
+                                    chapter_1_id = existing_chapter.get("chapter_id")
+                                    if chapter_1_id:
+                                        chapter_1_content = self.mongo.get_chapter_1_content(story_id)
+                            
+                            # Nếu chưa có trong DB, scrape nhanh bằng requests
+                            if not chapter_1_content:
+                                from src.utils.requests_helper import get_session_from_context, scrape_chapter_with_requests
+                                
+                                if self.context:
+                                    session = get_session_from_context(self.context)
+                                    if session:
+                                        safe_print("        🔍 Đang scrape chapter 1 để check duplicate...")
+                                        chapter_data = scrape_chapter_with_requests(session, chapter_1_url)
+                                        if chapter_data:
+                                            chapter_1_content = chapter_data.get("content", "")
+                                            if chapter_1_content:
+                                                safe_print("        ✅ Đã lấy chapter 1 content để check duplicate")
+                        except Exception as e:
+                            safe_print(f"        ⚠️ Không thể scrape chapter 1 để check duplicate: {e}")
+            
             if story_data:
-                self.mongo.save_story(story_data)
+                self.mongo.save_story(story_data, chapter_1_content, chapter_1_url)
                 
                 # 6. Lưu JSON backup vào data/json/ (lưu cả MongoDB và JSON file)
                 try:

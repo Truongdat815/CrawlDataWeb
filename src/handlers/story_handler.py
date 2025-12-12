@@ -895,7 +895,8 @@ class StoryHandler:
         }
         
         # Lưu story và story_info ngay khi cào xong metadata
-        self.mongo.save_story(story_data)
+        # (Chưa có chapter 1 ở đây, sẽ được check sau khi có chapter_info_list)
+        self.mongo.save_story(story_data, None, None)
         self.mongo.save_story_info(story_info_data)
         
         # Trả về author_profile_url để scraper_engine có thể scrape user profile

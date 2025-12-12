@@ -3,6 +3,7 @@ Review handler - xử lý review scraping
 """
 import time
 import re
+from datetime import datetime
 from src import config
 from src.utils import safe_print, generate_id, convert_html_to_formatted_text
 
@@ -85,6 +86,12 @@ class ReviewHandler:
                 safe_print(f"      ✅ Đã lấy được {len(reviews)} reviews")
             else:
                 safe_print(f"      ℹ️ Không có reviews để lưu")
+            
+            # ✅ So sánh với DB và cập nhật isDeleted cho reviews không còn trên web
+            if story_id:
+                web_review_ids = [review.get("web_review_id") for review in reviews if review.get("web_review_id")]
+                self.mongo.update_deleted_reviews(story_id, web_review_ids)
+            
             return reviews
             
         except Exception as e:
@@ -195,11 +202,14 @@ class ReviewHandler:
                     pass
             
             # Lấy date từ .pro_item_al a
-            time_str = ""
+            time_str = None
             try:
                 date_elem = review_elem.locator(".pro_item_al a").first
                 if date_elem.count() > 0:
-                    time_str = date_elem.inner_text().strip()
+                    time_str_raw = date_elem.inner_text().strip()
+                    # Convert sang ISO format: "May 9, 2023 09:41 AM" → "2023-05-09T09:41:00.000Z"
+                    if time_str_raw:
+                        time_str = self._parse_review_time(time_str_raw)
             except:
                 pass
             
@@ -260,7 +270,7 @@ class ReviewHandler:
             review_data = {
                 "review_id": review_id,
                 "web_review_id": web_review_id,
-                "title": "",  # Không có title trong cấu trúc mới
+                "title": None,  # Không có title trong cấu trúc mới, set null
                 "time": time_str,
                 "content": content,
                 "user_id": user_id,
@@ -277,5 +287,60 @@ class ReviewHandler:
             
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi parse review: {e}")
+            return None
+    
+    def _parse_review_time(self, time_str: str):
+        """
+        Parse time string từ format "May 9, 2023 09:41 AM" sang ISO format "2023-05-09T09:41:00.000Z"
+        
+        Args:
+            time_str: Time string (ví dụ: "May 9, 2023 09:41 AM")
+        
+        Returns:
+            ISO format string (ví dụ: "2023-05-09T09:41:00.000Z") hoặc None nếu không parse được
+        """
+        if not time_str or not time_str.strip():
+            return None
+        
+        try:
+            time_str = time_str.strip()
+            
+            # Thử parse với format "May 9, 2023 09:41 AM" hoặc "May 9, 2023 9:41 AM"
+            # Các format có thể có:
+            # - "May 9, 2023 09:41 AM"
+            # - "May 9, 2023 9:41 AM"
+            # - "May 9, 2023 09:41:00 AM"
+            # - "May 9, 2023 9:41:00 AM"
+            # - "May 09, 2023 09:41 AM" (với zero-padded day)
+            
+            formats = [
+                "%b %d, %Y %I:%M %p",      # "May 9, 2023 09:41 AM" hoặc "May 09, 2023 09:41 AM"
+                "%b %d, %Y %I:%M:%S %p",  # "May 9, 2023 09:41:00 AM"
+                "%B %d, %Y %I:%M %p",     # "May 9, 2023 09:41 AM" (full month name)
+                "%B %d, %Y %I:%M:%S %p",  # "May 9, 2023 09:41:00 AM" (full month name)
+            ]
+            
+            dt = None
+            for fmt in formats:
+                try:
+                    dt = datetime.strptime(time_str, fmt)
+                    break
+                except ValueError:
+                    continue
+            
+            if not dt:
+                # Nếu không parse được, trả về None
+                safe_print(f"        ⚠️ Không thể parse time: {time_str}")
+                return None
+            
+            # Convert sang ISO format với timezone UTC
+            # Format: "2023-05-09T09:41:00.000Z"
+            # Note: strptime với %I (12-hour) sẽ tự động convert sang 24-hour trong datetime object
+            iso_str = dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            
+            return iso_str
+            
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi parse review time: {e}")
             return None
 

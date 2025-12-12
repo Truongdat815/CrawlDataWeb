@@ -1,24 +1,3 @@
-2025/12/10-12:14:18.928 52f0 Reusing MANIFEST D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Session Storage/MANIFEST-000001
-2025/12/10-12:14:18.930 52f0 Recovering log #13
-2025/12/10-12:14:18.933 52f0 Reusing old log D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Session Storage/000013.log 
-2025/12/10-14:15:28.339 12c0 Level-0 table #17: started
-2025/12/10-14:15:28.344 12c0 Level-0 table #17: 13682 bytes OK
-2025/12/10-14:15:28.348 12c0 Delete type=0 #13
-2025/12/10-15:49:16.734 52f0 Level-0 table #19: started
-2025/12/10-15:49:16.738 52f0 Level-0 table #19: 13438 bytes OK
-2025/12/10-15:49:16.742 52f0 Delete type=0 #16
-2025/12/10-15:49:16.743 52f0 Compacting 4@0 + 1@1 files
-2025/12/10-15:49:16.747 52f0 Generated table #20@0: 985 keys, 34775 bytes
-2025/12/10-15:49:16.748 52f0 Compacted 4@0 + 1@1 files => 34775 bytes
-2025/12/10-15:49:16.751 52f0 compacted to: files[ 0 1 1 0 0 0 0 ]
-2025/12/10-15:49:16.752 52f0 Delete type=2 #8
-2025/12/10-15:49:16.752 52f0 Delete type=2 #11
-2025/12/10-15:49:16.752 52f0 Delete type=2 #14
-2025/12/10-15:49:16.752 52f0 Delete type=2 #17
-2025/12/10-15:49:16.752 52f0 Delete type=2 #19
-2025/12/10-16:56:16.733 52f0 Level-0 table #22: started
-2025/12/10-16:56:16.737 52f0 Level-0 table #22: 13514 bytes OK
-2025/12/10-16:56:16.740 52f0 Delete type=0 #18
-2025/12/10-18:11:45.838 12c0 Level-0 table #24: started
-2025/12/10-18:11:45.845 12c0 Level-0 table #24: 13509 bytes OK
-2025/12/10-18:11:45.851 12c0 Delete type=0 #21
+2025/12/11-21:05:17.122 3a48 Reusing MANIFEST D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Session Storage/MANIFEST-000001
+2025/12/11-21:05:17.123 3a48 Recovering log #30
+2025/12/11-21:05:17.126 3a48 Reusing old log D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Session Storage/000030.log 

@@ -293,6 +293,12 @@ class CommentHandler:
                     time.sleep(1)
             
             safe_print(f"      ✅ Tổng cộng lấy được {len(all_comments)} comments từ {max_page} trang ({comment_type}-level)")
+            
+            # ✅ So sánh với DB và cập nhật isDeleted cho comments không còn trên web
+            if chapter_id:
+                web_comment_ids = [comment.get("web_comment_id") for comment in all_comments if comment.get("web_comment_id")]
+                self.mongo.update_deleted_comments(chapter_id, web_comment_ids)
+            
             return all_comments
             
         except Exception as e:
@@ -350,6 +356,12 @@ class CommentHandler:
                     time.sleep(config.DELAY_BETWEEN_REQUESTS)
             
             safe_print(f"      ✅ Tổng cộng lấy được {len(all_comments)} comments từ {max_page} trang ({comment_type}-level)")
+            
+            # ✅ So sánh với DB và cập nhật isDeleted cho comments không còn trên web
+            if chapter_id:
+                web_comment_ids = [comment.get("web_comment_id") for comment in all_comments if comment.get("web_comment_id")]
+                self.mongo.update_deleted_comments(chapter_id, web_comment_ids)
+            
             return all_comments
             
         except Exception as e:

@@ -3,13 +3,12 @@ from src.utils import safe_print
 from src import config
 
 def main():
-    # ===== Cào 10 bộ truyện từ trang ranking =====
-    # URL ranking: https://www.scribblehub.com/series-ranking/
-    # Có thể thay đổi page bằng cách thêm ?pg=X (ví dụ: ?pg=1, ?pg=2, ...)
-    ranking_url = "https://www.scribblehub.com/series-ranking/"
+    # ===== Cào 25 bộ truyện từ trang ranking page 37 =====
+    # URL ranking: https://www.scribblehub.com/series-ranking/?pg=37
+    ranking_url = "https://www.scribblehub.com/series-ranking/?pg=37"
     
     # Số lượng bộ truyện muốn cào
-    num_stories = 10
+    num_stories = 25
     
     # Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên)
     start_from = 0

@@ -2,6 +2,8 @@
 MongoDB handler - tất cả các operations liên quan đến MongoDB
 """
 from src.utils import safe_print
+from src.utils.hash_utils import create_chapter_hash, is_similar_hash
+from typing import Optional
 
 # Import MongoDB
 try:
@@ -119,22 +121,76 @@ class MongoHandler:
     
     # ========== Save methods ==========
     
-    def save_story(self, story_data):
-        """Lưu story vào MongoDB (có thể update nhiều lần khi có thêm chapters/reviews)"""
+    def save_story(self, story_data, chapter_1_content: Optional[str] = None, chapter_1_url: Optional[str] = None):
+        """
+        Lưu story vào MongoDB
+        ✅ Check duplicate cross-platform bằng URL và hash chapter 1
+        ✅ Lưu hash chapter 1 vào story document
+        
+        Args:
+            story_data: Dict chứa story data
+            chapter_1_content: Content của chapter 1 (optional, để check duplicate)
+            chapter_1_url: URL của chapter 1 (optional, để check duplicate)
+        """
         if not story_data or not self.mongo_collection_stories:
             return
         
         try:
-            existing = self.mongo_collection_stories.find_one({"web_story_id": story_data.get("web_story_id")})
+            web_story_id = story_data.get("web_story_id")
+            website_id = story_data.get("website_id", "")
+            
+            # Kiểm tra theo web_story_id trước (cùng nền tảng)
+            existing = self.mongo_collection_stories.find_one({"web_story_id": web_story_id})
             if existing:
+                # Update và lưu hash nếu có
+                if chapter_1_content:
+                    chapter_1_hash = create_chapter_hash(chapter_1_content)
+                    story_data["chapter_1_hash"] = chapter_1_hash
                 self.mongo_collection_stories.update_one(
-                    {"web_story_id": story_data.get("web_story_id")},
+                    {"web_story_id": web_story_id},
                     {"$set": story_data}
                 )
-            else:
-                self.mongo_collection_stories.insert_one(story_data)
+                safe_print(f"        🔄 Đã cập nhật story {web_story_id} trong MongoDB")
+                return
+            
+            # ✅ Check duplicate cross-platform bằng URL và hash
+            if chapter_1_content and chapter_1_url:
+                duplicate_story = self.find_duplicate_by_hash(chapter_1_content, chapter_1_url, website_id)
+                
+                if duplicate_story:
+                    # Tìm thấy duplicate → sử dụng story_id cũ
+                    existing_story_id = duplicate_story.get("story_id")
+                    story_data["story_id"] = existing_story_id
+                    
+                    # Lưu thêm web_story_id vào array
+                    existing_web_ids = duplicate_story.get("web_story_ids", [])
+                    if web_story_id not in existing_web_ids:
+                        existing_web_ids.append(web_story_id)
+                        story_data["web_story_ids"] = existing_web_ids
+                    
+                    # Lưu hash
+                    chapter_1_hash = create_chapter_hash(chapter_1_content)
+                    story_data["chapter_1_hash"] = chapter_1_hash
+                    
+                    self.mongo_collection_stories.update_one(
+                        {"story_id": existing_story_id},
+                        {"$set": story_data}
+                    )
+                    
+                    safe_print(f"        🔗 Đã liên kết story với story_id cũ: {existing_story_id} (duplicate cross-platform)")
+                    return
+            
+            # Không tìm thấy duplicate → insert mới
+            # Lưu hash nếu có
+            if chapter_1_content:
+                chapter_1_hash = create_chapter_hash(chapter_1_content)
+                story_data["chapter_1_hash"] = chapter_1_hash
+            
+            self.mongo_collection_stories.insert_one(story_data)
+            safe_print(f"        ✅ Đã lưu story mới {web_story_id} vào MongoDB")
+            
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lưu story vào MongoDB: {e}")
+            safe_print(f"        ⚠️ Lỗi khi lưu story vào MongoDB: {e}")
     
     def save_story_info(self, story_info_data):
         """Lưu story info vào MongoDB"""
@@ -191,8 +247,9 @@ class MongoHandler:
         """
         Lưu comment vào MongoDB ngay khi cào xong
         ✅ Schema mới: comment_id (PK), web_comment_id, comment_text, time, chapter_id, user_id, 
-        reply_to_user_id, parent_id, is_root, react, website_id
+        reply_to_user_id, parent_id, is_root, react, website_id, isDeleted
         ✅ Chỉ lưu khi có comment_text (có comment thật sự)
+        ✅ Set isDeleted = false khi comment được tìm thấy trên web
         """
         if not comment_data or not self.mongo_collection_comments:
             return
@@ -202,6 +259,9 @@ class MongoHandler:
         if not comment_text or not comment_text.strip():
             # Không có comment text, không lưu
             return
+        
+        # ✅ Set isDeleted = false khi comment được tìm thấy trên web
+        comment_data["isDeleted"] = False
         
         try:
             existing = self.mongo_collection_comments.find_one({"web_comment_id": comment_data.get("web_comment_id")})
@@ -221,7 +281,8 @@ class MongoHandler:
         """
         Lưu review vào MongoDB ngay khi cào xong
         ✅ Schema mới: review_id (PK), web_review_id, title, time, content, user_id, 
-        chapter_id, story_id, score_id, is_review_swap, website_id
+        chapter_id, story_id, score_id, is_review_swap, website_id, isDeleted
+        ✅ Set isDeleted = false khi review được tìm thấy trên web
         """
         if not review_data or not self.mongo_collection_reviews:
             return
@@ -230,6 +291,9 @@ class MongoHandler:
         # Nếu không có web_review_id hoặc các field quan trọng, không lưu
         if not review_data.get("web_review_id") and not review_data.get("review_id"):
             return
+        
+        # ✅ Set isDeleted = false khi review được tìm thấy trên web
+        review_data["isDeleted"] = False
         
         try:
             existing = self.mongo_collection_reviews.find_one({"web_review_id": review_data.get("web_review_id")})
@@ -245,12 +309,15 @@ class MongoHandler:
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu review vào MongoDB: {e}")
     
-    def save_user(self, web_user_id, username, user_url="", created_date="", gender="", location="", 
-                  followers="", following="", comments="", bio="", favorites="", ratings=""):
+    def save_user(self, web_user_id, username, user_url=None, created_date=None, gender=None, location=None, 
+                  followers=None, following=None, comments=None, bio=None, favorites=None, ratings=None,
+                  last_active=None, birthday=None, homepage=None, series=None, total_words=None,
+                  total_pageviews=None, reviews_received=None, readers=None):
         """
         Lưu user vào MongoDB ngay khi gặp web_user_id và username
         ✅ Schema mới: user_id (PK), web_user_id, username, user_url, created_date, gender, 
-        location, followers, following, comments, bio, favorites, ratings
+        location, followers, following, comments, bio, favorites, ratings, last_active, birthday,
+        homepage, series, total_words, total_pageviews, reviews_received, readers
         Args:
             web_user_id: User ID lấy từ web (URL)
             username: Tên người dùng
@@ -264,6 +331,14 @@ class MongoHandler:
             bio: Tiểu sử
             favorites: Số lượng favorites
             ratings: Số lượng ratings
+            last_active: Lần hoạt động cuối
+            birthday: Ngày sinh
+            homepage: Trang chủ
+            series: Số series
+            total_words: Tổng số từ
+            total_pageviews: Tổng số lượt xem trang
+            reviews_received: Số reviews nhận được
+            readers: Số độc giả
         Returns:
             user_id: ID được gen (sh_{uuid}) để dùng làm FK
         """
@@ -272,7 +347,20 @@ class MongoHandler:
         if not web_user_id or not username or not self.mongo_collection_users:
             return None
         
+        # Helper function để convert empty string thành None
+        def to_none_if_empty(value):
+            if value == "" or value == '':
+                return None
+            return value
+        
         try:
+            # Convert empty strings thành None
+            user_url = to_none_if_empty(user_url)
+            created_date = to_none_if_empty(created_date)
+            followers = to_none_if_empty(followers)
+            following = to_none_if_empty(following)
+            comments = to_none_if_empty(comments)
+            
             # Tìm user theo web_user_id
             existing = self.mongo_collection_users.find_one({"web_user_id": web_user_id})
             if existing:
@@ -280,26 +368,43 @@ class MongoHandler:
                 update_data = {}
                 if existing.get("username") != username:
                     update_data["username"] = username
-                if user_url and existing.get("user_url") != user_url:
+                if user_url is not None:
                     update_data["user_url"] = user_url
-                if created_date and existing.get("created_date") != created_date:
+                if created_date is not None:
                     update_data["created_date"] = created_date
-                if gender and existing.get("gender") != gender:
+                # Update các field mới (có thể là None)
+                if gender is not None:
                     update_data["gender"] = gender
-                if location and existing.get("location") != location:
+                if location is not None:
                     update_data["location"] = location
-                if followers and existing.get("followers") != followers:
+                if followers is not None:
                     update_data["followers"] = followers
-                if following and existing.get("following") != following:
+                if following is not None:
                     update_data["following"] = following
-                if comments and existing.get("comments") != comments:
+                if comments is not None:
                     update_data["comments"] = comments
-                if bio and existing.get("bio") != bio:
+                if bio is not None:
                     update_data["bio"] = bio
-                if favorites and existing.get("favorites") != favorites:
+                if favorites is not None:
                     update_data["favorites"] = favorites
-                if ratings and existing.get("ratings") != ratings:
+                if ratings is not None:
                     update_data["ratings"] = ratings
+                if last_active is not None:
+                    update_data["last_active"] = last_active
+                if birthday is not None:
+                    update_data["birthday"] = birthday
+                if homepage is not None:
+                    update_data["homepage"] = homepage
+                if series is not None:
+                    update_data["series"] = series
+                if total_words is not None:
+                    update_data["total_words"] = total_words
+                if total_pageviews is not None:
+                    update_data["total_pageviews"] = total_pageviews
+                if reviews_received is not None:
+                    update_data["reviews_received"] = reviews_received
+                if readers is not None:
+                    update_data["readers"] = readers
                 
                 if update_data:
                     self.mongo_collection_users.update_one(
@@ -323,7 +428,15 @@ class MongoHandler:
                     "comments": comments,
                     "bio": bio,
                     "favorites": favorites,
-                    "ratings": ratings
+                    "ratings": ratings,
+                    "last_active": last_active,
+                    "birthday": birthday,
+                    "homepage": homepage,
+                    "series": series,
+                    "total_words": total_words,
+                    "total_pageviews": total_pageviews,
+                    "reviews_received": reviews_received,
+                    "readers": readers
                 }
                 self.mongo_collection_users.insert_one(user_data)
                 return user_id  # Trả về user_id mới để dùng làm FK
@@ -484,6 +597,140 @@ class MongoHandler:
         except:
             return None
     
+    def get_chapter_1_content(self, story_id: str) -> Optional[str]:
+        """
+        Lấy content của chapter 1 từ story_id
+        
+        Args:
+            story_id: ID của story
+        
+        Returns:
+            Content của chapter 1 hoặc None
+        """
+        if not story_id or not self.mongo_collection_chapters:
+            return None
+        
+        try:
+            # Tìm chapter 1 (order = 1 hoặc order = "1")
+            chapter = self.mongo_collection_chapters.find_one({
+                "story_id": story_id,
+                "$or": [
+                    {"order": 1},
+                    {"order": "1"}
+                ]
+            })
+            
+            if not chapter:
+                return None
+            
+            chapter_id = chapter.get("chapter_id")
+            if not chapter_id or not self.mongo_collection_chapter_contents:
+                return None
+            
+            # Lấy content
+            content_doc = self.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
+            if content_doc:
+                return content_doc.get("content", "")
+            
+            return None
+            
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi lấy chapter 1 content: {e}")
+            return None
+    
+    def get_chapter_1_url(self, story_id: str) -> Optional[str]:
+        """
+        Lấy URL của chapter 1 từ story_id
+        
+        Args:
+            story_id: ID của story
+        
+        Returns:
+            URL của chapter 1 hoặc None
+        """
+        if not story_id or not self.mongo_collection_chapters:
+            return None
+        
+        try:
+            # Tìm chapter 1
+            chapter = self.mongo_collection_chapters.find_one({
+                "story_id": story_id,
+                "$or": [
+                    {"order": 1},
+                    {"order": "1"}
+                ]
+            })
+            
+            if chapter:
+                return chapter.get("chapter_url", "")
+            
+            return None
+            
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi lấy chapter 1 URL: {e}")
+            return None
+    
+    def find_duplicate_by_hash(self, chapter_1_content: str, chapter_1_url: str, website_id: str):
+        """
+        Tìm story duplicate dựa trên:
+        1. Check URL chapter 1 trước (nếu trùng → duplicate)
+        2. Nếu URL không trùng → check hash của 500 từ đầu chapter 1
+        
+        Args:
+            chapter_1_content: Content của chapter 1 (từ story mới)
+            chapter_1_url: URL của chapter 1 (từ story mới)
+            website_id: ID của website hiện tại (để loại trừ)
+        
+        Returns:
+            Story duplicate nếu tìm thấy, None nếu không
+        """
+        if not chapter_1_content or not self.mongo_collection_stories:
+            return None
+        
+        try:
+            # Bước 1: Check URL chapter 1 trước
+            if chapter_1_url:
+                # Tìm chapter có cùng URL (từ các website khác)
+                if self.mongo_collection_chapters:
+                    chapter_with_same_url = self.mongo_collection_chapters.find_one({
+                        "chapter_url": chapter_1_url,
+                        "story_id": {"$exists": True}
+                    })
+                    
+                    if chapter_with_same_url:
+                        story_id = chapter_with_same_url.get("story_id")
+                        # Lấy story từ story_id
+                        story = self.mongo_collection_stories.find_one({"story_id": story_id})
+                        if story and story.get("website_id") != website_id:
+                            safe_print(f"        🔗 Tìm thấy duplicate qua URL chapter 1: {story.get('story_name')}")
+                            return story
+            
+            # Bước 2: Check hash nếu URL không trùng
+            # Tạo hash cho chapter 1 mới
+            new_hash = create_chapter_hash(chapter_1_content)
+            if not new_hash:
+                return None
+            
+            # Lấy tất cả stories từ các website khác
+            all_stories = self.mongo_collection_stories.find({
+                "website_id": {"$ne": website_id},
+                "chapter_1_hash": {"$exists": True, "$ne": None}  # Chỉ check stories đã có hash
+            })
+            
+            for story in all_stories:
+                existing_hash = story.get("chapter_1_hash")
+                if existing_hash and isinstance(existing_hash, int):
+                    # So sánh hash với độ lệch <= 3 bit
+                    if is_similar_hash(new_hash, existing_hash, max_distance=3):
+                        safe_print(f"        🔗 Tìm thấy duplicate qua hash (độ lệch <= 3 bit): {story.get('story_name')}")
+                        return story
+            
+            return None
+            
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi tìm duplicate bằng hash: {e}")
+            return None
+    
     def ensure_scribblehub_website(self):
         """Kiểm tra và tạo ScribbleHub website nếu chưa có, trả về website_id"""
         if not self.mongo_collection_websites:
@@ -541,6 +788,74 @@ class MongoHandler:
             return None
         
         return self.mongo_collection_websites.find_one({"website_id": website_id})
+    
+    def update_deleted_comments(self, chapter_id, web_comment_ids_from_web):
+        """
+        So sánh comments trong DB với comments trên web
+        Nếu comment nào có trong DB nhưng không có trên web → cập nhật isDeleted = true
+        
+        Args:
+            chapter_id: ID của chapter (để lọc comments theo chapter)
+            web_comment_ids_from_web: List các web_comment_id tìm thấy trên web
+        """
+        if not chapter_id or not self.mongo_collection_comments:
+            return
+        
+        try:
+            # Lấy tất cả comments của chapter từ DB
+            db_comments = self.mongo_collection_comments.find({"chapter_id": chapter_id})
+            
+            web_comment_ids_set = set(web_comment_ids_from_web) if web_comment_ids_from_web else set()
+            deleted_count = 0
+            
+            for db_comment in db_comments:
+                web_comment_id = db_comment.get("web_comment_id")
+                if web_comment_id and web_comment_id not in web_comment_ids_set:
+                    # Comment có trong DB nhưng không có trên web → đánh dấu deleted
+                    self.mongo_collection_comments.update_one(
+                        {"web_comment_id": web_comment_id},
+                        {"$set": {"isDeleted": True}}
+                    )
+                    deleted_count += 1
+            
+            if deleted_count > 0:
+                safe_print(f"        🗑️  Đã đánh dấu {deleted_count} comments là deleted (không còn trên web)")
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi cập nhật deleted comments: {e}")
+    
+    def update_deleted_reviews(self, story_id, web_review_ids_from_web):
+        """
+        So sánh reviews trong DB với reviews trên web
+        Nếu review nào có trong DB nhưng không có trên web → cập nhật isDeleted = true
+        
+        Args:
+            story_id: ID của story (để lọc reviews theo story)
+            web_review_ids_from_web: List các web_review_id tìm thấy trên web
+        """
+        if not story_id or not self.mongo_collection_reviews:
+            return
+        
+        try:
+            # Lấy tất cả reviews của story từ DB
+            db_reviews = self.mongo_collection_reviews.find({"story_id": story_id})
+            
+            web_review_ids_set = set(web_review_ids_from_web) if web_review_ids_from_web else set()
+            deleted_count = 0
+            
+            for db_review in db_reviews:
+                web_review_id = db_review.get("web_review_id")
+                if web_review_id and web_review_id not in web_review_ids_set:
+                    # Review có trong DB nhưng không có trên web → đánh dấu deleted
+                    self.mongo_collection_reviews.update_one(
+                        {"web_review_id": web_review_id},
+                        {"$set": {"isDeleted": True}}
+                    )
+                    deleted_count += 1
+            
+            if deleted_count > 0:
+                safe_print(f"        🗑️  Đã đánh dấu {deleted_count} reviews là deleted (không còn trên web)")
+        except Exception as e:
+            safe_print(f"        ⚠️ Lỗi khi cập nhật deleted reviews: {e}")
     
     def get_comment_by_web_id(self, web_comment_id):
         """Lấy comment theo web_comment_id"""
