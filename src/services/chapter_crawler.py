@@ -16,6 +16,7 @@ from .. import config
 from ..scrapers import safe_print
 from .step_retry import step_retry, StepRetryConfig
 from ..scrapers.website import WebsiteScraper
+from ..utils.date_utils import format_for_db
 
 
 class ChapterCrawler:
@@ -115,7 +116,7 @@ class ChapterCrawler:
                         "order": idx - 1,
                         "chapterName": p.get("title") or f"Chapter {idx}",
                         "chapterUrl": p.get("url") or f"{config.BASE_URL}/{web_chapter_id}",
-                        "publishedTime": p.get("createDate"),
+                        "publishedTime": format_for_db(p.get("createDate")) or p.get("createDate"),
                         "storyId": story_id,
                         "voted": p.get("voteCount", 0),
                         "views": p.get("readCount", 0),
@@ -161,7 +162,7 @@ class ChapterCrawler:
                             "order": idx - 1,
                             "chapterName": p.get("title") or f"Chapter {idx}",
                             "chapterUrl": p.get("url") or f"{config.BASE_URL}/{web_chapter_id}",
-                            "publishedTime": p.get("createDate"),
+                            "publishedTime": format_for_db(p.get("createDate")) or p.get("createDate"),
                             "storyId": story_id,
                             "_placeholder": True,
                         }

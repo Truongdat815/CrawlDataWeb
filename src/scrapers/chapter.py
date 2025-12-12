@@ -23,6 +23,7 @@ from ..schemas.chapter_schema import CHAPTER_SCHEMA
 from .website import WebsiteScraper
 from bs4 import BeautifulSoup
 import re
+from ..utils.date_utils import format_for_db
 
 
 class ChapterScraper(BaseScraper):
@@ -54,7 +55,7 @@ class ChapterScraper(BaseScraper):
                 "order": prefetched_data.get("order", 0),
                 "chapterName": prefetched_data.get("title"),
                 "chapterUrl": prefetched_data.get("url"),
-                "publishedTime": prefetched_data.get("createDate"),
+                "publishedTime": format_for_db(prefetched_data.get("createDate")) or prefetched_data.get("createDate"),
                 "storyId": str(story_id),            # Parent story ID (wp_uuid_v7)
                 "voted": prefetched_data.get("voteCount", 0),
                 "views": prefetched_data.get("readCount", 0),
@@ -91,7 +92,7 @@ class ChapterScraper(BaseScraper):
                 "order": (order if order is not None else part_data.get("order", 0)),
                 "chapterName": part_data.get("title") or part_data.get("name") or f"Chapter {order+1 if order is not None else ''}",
                 "chapterUrl": part_data.get("url") or f"{config.BASE_URL}/{web_chapter_id}",
-                "publishedTime": part_data.get("createDate") or part_data.get("publishedAt"),
+                "publishedTime": format_for_db(part_data.get("createDate") or part_data.get("publishedAt")) or (part_data.get("createDate") or part_data.get("publishedAt")),
                 "storyId": str(story_id),
                 "voted": part_data.get("voteCount", 0),
                 "views": part_data.get("readCount", 0),

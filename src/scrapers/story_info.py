@@ -9,6 +9,7 @@ from ..utils.validation import validate_against_schema
 from ..schemas.story_info_schema import STORY_INFO_SCHEMA
 from .website import WebsiteScraper
 from bs4 import BeautifulSoup
+from ..utils.date_utils import format_for_db
 
 
 class StoryInfoScraper(BaseScraper):
@@ -65,14 +66,14 @@ class StoryInfoScraper(BaseScraper):
                 "stabilityOfUpdates": None,          # Not available
                 "voted": story_data.get("voteCount", 0),
                 "freeChapter": free_chapter,
-                "time": story_data.get("createDate"),
+                "time": format_for_db(story_data.get("createDate")) or story_data.get("createDate"),
                 "releaseRate": None,                 # Not available
                 "numberOfReader": None,              # Not available
                 "ratingTotal": None,                 # Not available
                 "totalViewsChapters": None,          # Sum of chapter views (calculate separately)
                 "totalWord": story_data.get("length"),
                 "averageWords": None,                # Calculate: length / numParts
-                "lastUpdated": story_data.get("modifyDate"),
+                "lastUpdated": format_for_db(story_data.get("modifyDate")) or story_data.get("modifyDate"),
                 "totalReviews": None,                # Not available in Wattpad
                 "userReading": None,                 # Not available
                 "userPlanToRead": None,              # Not available

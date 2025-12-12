@@ -12,6 +12,8 @@ from .base import BaseScraper, safe_print
 from ..utils.validation import validate_against_schema
 from ..schemas.chapter_content_schema import CHAPTER_CONTENT_SCHEMA
 from ..utils.story_hash import update_story_hash_from_chapter_content
+from .website import WebsiteScraper
+from ..utils.date_utils import format_for_db
 
 
 class ChapterContentScraper(BaseScraper):
@@ -236,16 +238,22 @@ class ChapterContentScraper(BaseScraper):
             dict formatted theo Wattpad chapter content schema, or None if invalid
         """
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             
-            # Generate contentId từ chapterId
-            content_id = f"{chapter_id}_content"
+            # Generate contentId (uuid7) rather than derived placeholder
+            try:
+                content_id = WebsiteScraper.generate_chapter_content_id(chapter_id, prefix="wp")
+            except Exception:
+                # Fallback to legacy id if helper missing
+                content_id = f"{chapter_id}"
             
             mapped = {
                 "contentId": content_id,
                 "chapterId": str(chapter_id),
                 "content": chapter_text or "",
-                "createdAt": datetime.utcnow().isoformat() + "Z",  # ISO format with Z suffix
+                    # Use timezone-aware UTC to avoid deprecation warnings; format_for_db will
+                    # convert to the DB-friendly human format.
+                    "createdAt": format_for_db(datetime.now(timezone.utc)) or (datetime.now(timezone.utc).isoformat() + "Z"),
             }
             
             # ✅ Validate before return

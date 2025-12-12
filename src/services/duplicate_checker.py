@@ -102,8 +102,11 @@ class DuplicateChecker:
                 totalChapter = None
 
             # 3) Đếm chapters từ collection chapters (dùng làm fallback nếu story.totalChapters không có)
+            # Chapters collection stores both `chapterId` (internal) and
+            # `webChapterId`/`webStoryId` (original web IDs). Use `webStoryId`
+            # to find chapters belonging to the provided web_story_id.
             latest = self.db["chapters"].find_one(
-                            {"storyId": web_story_id_str},
+                            {"webStoryId": web_story_id_str},
                             sort=[("order", -1)],
                             projection={"order": 1}
                         )
@@ -114,8 +117,9 @@ class DuplicateChecker:
                 chapters_count = latest["order"] if latest else 0
 
             # 4. Lấy danh sách chapterIds để đếm content và comments
+            # Use webStoryId to collect chapters for this web story
             chapters_cursor = self.db["chapters"].find(
-                                    {"storyId": str(web_story_id)},
+                                    {"webStoryId": str(web_story_id)},
                                     {"chapterId": 1}
                                 )
             chapter_docs = list(chapters_cursor)

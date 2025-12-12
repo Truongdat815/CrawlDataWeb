@@ -10,6 +10,7 @@ from .. import config
 from ..utils.validation import validate_against_schema
 from ..schemas.user_schema import USER_SCHEMA
 import requests
+from ..utils.date_utils import format_for_db
 
 
 class UserScraper(BaseScraper):
@@ -134,7 +135,7 @@ class UserScraper(BaseScraper):
                     "webUserId": None,
                     "username": username,
                     "userUrl": api_data.get("deeplink"),
-                    "createdDate": api_data.get("createDate"),
+                    "createdDate": format_for_db(api_data.get("createDate")) or api_data.get("createDate"),
                     "gender": api_data.get("gender"),
                     "location": api_data.get("location"),
                     "followers": api_data.get("numFollowers"),

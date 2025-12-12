@@ -4,7 +4,7 @@ Website Scraper - Quản lý thông tin websites
 """
 
 from .base import BaseScraper, safe_print
-import uuid
+from ..utils import uuid_v7
 from datetime import datetime
 
 
@@ -27,10 +27,8 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v7}
         """
-        # UUID v7: timestamp-based UUID (better for database indexing)
-        # Python uuid không có v7 native, dùng v1 thay thế (timestamp-based)
-        uid = uuid.uuid1()
-        return f"{prefix}_{uid}"
+        # Use our uuid_v7 implementation to generate time-ordered ids
+        return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def generate_story_id(web_story_id, prefix="wp"):
@@ -45,11 +43,9 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        # UUID v5: deterministic (same input = same output)
-        # Sử dụng namespace DNS + web_story_id để tạo UUID deterministic
-        namespace = uuid.NAMESPACE_DNS
-        uid = uuid.uuid5(namespace, f"{prefix}_{web_story_id}")
-        return f"{prefix}_{uid}"
+        # Generate a non-deterministic, timestamp-first id (uuid7)
+        # Stories should get a generated id rather than deterministic uuid5
+        return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def generate_chapter_id(web_chapter_id, prefix="wp"):
@@ -64,9 +60,8 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        namespace = uuid.NAMESPACE_DNS
-        uid = uuid.uuid5(namespace, f"{prefix}_chapter_{web_chapter_id}")
-        return f"{prefix}_{uid}"
+        # Generate a non-deterministic uuid7 for each chapter
+        return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def generate_info_id(story_id, prefix="wp"):
@@ -82,9 +77,15 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        namespace = uuid.NAMESPACE_DNS
-        uid = uuid.uuid5(namespace, f"{prefix}_info_{story_id}")
-        return f"{prefix}_{uid}"
+        # Info id can remain deterministic or be generated; keep deterministic
+        # to ensure one-to-one mapping with story_id
+        try:
+            import uuid
+            namespace = uuid.NAMESPACE_DNS
+            uid = uuid.uuid5(namespace, f"{prefix}_info_{story_id}")
+            return f"{prefix}_{uid}"
+        except Exception:
+            return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def generate_comment_id(web_comment_id, prefix="wp"):
@@ -99,9 +100,8 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        namespace = uuid.NAMESPACE_DNS
-        uid = uuid.uuid5(namespace, f"{prefix}_comment_{web_comment_id}")
-        return f"{prefix}_{uid}"
+        # Generate a non-deterministic uuid7 for comments
+        return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def generate_user_id(username, prefix="wp"):
@@ -116,9 +116,22 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        namespace = uuid.NAMESPACE_DNS
-        uid = uuid.uuid5(namespace, f"{prefix}_user_{username}")
-        return f"{prefix}_{uid}"
+        # Keep user ids deterministic based on username to avoid merging users
+        try:
+            import uuid
+            namespace = uuid.NAMESPACE_DNS
+            uid = uuid.uuid5(namespace, f"{prefix}_user_{username}")
+            return f"{prefix}_{uid}"
+        except Exception:
+            return uuid_v7.prefixed(prefix)
+
+    @staticmethod
+    def generate_chapter_content_id(chapter_id, prefix="wp"):
+        """Generate a UUIDv7-based content id for a chapter.
+
+        Format: {prefix}_{uuidv7}
+        """
+        return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def get_or_create_wattpad_website(mongo_collection):

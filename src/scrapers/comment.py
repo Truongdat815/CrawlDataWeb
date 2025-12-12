@@ -19,6 +19,7 @@ from ..schemas.comment_schema import COMMENT_SCHEMA
 from .website import WebsiteScraper
 import uuid
 import requests
+from ..utils.date_utils import format_for_db
 
 
 class CommentScraper(BaseScraper):
@@ -61,7 +62,7 @@ class CommentScraper(BaseScraper):
                     "webUserId": None,
                     "username": username,
                     "userUrl": api_data.get("deeplink"),
-                    "createdDate": api_data.get("createDate"),
+                    "createdDate": format_for_db(api_data.get("createDate")) or api_data.get("createDate"),
                     "gender": api_data.get("gender"),
                     "location": api_data.get("location"),
                     "followers": api_data.get("numFollowers"),
@@ -100,12 +101,12 @@ class CommentScraper(BaseScraper):
             except Exception:
                 web_comment_id = None
             
-            # Generate UUID v7 for commentId
+            # Generate UUID v7 for commentId (non-deterministic)
             if web_comment_id:
                 comment_id = WebsiteScraper.generate_comment_id(web_comment_id, prefix="wp")
             else:
-                # Fallback: generate random UUID if no web ID
-                comment_id = f"wp_{uuid.uuid4()}"
+                # Fallback: generate random uuid7 if no web ID
+                comment_id = WebsiteScraper.generate_comment_id(None, prefix="wp")
                 web_comment_id = str(uuid.uuid4())  # Random web ID as placeholder
 
             # Extract resource info
@@ -130,7 +131,7 @@ class CommentScraper(BaseScraper):
                 "commentId": comment_id,             # wp_uuid_v7
                 "webCommentId": web_comment_id,      # Original Wattpad comment ID
                 "commentText": api_comment.get("text", ""),
-                "time": api_comment.get("created"),
+                "time": format_for_db(api_comment.get("created")) or api_comment.get("created"),
                 "chapterId": str(chapter_id),
                 "userId": user_name,                 # Use real username as userId
                 "userName": user_name,               # Display name

@@ -200,6 +200,7 @@ class BrowserManager:
 
 
 from .utils.story_hash import extract_text_from_wattpad_html, compute_story_hash_from_text
+from .utils.date_utils import format_for_db
 
 
 class WattpadScraper:
@@ -1553,7 +1554,7 @@ class WattpadScraper:
                         "order": idx_p - 1,
                         "chapterName": p.get("title"),
                         "chapterUrl": p.get("url") if p.get("url") and p.get("url").startswith("http") else (config.BASE_URL + str(p.get("url")) if p.get("url") else f"{config.BASE_URL}/{p.get('id')}"),
-                        "publishedTime": p.get("createDate"),
+                        "publishedTime": format_for_db(p.get("createDate")) or p.get("createDate"),
                         "storyId": story_id,                 # Parent wp_uuid_v7
                         "voted": p.get("voteCount", 0),
                         "views": p.get("readCount", 0),
@@ -1611,7 +1612,7 @@ class WattpadScraper:
                             "order": idx_p - 1,
                             "chapterName": p.get('title'),
                             "chapterUrl": p.get('url') if p.get('url') and str(p.get('url')).startswith('http') else (config.BASE_URL + str(p.get('url')) if p.get('url') else f"{config.BASE_URL}/{p.get('id')}"),
-                            "publishedTime": p.get('createDate') or p.get('modifyDate'),
+                            "publishedTime": format_for_db(p.get('createDate') or p.get('modifyDate')) or (p.get('createDate') or p.get('modifyDate')),
                             "storyId": story_id,
                             "voted": p.get('voteCount', 0),
                             "views": p.get('readCount', 0),
@@ -1716,7 +1717,7 @@ class WattpadScraper:
                                         chapter["voted"] = chapter_meta.get("voteCount", 0)
                                         chapter["order"] = chapter_meta.get("order", idx - 1)
                                         chapter["totalComments"] = chapter_meta.get("commentCount", 0)
-                                        chapter["publishedTime"] = chapter_meta.get("createDate")
+                                        chapter["publishedTime"] = format_for_db(chapter_meta.get("createDate")) or chapter_meta.get("createDate")
                                         # ✅ KEEP webChapterId from URL parsing (line 1068) - don't overwrite with None
                                         # chapter["webChapterId"] was already set from URL parsing above
                                         safe_print(f"      ✅ Metadata: {chapter['chapterName']}")
