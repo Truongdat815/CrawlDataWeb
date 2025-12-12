@@ -40,6 +40,19 @@ RETRY_BACKOFF = 2  # Multiplier cho exponential backoff (1s, 2s, 4s, 8s...)
 MAX_REQUESTS_PER_MINUTE = 60  # Rate limit: 60 requests/phút (dùng cho shared rate limiter)
 REQUEST_TIMEOUT = 30  # Timeout cho mỗi HTTP request (giây)
 
+# If True, skip downloading cover images (useful when offline or DNS blocked)
+SKIP_IMAGE_DOWNLOAD = False
+
+# ========== IMAGE UPLOAD CONFIGURATION ==========
+# URL endpoint for image upload service. Can be overridden with env var
+# URL endpoint for image upload service. Can be overridden with env var
+IMAGE_UPLOAD_URL = os.getenv('IMAGE_UPLOAD_URL', 'https://api-image.techleaf.pro/api/upload')
+# API key for image upload service. Prefer setting via environment variable for security.
+# Default to None to avoid embedding secret keys in source.
+IMAGE_UPLOAD_API_KEY = os.getenv('IMAGE_UPLOAD_API_KEY', 'k8JdR4xP9uA2mQ7wF1zT0bVgN5yHcS3LrE8qWfU6pXjK2dM9sB4hY0vG7tC1n')
+# Timeout for upload requests (seconds)
+IMAGE_UPLOAD_TIMEOUT = int(os.getenv('IMAGE_UPLOAD_TIMEOUT', '30'))
+
 # ========== PARALLEL CRAWLING CONFIGURATION ==========
 # 🚀 Tốc độ crawl (dùng multi-threading)
 MAX_STORY_WORKERS = 3  # Số stories cào song song (recommended: 3-5)
@@ -60,15 +73,22 @@ RETRY_BACKOFF_MAX = 60.0  # Maximum backoff time
 RETRY_BACKOFF_MULTIPLIER = 2.0  # Exponential backoff multiplier
 
 # 📊 Progress tracking
-ENABLE_CHECKPOINTS = True  # Lưu tiến độ để resume sau
+# Checkpoint file support removed: disable by default
+ENABLE_CHECKPOINTS = False  # Lưu tiến độ để resume sau (đã vô hiệu hóa)
 CHECKPOINT_INTERVAL = 10  # Save checkpoint mỗi N stories
 CHECKPOINT_FILE = os.path.join(DATA_DIR, "crawl_checkpoint.json")
 CHECKPOINT_DIR = os.path.join(DATA_DIR, "checkpoints")  # Per-chapter checkpoints directory
 
 # ========== SCRAPING LIMITS ==========
-MAX_CHAPTERS_PER_STORY = 3  # None = Tất cả, số = Tối đa N chapters
-MAX_COMMENTS_PER_CHAPTER = 25  # None = Tất cả, số = Tối đa N comments
+MAX_CHAPTERS_PER_STORY = None  # None = Tất cả, số = Tối đa N chapters
+MAX_COMMENTS_PER_CHAPTER = None  # None = Tất cả, số = Tối đa N comments
 MAX_STORIES_PER_BATCH = 5  # None = Tất cả, số = Tối đa N stories mỗi lần chạy
+
+# Batch processing defaults for large stories (tunable)
+# Number of chapters to map/process per batch to avoid memory/CPU spikes
+CHAPTER_PROCESS_BATCH_SIZE = 50
+# Seconds to sleep between batches (throttle). Fractional seconds allowed.
+CHAPTER_BATCH_SLEEP_SECONDS = 0.5
 
 # ========== WATTPAD LOGIN CREDENTIALS ==========
 WATTPAD_USERNAME = "buonnguqua"
@@ -84,7 +104,7 @@ SKIP_LOGIN_IF_COOKIE_EXISTS = True  # Nếu cookie file tồn tại, bỏ qua lo
 
 # ========== MONGODB CONFIGURATION ==========
 MONGODB_ENABLED = True
-"""
+
 # ========== MONGODB SELF-HOSTED (CURRENT) ==========
 MONGODB_USERNAME = "user"
 MONGODB_PASSWORD = "56915001"
@@ -102,9 +122,9 @@ if os.getenv("MONGODB_URI"):
     MONGODB_URI = os.getenv("MONGODB_URI")
 
     
+
+
 """
-
-
 # ========== MONGODB ATLAS (OLD - COMMENTED FOR REFERENCE) ==========
 MONGODB_USERNAME = "xuannguyentruong15"
 MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
@@ -114,3 +134,4 @@ MONGODB_URI = "mongodb+srv://xuannguyentruong15:grXsKiSEOf3APbRD@crawl.ujyutza.m
 MONGODB_COLLECTION_STORIES = "stories"
 MONGODB_COLLECTION_CHAPTERS = "chapters"
 MONGODB_COLLECTION_COMMENTS = "comments"
+"""

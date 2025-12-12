@@ -19,7 +19,7 @@ STORY_INFO_SCHEMA = {
     "characterScore": None,               # Character design score
     "stabilityOfUpdates": None,           # Update stability score
     "voted": "voteCount",                 # Total votes across chapters
-    "freeChapter": "isPaywalled",         # Free chapters flag
+    "freeChapter": None,                    # Number of free chapters (int). Mapping not provided yet.
     "time": "createDate",                 # Reading time estimate
     "releaseRate": None,                  # Release rate
     "numberOfReader": None,               # Number of readers

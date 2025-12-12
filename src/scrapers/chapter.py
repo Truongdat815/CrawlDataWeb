@@ -67,6 +67,42 @@ class ChapterScraper(BaseScraper):
         except Exception as e:
             safe_print(f"⚠️  Chapter validation failed: {e}")
             return None
+
+    @staticmethod
+    def map_api_part_to_chapter(part_data, story_id, order=None):
+        """
+        Map API `parts` entry to chapter schema used by MongoDB.
+
+        Args:
+            part_data: dict returned by API for a part/chapter
+            story_id: internal story id (wp_... or web id)
+            order: optional 0-based order index
+
+        Returns:
+            dict validated against CHAPTER_SCHEMA or None
+        """
+        try:
+            web_chapter_id = str(part_data.get("id") or part_data.get("webChapterId") or part_data.get("chapterId"))
+            chapter_id = WebsiteScraper.generate_chapter_id(web_chapter_id, prefix="wp")
+
+            mapped = {
+                "chapterId": chapter_id,
+                "webChapterId": web_chapter_id,
+                "order": (order if order is not None else part_data.get("order", 0)),
+                "chapterName": part_data.get("title") or part_data.get("name") or f"Chapter {order+1 if order is not None else ''}",
+                "chapterUrl": part_data.get("url") or f"{config.BASE_URL}/{web_chapter_id}",
+                "publishedTime": part_data.get("createDate") or part_data.get("publishedAt"),
+                "storyId": str(story_id),
+                "voted": part_data.get("voteCount", 0),
+                "views": part_data.get("readCount", 0),
+                "totalComments": part_data.get("commentCount", 0),
+            }
+
+            validated = validate_against_schema(mapped, CHAPTER_SCHEMA, strict=False)
+            return validated
+        except Exception as e:
+            safe_print(f"⚠️  map_api_part_to_chapter failed: {e}")
+            return None
     
     @staticmethod
     def extract_chapter_urls_from_html(page_html, story_id, max_chapters=None):
@@ -174,28 +210,34 @@ class ChapterScraper(BaseScraper):
     
     def save_chapter_to_mongo(self, chapter_data):
         """
-        Lưu chapter vào MongoDB
-        
+        Lưu chapter vào MongoDB.
+
+        Trả về:
+            True nếu chèn mới một document, False nếu cập nhật hoặc thao tác thất bại.
+
         Args:
             chapter_data: dict chứa thông tin chapter (Wattpad schema)
         """
         if chapter_data is None or not self.collection_exists("chapters"):
-            return
+            return False
         
         try:
             collection = self.get_collection("chapters")
             if collection is None:
-                return
-            
+                return False
+
             existing = collection.find_one({"chapterId": chapter_data.get("chapterId")})
-            
+
             if existing:
                 # Update nếu chapter đã tồn tại
                 collection.update_one(
                     {"chapterId": chapter_data.get("chapterId")},
                     {"$set": chapter_data}
                 )
+                return False
             else:
                 collection.insert_one(chapter_data)
+                return True
         except Exception as e:
             safe_print(f"⚠️ Lỗi khi lưu chapter vào MongoDB: {e}")
+            return False

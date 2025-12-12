@@ -248,9 +248,9 @@ def _cli_update_missing_hashes(mongo_db=None, uri=None, db_name=None, dry_run=Fa
         client = MongoClient(uri)
         mongo_db = client[db_name]
 
-    chapter_col = mongo_db.get_collection('chapter_contents')
+    chapter_col = mongo_db.get_collection('chapterContents')
     if chapter_col is None:
-        _safe_print("⚠️ No `chapter_contents` collection found. Aborting.")
+        _safe_print("⚠️ No `chapterContents` collection found. Aborting.")
         return 0, 0
 
     total = chapter_col.count_documents({})

@@ -7,13 +7,16 @@ class CommentSyncService:
 
     def sync_comments(self, web_chapter_id, web_comments=None):
         """
+        ĐÃ TỐI ƯU
         Đồng bộ:
         - Comment mới
         - Comment chỉnh sửa
         - Comment bị xóa
         """
-        # If caller provided fetched web_comments, use them. Otherwise try to
-        # delegate to the comment_scraper if it implements a fetch method.
+        # Ưu tiên dùng danh sách comment được truyền vào. 
+        # Nếu không có, thử gọi comment_scraper.fetch_comments() (nếu tồn tại).
+        # Nếu không có cả hai → dùng danh sách rỗng.
+
         if web_comments is None:
             try:
                 fetcher = getattr(self.comment_scraper, 'fetch_comments', None)
@@ -24,6 +27,22 @@ class CommentSyncService:
                     web_comments = []
             except Exception:
                 web_comments = []
+
+        # Chuẩn hóa web_comments thành một list (generator, dict hoặc iterable đều được convert).
+        # Lưu vào web_comments_list để đảm bảo phía dưới luôn làm việc với list thống nhất.
+
+        web_comments_list = []
+        if isinstance(web_comments, list):
+            web_comments_list = web_comments
+        elif web_comments is None:
+            web_comments_list = []
+        elif isinstance(web_comments, dict):
+            web_comments_list = [web_comments]
+        else:
+            try:
+                web_comments_list = list(web_comments)  # type: ignore[arg-type]
+            except Exception:
+                web_comments_list = []
         # Determine internal chapterId from chapters collection if available
         chapter_id = None
         try:
@@ -40,7 +59,7 @@ class CommentSyncService:
         else:
             db_comments = list(self.db["comments"].find({"webChapterId": web_chapter_id}))
 
-        web_map = {c["webCommentId"]: c for c in web_comments}
+        web_map = {c["webCommentId"]: c for c in web_comments_list}
         db_map = {c["webCommentId"]: c for c in db_comments}
 
         # Pass chapter_id so inserted comments include internal chapterId when available

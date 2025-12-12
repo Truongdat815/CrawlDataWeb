@@ -10,7 +10,7 @@ import traceback
 from src import config
 from src.parallel_crawler import ParallelCrawler
 from src.scrapers import safe_print
-from src.utils.file_utils import save_stories_to_json
+# JSON file saving has been disabled: stories are persisted directly to DB
 
 
 def main():
@@ -73,10 +73,10 @@ def main():
         results = crawler.crawl_stories_from_urls(story_urls)
         
         # ========== LƯU KẾT QUẢ ==========
+        # JSON export disabled — stories are persisted directly to the database
         if results:
-            safe_print(f"\n💾 Lưu {len(results)} stories vào JSON files...")
-            saved_count = save_stories_to_json(results, output_dir='data/json')
-            safe_print(f"✅ Đã lưu {saved_count}/{len(results)} stories vào data/json\n")
+            saved_count = len(results)
+            safe_print(f"\n💾 Đã lưu {saved_count} stories trực tiếp vào DB (không xuất JSON).\n")
         else:
             safe_print("\n⚠️ Không có data để lưu")
             saved_count = 0

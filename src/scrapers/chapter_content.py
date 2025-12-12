@@ -26,7 +26,8 @@ class ChapterContentScraper(BaseScraper):
     
     def __init__(self, page=None, mongo_db=None, cookies=None):
         super().__init__(page, mongo_db, config)
-        self.init_collections({"chapter_contents": "chapter_contents"})
+        # Map logical key 'chapterContents' to DB collection 'chapterContents'
+        self.init_collections({"chapterContents": "chapterContents"})
         self.cookies = cookies or {}
     
     @staticmethod
@@ -455,11 +456,11 @@ class ChapterContentScraper(BaseScraper):
         Args:
             content_data: dict chứa thông tin chapter content (Wattpad schema)
         """
-        if not content_data or not self.collection_exists("chapter_contents"):
+        if not content_data or not self.collection_exists("chapterContents"):
             return
         
         try:
-            collection = self.get_collection("chapter_contents")
+            collection = self.get_collection("chapterContents")
             if collection is None:
                 return
             
@@ -485,3 +486,69 @@ class ChapterContentScraper(BaseScraper):
                     pass
         except Exception as e:
             safe_print(f"        ⚠️  Lỗi khi lưu chapter content vào MongoDB: {e}")
+
+    # ------------------------------------------------------------------
+    # Compatibility wrappers expected by the pipeline
+    # ------------------------------------------------------------------
+    def fetch_content(self, web_chapter_id):
+        """Compatibility wrapper used by ChapterPipeline.
+
+        Attempts to fetch chapter text using Playwright + API v2 (sync
+        wrapper). Returns cleaned text string or None on failure.
+        """
+        try:
+            # Prefer Playwright-based API v2 synchronous fetch when available
+            text = None
+            try:
+                text = self.fetch_chapter_content_from_apiv2_sync(self.page, web_chapter_id)
+            except Exception as e:
+                safe_print(f"   ⚠️ fetch_chapter_content_from_apiv2_sync raised: {e}")
+                text = None
+
+            # If that returned None, attempt to fetch chapter page HTML via Playwright
+            # and parse text out of it.
+            if not text and self.page:
+                try:
+                    chapter_url = f"{config.BASE_URL}/{web_chapter_id}"
+                    self.page.goto(chapter_url, wait_until='load', timeout=config.REQUEST_TIMEOUT * 1000)
+                    html = self.page.content()
+                    text = self.extract_text_from_html_with_parse(html)
+                except Exception as e:
+                    safe_print(f"   ⚠️ Fallback page fetch failed: {e}")
+
+            return text
+        except Exception as e:
+            safe_print(f"   ⚠️ Unexpected error in fetch_content: {e}")
+            return None
+
+    def save_content(self, chapter_id, content):
+        """Compatibility wrapper used by ChapterPipeline.
+
+        Accepts either a raw text string or a mapped content dict. Maps and
+        validates if necessary, then persists using `save_chapter_content_to_mongo`.
+        """
+        try:
+            if not content:
+                safe_print(f"   ℹ️ No content to save for chapter {chapter_id}")
+                return False
+
+            # If content is a dict that already matches schema, save directly
+            if isinstance(content, dict) and content.get('contentId'):
+                self.save_chapter_content_to_mongo(content)
+                return True
+
+            # If content is a raw string, map to schema then save
+            if isinstance(content, str):
+                mapped = self.map_html_to_chapter_content(content, chapter_id)
+                if mapped:
+                    self.save_chapter_content_to_mongo(mapped)
+                    return True
+                else:
+                    safe_print(f"   ⚠️ Failed to map content for chapter {chapter_id}")
+                    return False
+
+            safe_print(f"   ⚠️ Unsupported content type for save_content: {type(content)}")
+            return False
+        except Exception as e:
+            safe_print(f"   ⚠️ Error in save_content: {e}")
+            return False

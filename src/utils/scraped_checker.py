@@ -79,7 +79,7 @@ class ScrapedChecker:
             safe_print(f"   💾 Loaded {len(self.chapter_ids)} chapter IDs to cache")
             
             # Load chapter content IDs
-            chapter_contents_collection = self.db["chapter_contents"]
+            chapter_contents_collection = self.db["chapterContents"]
             self.chapter_content_ids = set(doc["contentId"] for doc in chapter_contents_collection.find({}, {"contentId": 1}))
             safe_print(f"   💾 Loaded {len(self.chapter_content_ids)} chapter content IDs to cache")
         except Exception:

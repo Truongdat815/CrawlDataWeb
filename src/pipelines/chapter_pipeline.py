@@ -27,9 +27,19 @@ class ChapterPipeline:
         # 2️⃣ CRAWL CONTENT NẾU CẦN
         # Use webChapterId for duplicate checks
         should_crawl = self.duplicate_checker.should_crawl_chapter(web_chapter_id)
+        # Debug: log decision
+        try:
+            safe_print(f"   ℹ️ Pipeline: chapter={chapter_id} webChapterId={web_chapter_id} should_crawl={should_crawl}")
+        except Exception:
+            pass
+
         if should_crawl:
             content = self.content_scraper.fetch_content(web_chapter_id)
-            self.content_scraper.save_content(chapter_id, content)
+            try:
+                saved = self.content_scraper.save_content(chapter_id, content)
+                safe_print(f"   ℑ save_content returned: {saved}")
+            except Exception as e:
+                safe_print(f"   ⚠️ Exception while saving content for {chapter_id}: {e}")
 
         # 3️⃣ LUÔN SYNC COMMENT
         self.comment_service.sync_comments(web_chapter_id)

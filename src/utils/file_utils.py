@@ -62,13 +62,9 @@ def save_story_to_json(story_data: Dict[str, Any], output_dir: str = 'data/json'
     
     filepath = os.path.join(output_dir, filename)
     
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(story_data, f, ensure_ascii=False, indent=2, default=str)
-        return filepath
-    except Exception as e:
-        print(f"⚠️ Error saving {story_id}: {e}")
-        return None
+    # JSON file export disabled. Stories are persisted directly to the database.
+    print(f"ℹ️ JSON export disabled — not saving story {story_id} to file")
+    return None
 
 
 def save_stories_to_json(stories: List[Dict[str, Any]], output_dir: str = 'data/json') -> int:
@@ -82,17 +78,9 @@ def save_stories_to_json(stories: List[Dict[str, Any]], output_dir: str = 'data/
     Returns:
         Number of successfully saved files
     """
-    saved_count = 0
-    
-    for story in stories:
-        filepath = save_story_to_json(story, output_dir)
-        if filepath:
-            saved_count += 1
-            # Extract filename from path
-            filename = os.path.basename(filepath)
-            print(f"   ✅ Saved: {filename}")
-    
-    return saved_count
+    # JSON export disabled. Stories are persisted directly to the database.
+    print(f"ℹ️ JSON export disabled — {len(stories)} stories not written to files")
+    return 0
 
 
 def load_story_from_json(filepath: str) -> Optional[Dict[str, Any]]:

@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Duplicate checker - handles checking if stories/chapters already scraped
-Operates using webStoryId / webChapterId / webCommentId as primary keys in DB.
+DuplicateChecker – kiểm tra trùng lặp khi cào dữ liệu.
+Dùng webStoryId / webChapterId / webCommentId làm khóa chính trong cơ sở dữ liệu.
 """
 
+"""
+    ĐÃ TỐI ƯU
+    Chưa rõ totalChapter và chapter_count cái nào tối ưu hơn
+"""
 import logging
 from ..utils.scraped_checker import ScrapedChecker
 from ..scrapers.base import safe_print
@@ -11,11 +15,13 @@ from ..scrapers.base import safe_print
 
 class DuplicateChecker:
     """
-    DuplicateChecker operates on web* ids:
-      - webStoryId (string numeric like "163645533")
-      - webChapterId (string numeric like "987654")
-      - webCommentId (string)
-    It prefers to use the DB passed in `db` and uses ScrapedChecker as an optional cached helper.
+        DuplicateChecker làm việc dựa trên các web* id:
+        - webStoryId (chuỗi số, ví dụ: "163645533")
+        - webChapterId (chuỗi số, ví dụ: "987654")
+        - webCommentId (chuỗi)
+    
+        Ưu tiên sử dụng DB được truyền vào qua tham số `db`, 
+        và dùng ScrapedChecker như một bộ nhớ đệm (cache) tùy chọn để tăng tốc độ kiểm tra.
     """
 
     def __init__(self, db):
@@ -28,63 +34,26 @@ class DuplicateChecker:
             self.cache = None
 
     def should_crawl_chapter(self, web_chapter_id, force=False):
-        """
-        Decide whether to (re-)crawl a chapter's content.
-
-        Args:
-            web_chapter_id: webChapterId (string or numeric)
-            force: if True, always crawl
-
-        Returns:
-            True  -> crawl content
-            False -> skip content (already present)
-        """
         if force:
             return True
         if not web_chapter_id:
             return True
 
         try:
-            # Find chapter metadata by webChapterId first
             chapter = self.db["chapters"].find_one({"webChapterId": str(web_chapter_id)})
             if not chapter:
-                # No chapter metadata stored → crawl
-                return True
+                return True  # chưa có metadata → phải crawl
 
-            # Use internal chapterId when querying content/comments in DB
-            chapter_id = chapter.get("chapterId")
-            if chapter_id:
-                content = self.db["chapter_contents"].find_one({"chapterId": str(chapter_id)})
-                if not content:
-                    # Try fallback by contentId pattern
-                    content = self.db["chapter_contents"].find_one({"contentId": f"{chapter_id}_content"})
-                if not content:
-                    return True
-                return False
+            # Kiểm tra content
+            if self._chapter_has_content(chapter):
+                return False  # đã crawl
 
-            # If no internal chapterId, fallback to webChapterId-based lookup
-            content = self.db["chapter_contents"].find_one({"webChapterId": str(web_chapter_id)})
-            if not content:
-                return True
-            return False
-        except Exception as e:
-            logging.exception("[DUP_CHECK] Lỗi khi kiểm tra chapter %s", web_chapter_id)
-            # Conservative choice: try to crawl on DB errors
+            return True  # chưa có nội dung
+        except Exception:
+            logging.exception("[DUP_CHECK] DB error in should_crawl_chapter")
             return True
 
-    def check_chapter(self, web_chapter_id, chapter_name=None):
-        """
-        Return status for a chapter by webChapterId.
-
-        Returns:
-            dict: {
-                "exists": True/False,
-                "chapterId": internal chapterId (if present),
-                "webChapterId": web_chapter_id,
-                "has_content": True/False,
-                "chapterName": str or None
-            }
-        """
+    def check_chapter(self, web_chapter_id):
         if not web_chapter_id:
             return {"exists": False}
 
@@ -93,92 +62,85 @@ class DuplicateChecker:
             if not chapter:
                 return {"exists": False}
 
-            chapter_id = chapter.get("chapterId")
-            has_content = False
-            if chapter_id:
-                has_content = self.db["chapter_contents"].find_one({"chapterId": str(chapter_id)}) is not None
-                if not has_content:
-                    has_content = self.db["chapter_contents"].find_one({"contentId": f"{chapter_id}_content"}) is not None
-            else:
-                has_content = self.db["chapter_contents"].find_one({"webChapterId": str(web_chapter_id)}) is not None
-
             return {
                 "exists": True,
-                "chapterId": chapter.get("chapterId"),
+                "ChapterId": chapter.get("chapterId"),
                 "webChapterId": str(web_chapter_id),
-                "has_content": bool(has_content),
-                "chapterName": chapter.get("chapterName") or chapter_name
+                "has_content": self._chapter_has_content(chapter),
+                "chapterName": chapter.get("chapterName")
             }
-        except Exception as e:
-            logging.exception("[DUP_CHECK] Lỗi khi check_chapter %s", web_chapter_id)
+        except Exception:
+            logging.exception("[DUP_CHECK] error in check_chapter")
             return {"exists": False}
-
+    
     def check_story(self, web_story_id):
         """
-        Return status for a story by webStoryId.
+        Trả về trạng thái của một truyện dựa trên webStoryId.
 
         Returns:
-            dict (similar to ScrapedChecker.get_story_status) or None if not found.
+            dict  – giống cấu trúc của ScrapedChecker.get_story_status,  
+                hoặc None nếu không tìm thấy.
         """
+
         if not web_story_id:
             return None
 
         try:
-            # Find story document by webStoryId or by storyId equals the web id (robust lookup)
-            story_doc = self.db["stories"].find_one({"$or": [{"webStoryId": str(web_story_id)}, {"storyId": str(web_story_id)}]})
-            if not story_doc:
+             # 1) Lấy truyện từ collection stories
+            story = self.db["stories"].find_one({"webStoryId": str(web_story_id)})
+            if not story:
                 return None
 
-            story_id = story_doc.get("storyId")
+            story_id = story.get("storyId")
             web_story_id_str = str(web_story_id)
-            # Try using cached ScrapedChecker if available (it expects internal storyId)
-            # But only accept the cached result if it indicates chapters exist — otherwise
-            # fall back to live DB queries because some migrations stored web IDs in chapter.storyId.
-            if self.cache and story_id:
-                try:
-                    status = self.cache.get_story_status(story_id)
-                    if status and status.get("chapters_count", 0) > 0:
-                        return status
-                    # otherwise ignore cache and compute from DB below
-                except Exception:
-                    # If cache fails, fall back to DB queries below
-                    pass
 
-            # After DB normalization we expect chapters.storyId to contain internal IDs.
-            # Use internal storyId to compute counts and avoid fallbacks.
-            if not story_id:
-                # If still missing internal storyId, fallback to webStoryId-based query
-                chapters_cursor = self.db["chapters"].find({"webStoryId": web_story_id_str}, {"chapterId": 1})
+            # 2) Lấy thông tin tổng chương nếu có từ document `stories` (ưu tiên)
+            totalChapter = story.get("totalChapters")
+            try:
+                totalChapter = int(totalChapter) if totalChapter is not None else None
+            except Exception:
+                totalChapter = None
+
+            # 3) Đếm chapters từ collection chapters (dùng làm fallback nếu story.totalChapters không có)
+            latest = self.db["chapters"].find_one(
+                            {"storyId": web_story_id_str},
+                            sort=[("order", -1)],
+                            projection={"order": 1}
+                        )
+
+            if totalChapter is not None:
+                chapters_count = totalChapter
             else:
-                chapters_cursor = self.db["chapters"].find({"storyId": str(story_id)}, {"chapterId": 1})
+                chapters_count = latest["order"] if latest else 0
 
+            # 4. Lấy danh sách chapterIds để đếm content và comments
+            chapters_cursor = self.db["chapters"].find(
+                                    {"storyId": str(web_story_id)},
+                                    {"chapterId": 1}
+                                )
             chapter_docs = list(chapters_cursor)
             chapter_ids = [ch.get("chapterId") for ch in chapter_docs if ch.get("chapterId")]
 
-            chapters_count = len(chapter_docs)
-
-            # Count contents by internal chapterId and contentId (normalized)
-            contents_count = 0
-            if chapter_ids:
-                contents_count = self.db["chapter_contents"].count_documents({"chapterId": {"$in": chapter_ids}})
-                if contents_count == 0:
-                    content_ids = [f"{cid}_content" for cid in chapter_ids if cid]
-                    if content_ids:
-                        contents_count = self.db["chapter_contents"].count_documents({"contentId": {"$in": content_ids}})
+             # Đếm số content theo chapterId (schema đã chuẩn hoá).
+            contents_count = self.db["chapterContents"].count_documents(
+                                    {"chapterId": {"$in": chapter_ids}}
+                                )
 
             # Count comments using chapterId
             comments_count = 0
             if chapter_ids:
                 comments_count = self.db["comments"].count_documents({"chapterId": {"$in": chapter_ids}})
 
+            # Lấy story Infor
+            storyInfor = self.db["storyInfo"].find_one({"storyId": story_id})
             return {
                 "exists": True,
                 "storyId": story_id,
-                "storyName": story_doc.get("storyName"),
+                "storyName": story.get("storyName"),
                 "chapters_count": chapters_count,
                 "chapters_with_content": contents_count,
                 "comments_count": comments_count,
-                "last_updated": story_doc.get("time") or story_doc.get("modifiedDate")
+                "last_updated": story.get("lastUpdated")
             }
         except Exception as e:
             logging.exception("[DUP_CHECK] Lỗi khi check_story %s", web_story_id)
@@ -191,4 +153,28 @@ class DuplicateChecker:
                 self.cache.close()
         except Exception:
             logging.exception("DuplicateChecker.close: failed to close cache")
+
+    def _chapter_has_content(self, chapter):
+        """
+        Kiểm tra chapter content tồn tại dựa trên chapterId hoặc webChapterId.
+       
+
+        Kiểm tra chapter đã có nội dung hay chưa.
+
+        Ưu tiên kiểm tra theo chapterId (schema mới sau normalize):
+        - chapterId
+        - contentId dạng "{chapterId}_content"
+
+        Nếu không có chapterId (data cũ), fallback sang kiểm tra theo webChapterId.
+
+        Trả về:
+            True  -> chapter đã có content trong DB
+            False -> chưa có content
+    """
+        chapter_id = chapter.get("chapterId")
+
+        # Ưu tiên chapterId
+        if chapter_id:
+            return self.db["chapterContents"].find_one(
+                {"chapterId": str(chapter_id)}) is not None
 

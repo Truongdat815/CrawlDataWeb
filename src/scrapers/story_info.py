@@ -16,7 +16,8 @@ class StoryInfoScraper(BaseScraper):
     
     def __init__(self, page=None, mongo_db=None):
         super().__init__(page, mongo_db, config)
-        self.init_collections({"story_info": "story_info"})
+        # Map logical key 'storyInfo' to DB collection 'storyInfo'
+        self.init_collections({"storyInfo": "storyInfo"})
     
     @staticmethod
     def map_api_to_story_info(story_data, free_chapter_override=None):
@@ -38,11 +39,13 @@ class StoryInfoScraper(BaseScraper):
             info_id = WebsiteScraper.generate_info_id(story_id, prefix="wp")
             
             # Determine freeChapter value
-            # Priority: free_chapter_override (from HTML) > API isPaywalled
-            if free_chapter_override is not None:
+            # Priority: free_chapter_override (from HTML) if it provides a numeric
+            # count. Do NOT map from API `isPaywalled` field; if no numeric value
+            # is available, store `None` (unknown).
+            if isinstance(free_chapter_override, int):
                 free_chapter = free_chapter_override
             else:
-                free_chapter = not story_data.get("isPaywalled", False)
+                free_chapter = None
             
             # Map stats from API response
             processed_info = {
@@ -105,7 +108,7 @@ class StoryInfoScraper(BaseScraper):
             return
         
         try:
-            collection = self.collections.get("story_info")
+            collection = self.collections.get("storyInfo")
             if collection is None:
                 safe_print("⚠️ story_info collection not found")
                 return

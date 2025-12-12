@@ -5,6 +5,7 @@ Responsible for: title, description, stats, images, author info, etc.
 
 from .base import BaseScraper, safe_print
 from .. import config
+from urllib.parse import urlparse
 from ..utils.validation import validate_against_schema
 from ..utils import download_image
 from ..schemas.story_schema import STORY_SCHEMA
@@ -37,13 +38,22 @@ class StoryScraper(BaseScraper):
             story_id = WebsiteScraper.generate_story_id(web_story_id, prefix="wp")
             cover_url = story_data.get("cover")
             
-            # Download cover image nếu có URL
+            # Download cover image nếu có URL (attempt upload -> download_image returns
+            # remote link from API on success, or local path on fallback). We MUST store
+            # only the remote link returned by the API. Do NOT persist local filesystem paths
+            # into the `coverImage` field.
             cover_img_path = None
             if cover_url:
-                safe_print(f"   📥 Đang download ảnh cover...")
+                safe_print(f"   📥 Đang download/upload ảnh cover...")
                 cover_img_path = download_image(cover_url, web_story_id)  # Use web_story_id for filename
                 if cover_img_path:
-                    safe_print(f"   ✅ Ảnh cover: {cover_img_path}")
+                    # If upload API returned a relative path (starts with '/'), convert to absolute using IMAGE_UPLOAD_URL
+                    try:
+                        if str(cover_img_path).startswith("/"):
+                            cover_img_path = f"https://api-image.techleaf.pro{cover_img_path}"
+                    except Exception:
+                        pass
+                    safe_print(f"   ✅ Ảnh cover (download/upload result): {cover_img_path}")
             
             # Mapping from API response to new schema
             # Some pages do not include a userId; keep it None intentionally.
@@ -52,7 +62,9 @@ class StoryScraper(BaseScraper):
                 "webStoryId": web_story_id,          # Original Wattpad ID
                 "storyName": story_data.get("title"),
                 "storyUrl": story_data.get("url"),
-                "coverImage": cover_img_path if cover_img_path else cover_url,  # Use local path if available
+                # Use remote upload link if download_image returned it (starts with http or leading '/'),
+                # otherwise fall back to original cover_url from API (do not store local file path)
+                "coverImage": (cover_img_path if cover_img_path and (str(cover_img_path).startswith("http") or str(cover_img_path).startswith("/")) else cover_url),
                 "category": None,
                 "status": "completed" if story_data.get("completed") else "ongoing",
                 "genres": None,                      # Wattpad uses tags instead of genres

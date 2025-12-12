@@ -58,11 +58,7 @@ class ParallelCrawler:
         self.retry_counts = {}
         self.retry_lock = threading.Lock()
         
-        # Progress checkpoint
-        # Track which story IDs exist locally (from summary or chapter checkpoint files)
-        self.existing_story_ids = set()
-        self.completed_story_ids = set()
-        self.checkpoint_lock = threading.Lock()
+        # Progress checkpoint (disabled - checkpoint files are no longer used)
         
         # Shared rate limiter (thread-safe)
         from .scraper_engine import RateLimiter
@@ -73,90 +69,16 @@ class ParallelCrawler:
         self.mongo_db_name = config.MONGODB_DB_NAME if config.MONGODB_ENABLED else None
         # Ensure any future checks use 'is not None' for mongo_db, mongo_collection, etc.
         
-        # Load checkpoint if exists
-        self._load_checkpoint()
-        
         safe_print("✨ ParallelCrawler initialized")
         safe_print(f"   Story workers: {self.max_story_workers}")
         safe_print(f"   ✅ Browser design: 1 per worker (5 workers = 5 browsers)")
         safe_print(f"   ✅ Chapter crawl: 100% API (no browser)")
         safe_print(f"   ✅ Shared rate limiter: {config.MAX_REQUESTS_PER_MINUTE} req/min")
         safe_print(f"   Retry enabled: {config.MAX_STORY_RETRIES > 0} (max {config.MAX_STORY_RETRIES} retries)")
-        if self.completed_story_ids:
-            safe_print(f"   📋 Loaded checkpoint: {len(self.completed_story_ids)} stories already completed")
     
-    def _load_checkpoint(self):
-        """Load progress checkpoint from file"""
-        if not config.ENABLE_CHECKPOINTS:
-            return
-        
-        try:
-            import json
-            # Load existing story ids from global checkpoint file if present.
-            if os.path.exists(config.CHECKPOINT_FILE):
-                try:
-                    with open(config.CHECKPOINT_FILE, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    safe_print(f"✅ Checkpoint file found: {config.CHECKPOINT_FILE}")
-                    stories = data.get('stories')
-                    if isinstance(stories, list):
-                        with self.checkpoint_lock:
-                            self.existing_story_ids = set(str(s) for s in stories)
-                        safe_print(f"   📋 Loaded {len(self.existing_story_ids)} existing story ids from checkpoint")
-                except Exception:
-                    safe_print(f"✅ Checkpoint file exists but could not be parsed: {config.CHECKPOINT_FILE}")
-        except Exception as e:
-            safe_print(f"⚠️ Failed to load checkpoint: {e}")
+    # Note: checkpoint file support removed. No _load_checkpoint implementation.
     
-    def _save_checkpoint(self):
-        """Save progress checkpoint to file (thread-safe)"""
-        if not config.ENABLE_CHECKPOINTS:
-            return
-        
-        try:
-            import json
-            with self.checkpoint_lock:
-                story_ids = set()
-
-                # Collect from story summary directory
-                try:
-                    from .utils.update_helpers import get_story_summary_dir
-                    summary_dir = get_story_summary_dir()
-                    if os.path.isdir(summary_dir):
-                        for fname in os.listdir(summary_dir):
-                            if fname.startswith("story_") and fname.endswith(".json"):
-                                sid = fname[len("story_"):-len(".json")]
-                                if sid:
-                                    story_ids.add(sid)
-                except Exception:
-                    pass
-
-                # Collect from per-chapter checkpoint directory
-                try:
-                    chapters_dir = os.path.join(config.CHECKPOINT_DIR, "chapters")
-                    if os.path.isdir(chapters_dir):
-                        for fname in os.listdir(chapters_dir):
-                            if fname.startswith("story_") and fname.endswith(".json"):
-                                sid = fname[len("story_"):-len(".json")]
-                                if sid:
-                                    story_ids.add(sid)
-                except Exception:
-                    pass
-
-                # Merge with any in-memory existing ids
-                story_ids.update(self.existing_story_ids)
-
-                data = {
-                    'stories': sorted(list(story_ids)),
-                    'timestamp': datetime.now().isoformat(),
-                }
-
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(config.CHECKPOINT_FILE), exist_ok=True)
-                with open(config.CHECKPOINT_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            safe_print(f"⚠️ Failed to save checkpoint: {e}")
+    # Note: checkpoint file support removed. No _save_checkpoint implementation.
     
     def _update_progress(self, success=True, story_id=None):
         """Update progress counter (thread-safe)"""
@@ -172,10 +94,7 @@ class ParallelCrawler:
             safe_print(f"   ❌ Failed: {self.failed_stories}")
             safe_print(f"{'='*60}\n")
             
-            # Save checkpoint every N stories
-            if config.ENABLE_CHECKPOINTS and self.completed_stories % config.CHECKPOINT_INTERVAL == 0:
-                self._save_checkpoint()
-                safe_print(f"💾 Checkpoint saved")
+            # Checkpoint files disabled; no file saves performed here.
     
     def _crawl_story_worker(self, story_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -345,88 +264,7 @@ class ParallelCrawler:
             safe_print("⚠️ No stories to crawl")
             return []
         
-        # Filter out already completed stories from checkpoint.
-        # Check in this order:
-        # 1) global completed_story_ids (crawl_checkpoint.json)
-        # 2) per-story summary file (data/story_checkpoints/story_{id}.json)
-        # 3) per-chapter checkpoint file (data/checkpoints/chapters/story_{id}.json)
-        if config.ENABLE_CHECKPOINTS:
-            original_count = len(story_ids)
-
-            def is_story_completed(sid: str) -> bool:
-                # Only perform chapter/metadata checks for stories that already exist locally.
-                # If a story does not exist (no summary and no chapter checkpoint), we should crawl it from scratch.
-
-                def story_exists(sid_inner: str) -> bool:
-                    try:
-                        summary_path = os.path.join(os.path.dirname(config.CHECKPOINT_FILE), "story_checkpoints", f"story_{sid_inner}.json")
-                        chapter_ckpt_path = os.path.join(config.CHECKPOINT_DIR, "chapters", f"story_{sid_inner}.json")
-                        if os.path.exists(summary_path) or os.path.exists(chapter_ckpt_path):
-                            return True
-                    except Exception:
-                        pass
-                    return False
-
-                if not story_exists(sid):
-                    # Story not present locally: crawl from scratch (do not attempt chapter checks)
-                    return False
-
-                # 2) story summary file (written by ChapterCheckpoint.save_checkpoint)
-                try:
-                    summary_path = os.path.join(os.path.dirname(config.CHECKPOINT_FILE), "story_checkpoints", f"story_{sid}.json")
-                    if os.path.exists(summary_path):
-                        with open(summary_path, 'r', encoding='utf-8') as sf:
-                            data = json.load(sf)
-                            status = data.get('status')
-                            total = data.get('total_chapters')
-                            crawled = data.get('crawled')
-                            failed = data.get('failed')
-                            # If summary claims completed, do an on-demand API minimal check to ensure no new chapters
-                            if status == 'completed':
-                                try:
-                                    # perform minimal metadata fetch
-                                    from .scrapers.story import StoryScraper
-                                    meta = StoryScraper.fetch_metadata_minimal(sid)
-                                    api_total = meta.get('total_chapters')
-                                    api_updated = meta.get('updated_at')
-                                    # If API shows more chapters than our saved total, not completed
-                                    if isinstance(api_total, int) and isinstance(total, int) and api_total > total:
-                                        return False
-                                    # If API updated_at exists and is newer than summary timestamp, do not skip
-                                    if api_updated and data.get('timestamp') and api_updated > data.get('timestamp'):
-                                        return False
-                                    # otherwise treat as completed
-                                    return True
-                                except Exception:
-                                    # If metadata fetch fails, err on the side of skipping to avoid re-crawl.
-                                    return True
-                            # Consider completed if crawled == total and no failed
-                            if isinstance(total, int) and isinstance(crawled, int) and crawled >= total and not failed:
-                                return True
-                except Exception:
-                    pass
-
-                # 3) per-chapter checkpoint file
-                try:
-                    chapter_ckpt_path = os.path.join(config.CHECKPOINT_DIR, "chapters", f"story_{sid}.json")
-                    if os.path.exists(chapter_ckpt_path):
-                        with open(chapter_ckpt_path, 'r', encoding='utf-8') as cf:
-                            data = json.load(cf)
-                            status = data.get('status')
-                            total = data.get('total_chapters')
-                            crawled = data.get('progress', {}).get('crawled') if isinstance(data.get('progress'), dict) else len(data.get('crawled_chapters', []))
-                            failed = len(data.get('failed_chapters', []))
-                            if status == 'completed' or (isinstance(total, int) and isinstance(crawled, int) and crawled >= total and failed == 0):
-                                return True
-                except Exception:
-                    pass
-
-                return False
-
-            story_ids = [sid for sid in story_ids if not is_story_completed(sid)]
-            skipped = original_count - len(story_ids)
-            if skipped > 0:
-                safe_print(f"⏭️ Skipping {skipped} already completed stories (from global/story/chapter checkpoints)")
+        # Checkpoint files are not used; crawl all provided story IDs.
         
         self.total_stories = len(story_ids)
         self.completed_stories = 0
@@ -503,17 +341,7 @@ class ParallelCrawler:
                 
                 safe_print(f"✅ Retry phase completed: {len(retry_results)}/{len(retry_batch)} recovered")
         
-        # Final checkpoint save
-        if config.ENABLE_CHECKPOINTS:
-            self._save_checkpoint()
-            safe_print(f"💾 Final checkpoint saved")
-            # Also export a top-level chapter_checkpoint.json summarizing per-story chapter/comment stats
-            try:
-                from .services.chapter_checkpoint import get_chapter_checkpoint_manager
-                mgr = get_chapter_checkpoint_manager()
-                mgr.export_chapter_checkpoint()
-            except Exception as e:
-                safe_print(f"⚠️ Failed to export chapter checkpoint summary: {e}")
+        # Final checkpoint saving and export removed (checkpoint-from-file disabled).
         
         elapsed = time.time() - start_time
         

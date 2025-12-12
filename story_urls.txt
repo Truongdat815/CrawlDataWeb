@@ -1,12 +1,4 @@
 # Wattpad story URLs to scrape
-# Format: https://www.wattpad.com/[page_url]
-# Each line = one page to scrape
-
-# https://www.wattpad.com/stories/fantasy
-# https://www.wattpad.com/stories/l%C3%A3ng-m%E1%BA%A1n
-
-#https://www.wattpad.com/story/339821436-%C4%91%E1%BA%A1o-t%C3%ACnh-chu-ng%E1%BB%8Dc
-#https://www.wattpad.com/story/379829173-lingorm-what-is-love
-#https://www.wattpad.com/story/46956321-y%C3%AAu-l%C3%A0-ph%E1%BA%A3i-%C4%91i%C3%AAn-cu%E1%BB%93ng-chi%E1%BA%BFm-%C4%91o%E1%BA%A1t
-#https://www.wattpad.com/story/371330092-gi%C3%B3-tho%E1%BA%A3ng-h%C6%B0%C6%A1ng-chanh
-https://www.wattpad.com/story/163645533-h-full-mu%E1%BB%91n-mang-em-v%E1%BB%81-%F0%9F%8D%AC
+https://www.wattpad.com/stories/l%C3%A3ng-m%E1%BA%A1n
+https://www.wattpad.com/stories/phi%C3%AAul%C6%B0u
+https://www.wattpad.com/stories/ti%E1%BB%83u-thuy%E1%BA%BFt-chung

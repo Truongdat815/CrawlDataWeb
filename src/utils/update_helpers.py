@@ -32,25 +32,13 @@ def load_ids_from_args(args) -> List[str]:
 
 
 def clear_checkpoints_for(ids: List[str]):
-    from .chapter_checkpoint import get_chapter_checkpoint_manager
-    mgr = get_chapter_checkpoint_manager()
-    removed = 0
-    for sid in ids:
-        try:
-            mgr.clear_checkpoint(sid)
-            # also remove story summary if exists
-            summary_dir = os.path.join(os.path.dirname(config.CHECKPOINT_FILE), "story_checkpoints")
-            summary_path = os.path.join(summary_dir, f"story_{sid}.json")
-            if os.path.exists(summary_path):
-                os.remove(summary_path)
-            removed += 1
-        except Exception:
-            pass
-    return removed
+    # Checkpoint file support removed. This helper is deprecated and will no-op.
+    return 0
 
 
 def get_story_summary_dir() -> str:
     """Return path to story summary directory (data/story_checkpoints)."""
+    # Checkpoint file support removed — return a path under data/story_checkpoints for compatibility
     summary_dir = os.path.join(os.path.dirname(config.CHECKPOINT_FILE), "story_checkpoints")
     try:
         os.makedirs(summary_dir, exist_ok=True)
