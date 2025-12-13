@@ -201,6 +201,7 @@ class BrowserManager:
 
 from .utils.story_hash import extract_text_from_wattpad_html, compute_story_hash_from_text
 from .utils.date_utils import format_for_db
+from .utils.checkpoint import load_checkpoint, save_checkpoint, remove_checkpoint
 
 
 class WattpadScraper:
@@ -1016,7 +1017,7 @@ class WattpadScraper:
             safe_print(f"⚠️ Lỗi khi fetch story {story_id}: {e}")
             return None
 
-    def fetch_comments_from_api_v5(self, web_chapter_id, chapter_id=None):
+    def fetch_comments_from_api_v5(self, web_chapter_id, chapter_id=None, use_checkpoint=True, full_sync=False):
         """
         Lấy comments từ Wattpad API v5 (endpoint mới) - dùng Playwright từ main thread
         
@@ -1034,6 +1035,21 @@ class WattpadScraper:
         self._v5_saved_flag = False
         collected = []
         seen = set()
+
+        # Checkpoint support: load previous cursor if requested
+        checkpoint = None
+        if use_checkpoint:
+            try:
+                checkpoint = load_checkpoint(web_chapter_id)
+            except Exception:
+                checkpoint = None
+            if checkpoint and checkpoint.get('finished'):
+                safe_print(f"      ✅ Checkpoint for {web_chapter_id} shows finished — skipping fetch")
+                return []
+
+        # When doing a full sync we collect all mapped comments and call
+        # CommentSyncService once at the end so deletions can be detected.
+        full_sync_collected = [] if full_sync else None
 
         def process_page(resource_id, namespace, cursor=None):
             """Fetch and process a single page using Playwright"""
@@ -1071,11 +1087,8 @@ class WattpadScraper:
 
                 # Delegate mapping & saving to CommentScraper
                 try:
-                    # Pass parent_comment_id when fetching replies (namespace='comments')
                     parent_id = resource_id if namespace == 'comments' else None
-                    # Pass websiteId from wattpad_website
                     website_id = self.wattpad_website.get("websiteId") if self.wattpad_website else None
-                    # Use db_chapter_id (UUID) for saving to DB
                     mapped_list, parents, next_cursor = CommentScraper.process_v5_comments_page(
                         data, db_chapter_id, namespace, 
                         comment_scraper=self.comment_scraper,
@@ -1087,16 +1100,41 @@ class WattpadScraper:
                     mapped_list, parents, next_cursor = [], [], None
 
                 if mapped_list:
-                    # respect MAX_COMMENTS_PER_CHAPTER
-                    added_count = 0
-                    for m in mapped_list:
-                        if config.MAX_COMMENTS_PER_CHAPTER and len(collected) >= config.MAX_COMMENTS_PER_CHAPTER:
-                            break
-                        collected.append(m)
-                        added_count += 1
-                    # mark that comments were saved by process_v5_comments_page
-                    self._v5_saved_flag = True
-                    safe_print(f"      ✅ Processed {added_count} comments (total: {len(collected)}/{config.MAX_COMMENTS_PER_CHAPTER or 'unlimited'})")
+                    try:
+                        from .services.comment_sync_service import CommentSyncService
+                        comment_sync = CommentSyncService(self.mongo_db, self.comment_scraper)
+
+                        # Ensure each mapped comment includes `content` and `webChapterId`
+                        for m in mapped_list:
+                            if 'content' not in m and 'commentText' in m:
+                                m['content'] = m.get('commentText')
+                            m.setdefault('webChapterId', resource_id)
+
+                        if full_sync_collected is not None:
+                            # Collect for final full sync (do not persist per-page)
+                            for m in mapped_list:
+                                full_sync_collected.append(m)
+                        else:
+                            # Incremental mode: persist per-page (upsert) and update checkpoint
+                            comment_sync.sync_comments(resource_id, web_comments=mapped_list)
+                            # Add to collected (respecting max limit)
+                            added_count = 0
+                            for m in mapped_list:
+                                if config.MAX_COMMENTS_PER_CHAPTER and len(collected) >= config.MAX_COMMENTS_PER_CHAPTER:
+                                    break
+                                collected.append(m)
+                                added_count += 1
+                            self._v5_saved_flag = True
+                            safe_print(f"      ✅ Synced {added_count} comments (total: {len(collected)}/{config.MAX_COMMENTS_PER_CHAPTER or 'unlimited'})")
+
+                        # Update checkpoint with next_cursor (if any)
+                        try:
+                            if use_checkpoint:
+                                save_checkpoint(web_chapter_id, next_cursor=next_cursor, finished=(next_cursor is None))
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        safe_print(f"      ⚠️ Error during comment sync/collect: {e}")
 
                 # Recursively fetch replies (only for 'parts' namespace with replyCount > 0)
                 if namespace == 'parts' and parents:
@@ -1118,8 +1156,30 @@ class WattpadScraper:
 
         # Start from main thread (no ThreadPoolExecutor - Playwright sequential)
         # Use 'parts' namespace for chapter-level comments
-        # Use web_chapter_id (original Wattpad ID) for API calls
-        process_page(web_chapter_id, 'parts', None)
+        # If checkpoint has a saved next_cursor, resume from there
+        start_cursor = None
+        if checkpoint and checkpoint.get('next_cursor'):
+            start_cursor = checkpoint.get('next_cursor')
+            safe_print(f"      🔁 Resuming from checkpoint cursor for {web_chapter_id}")
+
+        process_page(web_chapter_id, 'parts', start_cursor)
+
+        # If full_sync, persist all collected comments at once so deletions are detected
+        if full_sync and full_sync_collected is not None:
+            try:
+                from .services.comment_sync_service import CommentSyncService
+                comment_sync = CommentSyncService(self.mongo_db, self.comment_scraper)
+                for m in full_sync_collected:
+                    m.setdefault('webChapterId', web_chapter_id)
+                comment_sync.sync_comments(web_chapter_id, web_comments=full_sync_collected)
+                try:
+                    if use_checkpoint:
+                        save_checkpoint(web_chapter_id, next_cursor=None, finished=True)
+                except Exception:
+                    pass
+                collected = full_sync_collected[:config.MAX_COMMENTS_PER_CHAPTER] if config.MAX_COMMENTS_PER_CHAPTER else full_sync_collected
+            except Exception as e:
+                safe_print(f"      ⚠️ Full-sync persist failed: {e}")
 
         return collected
 
@@ -1203,6 +1263,16 @@ class WattpadScraper:
         # Sử dụng endpoint đúng: /api/v3/stories/{story_id} để lấy danh sách parts
         url = f"{config.BASE_URL}/api/v3/stories/{story_id}"
         params = {"fields": "id,title,parts"}
+
+        # Checkpoint: if we have cached parts for this story, return them
+        try:
+            cached = load_checkpoint(str(story_id), kind='chapters')
+            if cached and isinstance(cached.get('payload'), list):
+                safe_print(f"   🔁 Loaded chapters from checkpoint for {story_id} ({len(cached.get('payload'))} parts)")
+                return cached.get('payload')
+        except Exception:
+            pass
+
         try:
             self.rate_limiter.wait_if_needed()
             def make_request():
@@ -1211,12 +1281,141 @@ class WattpadScraper:
                 return response.json()
             data = retry_request(make_request)
             if data and "parts" in data:
-                return data["parts"]
+                parts = data["parts"]
+                # Save checkpoint payload for chapters so we can resume without hitting API
+                try:
+                    # Normalize parts to list of dicts containing id and commentCount for compactness
+                    compact = []
+                    for p in parts:
+                        try:
+                            compact.append({'webChapterId': str(p.get('id') or p.get('webChapterId') or p.get('chapterId')), 'commentCount': int(p.get('commentCount', 0))})
+                        except Exception:
+                            try:
+                                compact.append({'webChapterId': str(p.get('id') or p.get('webChapterId') or p.get('chapterId'))})
+                            except Exception:
+                                continue
+                    save_checkpoint(str(story_id), kind='chapters', payload={'parts': compact}, finished=True)
+                except Exception:
+                    pass
+                return parts
             else:
                 return []
         except Exception as e:
             safe_print(f"⚠️ API /stories/{{id}} không khả dụng: {e}")
             return []
+
+    def check_and_sync_comments_totals(self, story_id: str, source: str = 'web', auto_sync: str = 'changed'):
+        """Check saved overall comment total (processed chapters only) and optionally sync chapters that decreased.
+
+        Args:
+            story_id: story identifier used for chapters checkpoint
+            source: 'web' to pull current counts from API, 'db' to read from DB
+            auto_sync: 'none' | 'changed' | 'story' — default 'changed'
+        Returns:
+            dict with saved_overall, current_overall, decreased_chapters list
+        """
+        try:
+            # Load saved per-chapter totals from chapters checkpoint
+            ckp = load_checkpoint(str(story_id), kind='chapters')
+            if not ckp or not isinstance(ckp, dict):
+                safe_print(f"⚠️ No chapters checkpoint for {story_id}")
+                return {'error': 'no_checkpoint'}
+
+            payload = ckp.get('payload') or {}
+            saved_totals = payload.get('chapters_totals') or {}
+            if not saved_totals:
+                # Fallback: if payload.parts exists, but chapters_totals missing, try to use parts commentCount
+                parts = payload.get('parts') or []
+                saved_totals = {str(p.get('webChapterId')): int(p.get('commentCount', 0)) for p in parts if p.get('webChapterId')}
+
+            if not saved_totals:
+                safe_print(f"⚠️ No saved per-chapter totals in checkpoint for {story_id}")
+                return {'error': 'no_saved_totals'}
+
+            # Build current totals for the same set of processed chapters
+            current_totals = {}
+            processed_keys = list(saved_totals.keys())
+
+            if source == 'web':
+                # Fetch parts from API (this will prefer cached checkpoint if available)
+                parts = self.fetch_chapters_from_api(story_id)
+                parts_map = {str(p.get('id') or p.get('webChapterId') or p.get('chapterId')): int(p.get('commentCount', 0) or 0) for p in parts}
+                for k in processed_keys:
+                    current_totals[k] = parts_map.get(k, 0)
+            else:
+                # Read from DB collection 'chapters'
+                try:
+                    col = self.mongo_collection_chapters
+                    for k in processed_keys:
+                        doc = None
+                        try:
+                            doc = col.find_one({'webChapterId': str(k)})
+                        except Exception:
+                            doc = None
+                        current_totals[k] = int(doc.get('totalComments', 0) if doc else 0)
+                except Exception:
+                    for k in processed_keys:
+                        current_totals[k] = 0
+
+            # Compute overall sums and decreased chapters
+            saved_overall = sum(int(v or 0) for v in saved_totals.values())
+            current_overall = sum(int(v or 0) for v in current_totals.values())
+            decreased = [k for k, sv in saved_totals.items() if int(current_totals.get(k, 0)) < int(sv or 0)]
+
+            safe_print(f"[CHECK] story={story_id} saved_overall={saved_overall} current_overall={current_overall} decreased={len(decreased)}")
+
+            # If auto_sync requested for changed chapters, run full-sync per decreased chapter
+            synced = []
+            if auto_sync == 'changed' and decreased:
+                for web_chapter_id in decreased:
+                    try:
+                        # try to find internal chapterId
+                        chapter_doc = None
+                        try:
+                            chapter_doc = self.mongo_collection_chapters.find_one({'webChapterId': str(web_chapter_id)}) if self.mongo_collection_chapters is not None else None
+                        except Exception:
+                            chapter_doc = None
+                        chapter_id = chapter_doc.get('chapterId') if chapter_doc else None
+                        safe_print(f"[CHECK] Syncing decreased chapter {web_chapter_id} (chapterId={chapter_id})")
+                        # Run full-sync for this chapter (will call CommentSyncService and detect deletes)
+                        self.fetch_comments_from_api_v5(web_chapter_id, chapter_id=chapter_id, use_checkpoint=False, full_sync=True)
+                        synced.append(web_chapter_id)
+                    except Exception as e:
+                        safe_print(f"[CHECK] Failed to sync chapter {web_chapter_id}: {e}")
+
+                # After syncing, refresh current_totals from DB or web
+                refreshed = {}
+                if source == 'web':
+                    parts = self.fetch_chapters_from_api(story_id)
+                    parts_map = {str(p.get('id') or p.get('webChapterId') or p.get('chapterId')): int(p.get('commentCount', 0) or 0) for p in parts}
+                    for k in processed_keys:
+                        refreshed[k] = parts_map.get(k, 0)
+                else:
+                    for k in processed_keys:
+                        try:
+                            doc = self.mongo_collection_chapters.find_one({'webChapterId': str(k)}) if self.mongo_collection_chapters is not None else None
+                        except Exception:
+                            doc = None
+                        refreshed[k] = int(doc.get('totalComments', 0) if doc else 0)
+
+                # Update checkpoint saved totals to refreshed values
+                try:
+                    new_payload = payload
+                    new_payload['chapters_totals'] = refreshed
+                    new_payload['overall_comments_total'] = sum(int(v or 0) for v in refreshed.values())
+                    save_checkpoint(str(story_id), kind='chapters', payload=new_payload, finished=ckp.get('finished') if isinstance(ckp, dict) else False)
+                except Exception:
+                    pass
+
+            return {
+                'saved_overall': saved_overall,
+                'current_overall': current_overall,
+                'decreased': decreased,
+                'synced': synced,
+            }
+        except Exception as e:
+            safe_print(f"[CHECK] Unexpected error while checking totals for {story_id}: {e}")
+            return {'error': str(e)}
 
     def fetch_categories(self):
         """

@@ -1,7 +1,7 @@
 # Wattpad story URLs to scrape
-#https://www.wattpad.com/story/276321551-%F0%9D%90%86%F0%9D%90%9E%F0%9D%90%AD%F0%9D%90%9A%F0%9D%90%B0%F0%9D%90%9A%F0%9D%90%B2-%F0%9D%9F%8F%F0%9D%9F%96%2B
-#https://www.wattpad.com/story/263916185-%F0%9D%90%91%F0%9D%90%AE%F0%9D%90%A7%F0%9D%90%9A%F0%9D%90%B0%F0%9D%90%9A%F0%9D%90%B2-%F0%9D%9F%8F%F0%9D%9F%96%2B
-#https://www.wattpad.com/story/268431156-%F0%9D%90%87%F0%9D%90%A2%F0%9D%90%9D%F0%9D%90%9E%F0%9D%90%9A%F0%9D%90%B0%F0%9D%90%9A%F0%9D%90%B2-%F0%9D%9F%8F%F0%9D%9F%96%2B
-#https://www.wattpad.com/story/161621291-over-my-dead-body
-#wattpad.com/story/58363987
-https://www.wattpad.com/story/390814455-matcha-latte
+https://www.wattpad.com/story/276321551-%F0%9D%90%86%F0%9D%90%9E%F0%9D%90%AD%F0%9D%90%9A%F0%9D%90%B0%F0%9D%90%9A%F0%9D%90%B2-%F0%9D%9F%8F%F0%9D%9F%96%2B
+https://www.wattpad.com/story/263916185-%F0%9D%90%91%F0%9D%90%AE%F0%9D%90%A7%F0%9D%90%9A%F0%9D%90%B0%F0%9D%90%9A%F0%9D%90%B2-%F0%9D%9F%8F%F0%9D%9F%96%2B
+https://www.wattpad.com/story/268431156-%F0%9D%90%87%F0%9D%90%A2%F0%9D%90%9D%F0%9D%90%9E%F0%9D%90%9A%F0%9D%90%B0%F0%9D%90%9A%F0%9D%90%B2-%F0%9D%9F%8F%F0%9D%9F%96%2B
+https://www.wattpad.com/story/161621291-over-my-dead-body
+wattpad.com/story/58363987
+#https://www.wattpad.com/story/390814455-matcha-latte

@@ -181,19 +181,11 @@ class CommentScraper(BaseScraper):
                 if website_id:
                     mapped['websiteId'] = website_id
 
-                # Save to DB via existing method
-                try:
-                    # If a CommentScraper instance is provided, use it to persist
-                    if comment_scraper is not None:
-                        try:
-                            comment_scraper.save_comment_to_mongo(mapped, user_name=mapped.get('userName'))
-                        except Exception as e:
-                            safe_print(f"⚠️ Error saving mapped v5 comment: {e}")
-                    else:
-                        # No scraper provided - skip saving here
-                        pass
-                except Exception as e:
-                    safe_print(f"⚠️ Error saving mapped v5 comment: {e}")
+
+                # Do NOT save here. Return mapped results to caller so a
+                # higher-level sync service can deduplicate & upsert based on
+                # `webCommentId`. This prevents duplicate inserts when the
+                # mapper/gen-id logic is non-deterministic.
 
                 results.append(mapped)
 
@@ -308,15 +300,27 @@ class CommentScraper(BaseScraper):
             if collection is None:
                 return
             
-            existing = collection.find_one({"commentId": comment_data.get("commentId")})
-            
+            # Prefer lookup by `webCommentId` (original website id) to avoid
+            # duplicates when internal `commentId` is non-deterministic.
+            existing = None
+            web_cid = comment_data.get("webCommentId")
+            if web_cid:
+                existing = collection.find_one({"webCommentId": web_cid})
+
+            if not existing:
+                # Fallback: try lookup by internal commentId
+                existing = collection.find_one({"commentId": comment_data.get("commentId")})
+
             if existing:
+                # Update existing document
+                # Preserve existing fields unless overridden by incoming data
                 collection.update_one(
-                    {"commentId": comment_data.get("commentId")},
+                    {"_id": existing.get("_id")},
                     {"$set": comment_data}
                 )
             else:
-                collection.insert_one(comment_data)  # Lưu cả userId (UUID) và userName
+                # Insert new
+                collection.insert_one(comment_data)
             
             # Save user info dựa vào userName (để tìm user đã tồn tại hay chưa)
             if not user_name:

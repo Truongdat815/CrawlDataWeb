@@ -37,9 +37,9 @@ def uuid7() -> str:
     # Set variant to RFC 4122 (10xx) in byte index 8 (clock_seq_hi_and_reserved)
     b[8] = (b[8] & 0x3F) | 0x80
 
-    # Format into canonical UUID string (8-4-4-4-12)
+    # Return lowercase hex string WITHOUT hyphens (32 hex chars)
     hexed = b.hex()
-    return f"{hexed[0:8]}-{hexed[8:12]}-{hexed[12:16]}-{hexed[16:20]}-{hexed[20:32]}"
+    return hexed
 
 
 def prefixed(prefix: str = "wp") -> str:
