@@ -8,7 +8,7 @@ def main():
     ranking_url = "https://www.scribblehub.com/series-ranking/?pg=37"
     
     # Số lượng bộ truyện muốn cào
-    num_stories = 25
+    num_stories = 1  # Chỉ cào 1 bộ đầu tiên
     
     # Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên)
     start_from = 0

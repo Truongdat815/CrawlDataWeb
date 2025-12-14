@@ -177,17 +177,17 @@ class StoryHandler:
             # Lấy story_id đã có từ DB
             existing_story = self.mongo.get_story_by_web_id(web_story_id)
             if existing_story:
-                story_id = existing_story.get("story_id")
+                story_id = existing_story.get("storyId")
                 # Trả về story_data từ DB để có thể tiếp tục scrape chapters
                 # Lấy author_profile_url nếu có
                 author_profile_url = ""
-                user_id = existing_story.get("user_id", "")
+                user_id = existing_story.get("userId", "")
                 if user_id:
                     # Lấy user_url từ user_id
                     try:
-                        user_doc = self.mongo.mongo_collection_users.find_one({"user_id": user_id})
+                        user_doc = self.mongo.mongo_collection_users.find_one({"userId": user_id})
                         if user_doc:
-                            author_profile_url = user_doc.get("user_url", "")
+                            author_profile_url = user_doc.get("userUrl", "")
                     except:
                         pass
                 return existing_story, story_id, author_profile_url
@@ -822,8 +822,8 @@ class StoryHandler:
                                 "rank_id": rank_id,
                                 "rank_name": rank_name,
                                 "rank_number": rank_number,
-                                "website_id": website_id,
-                                "story_id": story_id
+                                "websiteId": website_id,
+                                "storyId": story_id
                             }
                             
                             rankings_list.append(ranking_data)
@@ -843,18 +843,19 @@ class StoryHandler:
         
         # Tạo story_data theo thứ tự và tên fields mới
         story_data = {
-            "story_id": story_id,  # 1. story id
-            "web_story_id": web_story_id,  # 2. web story id
-            "story_name": title,  # 3. story name
-            "story_url": story_url,  # 4. story url
-            "cover_image": local_img_path,  # 5. cover image
+            "storyId": story_id,  # 1. story id
+            "webStoryId": web_story_id,  # 2. web story id
+            "storyName": title,  # 3. story name
+            "storyUrl": story_url,  # 4. story url
+            "coverImage": local_img_path,  # 5. cover image
             "category": "",  # 6. category (Để trống)
             "status": status,  # 7. status
             "genres": genres,  # 8. genres
             "tags": tags,  # 9. tags
             "description": description,  # 10. description
-            "user_id": "",  # 11. user id (sẽ được cập nhật sau khi scrape author profile)
-            "total_chapters": total_chapters if total_chapters else ""  # 12. total chapters
+            "userId": "",  # 11. user id (sẽ được cập nhật sau khi scrape author profile)
+            "totalChapters": total_chapters if total_chapters else "",  # 12. total chapters
+            "language": "English"  # 13. language (ScribbleHub mặc định English)
         }
         
         # Tạo story_info_data (tất cả các field stats và info)
@@ -862,36 +863,36 @@ class StoryHandler:
         # Lấy website_id của ScribbleHub từ mongo handler
         website_id = self.mongo.scribblehub_website_id if self.mongo.scribblehub_website_id else ""
         story_info_data = {
-            "info_id": info_id,
-            "story_id": story_id,
-            "website_id": website_id,  # Reference đến websites collection
-            "total_views": total_views,
-            "average_views": average_views,
+            "infoId": info_id,
+            "storyId": story_id,
+            "websiteId": website_id,  # Reference đến websites collection
+            "totalViews": total_views,
+            "averageViews": average_views,
             "followers": "",  # Để null
             "favorites": favorites,
-            "page_views": pages,
-            "overall_score": overall_score,
-            "style_score": None,  # ScribbleHub không có, để null
-            "story_score": None,  # ScribbleHub không có, để null
-            "grammar_score": None,  # ScribbleHub không có, để null
-            "character_score": None,  # ScribbleHub không có, để null
+            "pageViews": pages,
+            "overallScore": overall_score,
+            "styleScore": None,  # ScribbleHub không có, để null
+            "storyScore": None,  # ScribbleHub không có, để null
+            "grammarScore": None,  # ScribbleHub không có, để null
+            "characterScore": None,  # ScribbleHub không có, để null
             # "stability_of_updates" đã bị xóa theo yêu cầu
             "voted": voted,  # Số lượt vote từ "129 ratings"
             "freeChapter": "",  # Chưa có scraping
-            "time": "",  # Chưa có scraping
-            "release_rate": release_rate,
-            "number_of_reader": number_of_reader,
-            "rating_total": rating_total,
-            "total_views_chapters": total_views_chapters,
-            "total_word": total_word,
-            "average_words": average_words,
-            "last_updated": last_updated,
-            "total_reviews": total_reviews,
-            "user_reading": user_reading,
-            "user_plan_to_read": user_plan_to_read,
-            "user_completed": user_completed,
-            "user_paused": user_paused,
-            "user_dropped": user_dropped
+            "timeToFinish": "",  # Chưa có scraping
+            "releaseRate": release_rate,
+            "numberOfReader": number_of_reader,
+            "ratingTotal": rating_total,
+            "totalViewsChapters": total_views_chapters,
+            "totalWord": total_word,
+            "averageWords": average_words,
+            "lastUpdated": last_updated,
+            "totalReviews": total_reviews,
+            "userReading": user_reading,
+            "userPlanToRead": user_plan_to_read,
+            "userCompleted": user_completed,
+            "userPaused": user_paused,
+            "userDropped": user_dropped
         }
         
         # Lưu story và story_info ngay khi cào xong metadata
@@ -1435,9 +1436,9 @@ class StoryHandler:
                                 chapter_info_list.append({
                                     "url": full_url,
                                     "order": order,
-                                    "published_time": published_time,
-                                    "chapter_name": chapter_name,
-                                    "web_chapter_id": web_chapter_id
+                                    "publishedTime": published_time,
+                                    "chapterName": chapter_name,
+                                    "webChapterId": web_chapter_id
                                 })
                 except Exception as e:
                     safe_print(f"        ⚠️ Lỗi khi parse chapter item: {e}")

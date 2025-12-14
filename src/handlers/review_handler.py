@@ -89,7 +89,7 @@ class ReviewHandler:
             
             # ✅ So sánh với DB và cập nhật isDeleted cho reviews không còn trên web
             if story_id:
-                web_review_ids = [review.get("web_review_id") for review in reviews if review.get("web_review_id")]
+                web_review_ids = [review.get("webReviewId") for review in reviews if review.get("webReviewId")]
                 self.mongo.update_deleted_reviews(story_id, web_review_ids)
             
             return reviews
@@ -192,12 +192,12 @@ class ReviewHandler:
                         # Tìm chapter trong DB theo story_id và order
                         if self.mongo.mongo_collection_chapters:
                             chapter = self.mongo.mongo_collection_chapters.find_one({
-                                "story_id": story_id,
+                                "storyId": story_id,
                                 "order": chapter_num
                             })
                             if chapter:
-                                chapter_id = chapter.get("chapter_id") or chapter.get("id")
-                                web_chapter_id = chapter.get("web_chapter_id", "")
+                                chapter_id = chapter.get("chapterId") or chapter.get("id")
+                                web_chapter_id = chapter.get("webChapterId", "")
                 except:
                     pass
             
@@ -255,32 +255,49 @@ class ReviewHandler:
             score_id = None
             if overall_score:
                 score_id = generate_id()
+                # Lưu score với reviewId để link đến review
                 self.mongo.save_score(
                     score_id=score_id,
                     overall_score=overall_score,
                     style_score="",
                     story_score="",
                     grammar_score="",
-                    character_score=""
+                    character_score="",
+                    review_id=review_id  # Link score đến review
                 )
+            
+            # Lấy title từ review (có thể có trong .w-comments-item-title hoặc .rev_title)
+            title = ""
+            try:
+                title_elem = review_elem.locator(".w-comments-item-title, .rev_title, h4, h5").first
+                if title_elem.count() > 0:
+                    title = title_elem.inner_text().strip()
+                    # Nếu title rỗng, thử lấy từ content đầu tiên
+                    if not title:
+                        # Lấy dòng đầu tiên của content làm title
+                        if content:
+                            first_line = content.split('\n')[0].strip()
+                            if first_line and len(first_line) < 200:  # Chỉ lấy nếu không quá dài
+                                title = first_line
+            except:
+                pass
             
             # Lấy website_id từ mongo handler
             website_id = self.mongo.scribblehub_website_id if self.mongo.scribblehub_website_id else ""
             
             review_data = {
-                "review_id": review_id,
-                "web_review_id": web_review_id,
-                "title": None,  # Không có title trong cấu trúc mới, set null
+                "reviewId": review_id,
+                "webReviewId": web_review_id,
+                "title": title if title else None,  # Set None nếu không có title
                 "time": time_str,
                 "content": content,
-                "user_id": user_id,
-                "chapter_id": chapter_id,
-                "story_id": story_id,
-                "score_id": score_id if score_id else "",
-                "is_review_swap": False,
-                "website_id": website_id,
-                "status": status,  # Thêm status
-                "likes": likes  # Thêm likes
+                "userId": user_id,
+                "chapterId": chapter_id,
+                "storyId": story_id,
+                "scoreId": score_id if score_id else None,  # Set None thay vì empty string
+                "isReviewSwap": False,
+                "websiteId": website_id,
+                "isDeleted": False  # Đảm bảo có field isDeleted
             }
             
             return review_data

@@ -168,10 +168,13 @@ class ScribbleHubScraper(BaseHandler):
                     safe_print("... Đang cào author profile...")
                     user_id = self.user_handler.scrape_user_profile(author_profile_url)
                     if user_id:
-                        # Cập nhật user_id vào story_data
-                        story_data["user_id"] = user_id
+                        # Cập nhật userId vào story_data (không dùng user_id nữa)
+                        story_data["userId"] = user_id
+                        # Xóa user_id nếu có
+                        if "user_id" in story_data:
+                            del story_data["user_id"]
                         self.mongo.save_story(story_data, None, None)  # Chưa có chapter 1 ở đây
-                        safe_print(f"✅ Đã cập nhật user_id: {user_id}")
+                        safe_print(f"✅ Đã cập nhật userId: {user_id}")
                     else:
                         safe_print("⚠️ Không thể lấy author user_id")
                 except Exception as e:
@@ -192,7 +195,7 @@ class ScribbleHubScraper(BaseHandler):
             error_count = 0
             
             for index, chapter_info in enumerate(chapter_info_list, 1):
-                web_chapter_id = chapter_info.get("web_chapter_id", "")
+                web_chapter_id = chapter_info.get("webChapterId", "") or chapter_info.get("web_chapter_id", "")
                 chapter_url = chapter_info.get("url", "")
                 
                 # Fallback: Nếu web_chapter_id rỗng, thử parse từ URL
@@ -205,7 +208,7 @@ class ScribbleHubScraper(BaseHandler):
                         pass
                 
                 if not web_chapter_id:
-                    safe_print(f"    ⚠️ Chapter {index}: Không lấy được web_chapter_id từ URL: {chapter_url}")
+                    safe_print(f"    ⚠️ Chapter {index}: Không lấy được webChapterId từ URL: {chapter_url}")
                     error_count += 1
                     continue
                 
@@ -219,29 +222,29 @@ class ScribbleHubScraper(BaseHandler):
                 order = chapter_info.get("order", "")
                 if not order:
                     order = str(index)  # Fallback: dùng index làm order
-                chapter_name = chapter_info.get("chapter_name", "")
-                published_time = chapter_info.get("published_time", "")
+                chapter_name = chapter_info.get("chapterName", "") or chapter_info.get("chapter_name", "")
+                published_time = chapter_info.get("publishedTime", "") or chapter_info.get("published_time", "")
                 
                 chapter_metadata = {
-                    "chapter_id": chapter_id,
-                    "web_chapter_id": web_chapter_id,
+                    "chapterId": chapter_id,
+                    "webChapterId": web_chapter_id,
                     "order": order,
-                    "chapter_name": chapter_name,
-                    "chapter_url": chapter_url,
-                    "published_time": published_time,
-                    "story_id": story_id,
+                    "chapterName": chapter_name,
+                    "chapterUrl": chapter_url,
+                    "publishedTime": published_time,
+                    "storyId": story_id,
                     "voted": None,  # Sẽ được update khi scrape chapter content
                     "views": None,  # Sẽ được update khi scrape chapter content
-                    "total_comments": "0"
+                    "totalComments": "0"
                 }
                 
                 try:
                     self.mongo.save_chapter(chapter_metadata)
                     saved_metadata_count += 1
                     if saved_metadata_count <= 5:  # Hiển thị 5 chapters đầu tiên
-                        safe_print(f"    ✅ Đã lưu chapter {index}: {chapter_name[:50]}... (web_chapter_id: {web_chapter_id})")
+                        safe_print(f"    ✅ Đã lưu chapter {index}: {chapter_name[:50]}... (webChapterId: {web_chapter_id})")
                 except Exception as e:
-                    safe_print(f"    ❌ Lỗi khi lưu metadata cho chapter {index} (web_chapter_id: {web_chapter_id}): {e}")
+                    safe_print(f"    ❌ Lỗi khi lưu metadata cho chapter {index} (webChapterId: {web_chapter_id}): {e}")
                     error_count += 1
             
             # Tóm tắt kết quả
@@ -295,8 +298,8 @@ class ScribbleHubScraper(BaseHandler):
             # Lọc ra các chapters chưa được cào content (để tránh cào trùng)
             chapters_to_scrape = []
             for index, chapter_info in enumerate(chapter_info_list):
-                # Dùng web_chapter_id từ chapter_info (đã lấy từ table of contents)
-                web_chapter_id = chapter_info.get("web_chapter_id", "")
+                # Dùng webChapterId từ chapter_info (đã lấy từ table of contents)
+                web_chapter_id = chapter_info.get("webChapterId", "") or chapter_info.get("web_chapter_id", "")
                 
                 # Fallback: Nếu chưa có web_chapter_id, parse từ URL
                 if not web_chapter_id:
@@ -360,7 +363,8 @@ class ScribbleHubScraper(BaseHandler):
                 if not order:
                     order = str(index + 1)
                 chap_url = chapter_info["url"]
-                published_time_from_table = chapter_info.get("published_time", "")
+                published_time_from_table = chapter_info.get("publishedTime", "") or chapter_info.get("published_time", "")
+                chapter_name_from_table = chapter_info.get("chapterName", "") or chapter_info.get("chapter_name", "")
                 
                 try:
                     # ✅ GỌI HÀM MỚI, TRUYỀN self.page VÀO (browser chính đã mở)
@@ -370,7 +374,8 @@ class ScribbleHubScraper(BaseHandler):
                         index, 
                         story_id, 
                         order, 
-                        published_time_from_table
+                        published_time_from_table,
+                        chapter_name_from_table
                     )
                     
                     chapter_results[index] = chapter_data
@@ -560,7 +565,7 @@ class ScribbleHubScraper(BaseHandler):
             "characterScore": self._to_number(story_info_data_clean.get("character_score")),  # ScribbleHub không có, để null
             "voted": self._to_number(story_info_data_clean.get("voted", "")),
             "freeChapter": self._to_number(story_info_data_clean.get("freeChapter", "")),
-            "timeToFinish": self._to_number(story_info_data_clean.get("time", "")),  # Map "time" to "timeToFinish"
+            "timeToFinish": story_info_data_clean.get("timeToFinish", story_info_data_clean.get("time", "")),  # Ưu tiên timeToFinish, fallback cho data cũ
             "releaseRate": self._to_number(story_info_data_clean.get("release_rate", "")),
             "numberOfReader": self._to_number(story_info_data_clean.get("number_of_reader", "")),
             "ratingTotal": self._to_number(story_info_data_clean.get("rating_total", "")),
@@ -596,8 +601,8 @@ class ScribbleHubScraper(BaseHandler):
     def _map_chapter_content_to_schema(self, content_clean):
         """Map chapter content theo schema mới (camelCase)"""
         return {
-            "contentId": content_clean.get("id", content_clean.get("content_id")),
-            "chapterId": content_clean.get("chapter_id"),
+            "contentId": content_clean.get("contentId", content_clean.get("id", content_clean.get("content_id"))),  # Ưu tiên contentId, fallback cho data cũ
+            "chapterId": content_clean.get("chapterId", content_clean.get("chapter_id")),
             "content": content_clean.get("content", "")
         }
 
@@ -620,41 +625,42 @@ class ScribbleHubScraper(BaseHandler):
     def _map_review_to_schema(self, review_clean):
         """Map review data theo schema mới (camelCase)"""
         return {
-            "reviewId": review_clean.get("review_id"),
-            "webReviewId": review_clean.get("web_review_id", ""),
-            "storyId": review_clean.get("story_id"),
-            "chapterId": review_clean.get("chapter_id"),
-            "userId": review_clean.get("user_id"),
+            "reviewId": review_clean.get("reviewId", review_clean.get("review_id")),
+            "webReviewId": review_clean.get("webReviewId", review_clean.get("web_review_id", "")),
+            "storyId": review_clean.get("storyId", review_clean.get("story_id")),
+            "chapterId": review_clean.get("chapterId", review_clean.get("chapter_id")),
+            "userId": review_clean.get("userId", review_clean.get("user_id")),
             "title": review_clean.get("title", ""),
             "content": review_clean.get("content", ""),
-            "time": self._to_date(review_clean.get("time", "")),
-            "isReviewSwap": review_clean.get("is_review_swap", False),
-            "scoreId": review_clean.get("score_id"),
-            "websiteId": review_clean.get("website_id")
+            "time": review_clean.get("time", ""),  # Giữ nguyên format từ DB
+            "isReviewSwap": review_clean.get("isReviewSwap", review_clean.get("is_review_swap", False)),
+            "scoreId": review_clean.get("scoreId", review_clean.get("score_id")),
+            "websiteId": review_clean.get("websiteId", review_clean.get("website_id")),
+            "isDeleted": review_clean.get("isDeleted", review_clean.get("is_deleted", False))
         }
 
     def _map_user_to_schema(self, user_clean):
         """Map user data theo schema mới (camelCase)"""
         return {
-            "userId": user_clean.get("user_id"),
-            "webUserId": user_clean.get("web_user_id", ""),
+            "userId": user_clean.get("userId", user_clean.get("user_id")),
+            "webUserId": user_clean.get("webUserId", user_clean.get("web_user_id", "")),
             "username": user_clean.get("username", ""),
-            "userUrl": user_clean.get("user_url", ""),
-            "createdDate": self._to_date(user_clean.get("created_date", "")),
+            "userUrl": user_clean.get("userUrl", user_clean.get("user_url", "")),
+            "createdDate": user_clean.get("createdDate", user_clean.get("created_date", "")),
             "gender": user_clean.get("gender", ""),
             "location": user_clean.get("location", ""),
-            "followers": self._to_number(user_clean.get("followers", "")),
-            "following": self._to_number(user_clean.get("following", "")),
+            "followers": user_clean.get("followers", ""),
+            "following": user_clean.get("following", ""),
+            "comments": user_clean.get("comments", ""),
             "bio": user_clean.get("bio", ""),
-            "comments": self._to_number(user_clean.get("comments", "")),
-            "favorites": self._to_number(user_clean.get("favorites", "")),
-            "ratings": self._to_number(user_clean.get("ratings", "")),
-            "reviews": self._to_number(user_clean.get("reviews", "")),
-            "numberOfStories": self._to_number(user_clean.get("number_of_stories", "")),
-            "totalWords": self._to_number(user_clean.get("total_words", "")),
-            "totalReviewsReceived": self._to_number(user_clean.get("total_reviews_received", "")),
-            "totalRatingsReceived": self._to_number(user_clean.get("total_ratings_received", "")),
-            "totalFavoritesReceived": self._to_number(user_clean.get("total_favorites_received", ""))
+            "favorites": user_clean.get("favorites", ""),
+            "ratings": user_clean.get("ratings", ""),
+            "reviews": user_clean.get("reviews", ""),
+            "numberOfStories": user_clean.get("numberOfStories", user_clean.get("number_of_stories", user_clean.get("series", ""))),
+            "totalWords": user_clean.get("totalWords", user_clean.get("total_words", "")),
+            "totalReviewsReceived": user_clean.get("totalReviewsReceived", user_clean.get("total_reviews_received", user_clean.get("reviews_received", ""))),
+            "totalRatingsReceived": user_clean.get("totalRatingsReceived", user_clean.get("total_ratings_received", user_clean.get("ratings", ""))),
+            "totalFavoritesReceived": user_clean.get("totalFavoritesReceived", user_clean.get("total_favorites_received", user_clean.get("favorites", "")))
         }
 
     def _map_ranking_to_schema(self, ranking_clean):
@@ -677,12 +683,13 @@ class ScribbleHubScraper(BaseHandler):
     def _map_score_to_schema(self, score_clean):
         """Map score data theo schema mới (camelCase)"""
         return {
-            "scoreId": score_clean.get("score_id"),
-            "overallScore": self._to_number(score_clean.get("overall_score", "")),
-            "styleScore": self._to_number(score_clean.get("style_score")),  # ScribbleHub không có, để null
-            "storyScore": self._to_number(score_clean.get("story_score")),  # ScribbleHub không có, để null
-            "grammarScore": self._to_number(score_clean.get("grammar_score")),  # ScribbleHub không có, để null
-            "characterScore": self._to_number(score_clean.get("character_score"))  # ScribbleHub không có, để null
+            "scoreId": score_clean.get("scoreId", score_clean.get("score_id")),
+            "overallScore": score_clean.get("overallScore", score_clean.get("overall_score", "")),
+            "styleScore": score_clean.get("styleScore", score_clean.get("style_score")),  # ScribbleHub không có, để null
+            "storyScore": score_clean.get("storyScore", score_clean.get("story_score")),  # ScribbleHub không có, để null
+            "grammarScore": score_clean.get("grammarScore", score_clean.get("grammar_score")),  # ScribbleHub không có, để null
+            "characterScore": score_clean.get("characterScore", score_clean.get("character_score")),  # ScribbleHub không có, để null
+            "reviewId": score_clean.get("reviewId", score_clean.get("review_id"))  # Link đến review
         }
 
     def save_story_to_json(self, story_id, story_data, story_info_data):
@@ -796,7 +803,7 @@ class ScribbleHubScraper(BaseHandler):
             # Lấy reviews từ MongoDB
             if self.mongo.mongo_collection_reviews and story_id:
                 try:
-                    reviews = list(self.mongo.mongo_collection_reviews.find({"story_id": story_id}))
+                    reviews = list(self.mongo.mongo_collection_reviews.find({"storyId": story_id}))
                     safe_print(f"      📝 Tìm thấy {len(reviews)} reviews trong MongoDB")
                     json_data["reviews"] = [self._map_review_to_schema(self._remove_mongo_id(r)) for r in reviews]
                 except Exception as e:
@@ -811,14 +818,27 @@ class ScribbleHubScraper(BaseHandler):
                 except Exception as e:
                     safe_print(f"      ⚠️ Lỗi khi lấy rankings từ MongoDB: {e}")
             
-            # Lấy scores từ MongoDB (tách riêng, không merge vào stories)
+            # Lấy scores từ MongoDB (thông qua reviews của story)
+            # Scores được link đến reviews, reviews được link đến story
             if self.mongo.mongo_collection_scores and story_id:
                 try:
-                    score_doc = self.mongo.mongo_collection_scores.find_one({"story_id": story_id})
-                    if score_doc:
-                        score_clean = self._remove_mongo_id(score_doc)
-                        json_data["scores"] = self._map_score_to_schema(score_clean)
-                        safe_print(f"      ⭐ Tìm thấy scores trong MongoDB")
+                    # Lấy tất cả reviews của story
+                    reviews = []
+                    if self.mongo.mongo_collection_reviews:
+                        reviews = list(self.mongo.mongo_collection_reviews.find({"storyId": story_id}))
+                    
+                    # Lấy tất cả scoreIds từ reviews
+                    score_ids = [r.get("scoreId") for r in reviews if r.get("scoreId")]
+                    
+                    # Lấy tất cả scores từ scoreIds
+                    scores_list = []
+                    if score_ids:
+                        scores = list(self.mongo.mongo_collection_scores.find({"scoreId": {"$in": score_ids}}))
+                        scores_list = [self._map_score_to_schema(self._remove_mongo_id(s)) for s in scores]
+                    
+                    json_data["scores"] = scores_list
+                    if scores_list:
+                        safe_print(f"      ⭐ Tìm thấy {len(scores_list)} scores trong MongoDB")
                 except Exception as e:
                     safe_print(f"      ⚠️ Lỗi khi lấy scores từ MongoDB: {e}")
             

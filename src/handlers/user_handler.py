@@ -259,7 +259,7 @@ class UserHandler:
             following_final = to_none_if_empty(following) if following else None
             comments_final = to_none_if_empty(comments) if comments else None
             
-            # Lưu user vào MongoDB
+            # Lưu user vào MongoDB (chỉ các field được yêu cầu)
             user_id = self.mongo.save_user(
                 web_user_id=web_user_id,
                 username=username,
@@ -273,14 +273,9 @@ class UserHandler:
                 bio=bio,
                 favorites=None,  # Không có trong profile này
                 ratings=None,  # Không có trong profile này
-                last_active=last_active,
-                birthday=birthday,
-                homepage=homepage,
-                series=series,
+                series=series,  # Sẽ map thành numberOfStories
                 total_words=total_words,
-                total_pageviews=total_pageviews,
-                reviews_received=reviews_received,
-                readers=readers
+                reviews_received=reviews_received  # Sẽ map thành totalReviewsReceived và reviews
             )
             
             if user_id:

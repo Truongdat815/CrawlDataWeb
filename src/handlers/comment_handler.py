@@ -296,7 +296,7 @@ class CommentHandler:
             
             # ✅ So sánh với DB và cập nhật isDeleted cho comments không còn trên web
             if chapter_id:
-                web_comment_ids = [comment.get("web_comment_id") for comment in all_comments if comment.get("web_comment_id")]
+                web_comment_ids = [comment.get("webCommentId") for comment in all_comments if comment.get("webCommentId")]
                 self.mongo.update_deleted_comments(chapter_id, web_comment_ids)
             
             return all_comments
@@ -359,7 +359,7 @@ class CommentHandler:
             
             # ✅ So sánh với DB và cập nhật isDeleted cho comments không còn trên web
             if chapter_id:
-                web_comment_ids = [comment.get("web_comment_id") for comment in all_comments if comment.get("web_comment_id")]
+                web_comment_ids = [comment.get("webCommentId") for comment in all_comments if comment.get("webCommentId")]
                 self.mongo.update_deleted_comments(chapter_id, web_comment_ids)
             
             return all_comments
@@ -407,7 +407,7 @@ class CommentHandler:
                         if not reply_comments:
                             reply_comments = children_list.locator("div.comment").all()
                         existing_comment = self.mongo.get_comment_by_web_id(web_comment_id)
-                        existing_comment_id = existing_comment.get("comment_id") if existing_comment else None
+                        existing_comment_id = existing_comment.get("commentId") if existing_comment else None
                         for reply_elem in reply_comments:
                             reply_list = self.scrape_single_comment_recursive(reply_elem, chapter_id, parent_id=existing_comment_id, parent_user_id=None)
                             if reply_list:
@@ -536,8 +536,8 @@ class CommentHandler:
                             # Tìm parent comment để lấy parent_id
                             parent_comment = self.mongo.get_comment_by_web_id(parent_rid)
                             if parent_comment:
-                                parent_id = parent_comment.get("comment_id")
-                                parent_user_id = parent_comment.get("user_id")
+                                parent_id = parent_comment.get("commentId")
+                                parent_user_id = parent_comment.get("userId")
                 except:
                     pass
             
@@ -596,17 +596,17 @@ class CommentHandler:
             website_id = self.mongo.scribblehub_website_id if self.mongo.scribblehub_website_id else ""
             
             comment_data = {
-                "comment_id": comment_id,  # Khóa chính (không phải "id")
-                "web_comment_id": web_comment_id,
-                "comment_text": comment_text,
+                "commentId": comment_id,  # Khóa chính (không phải "id")
+                "webCommentId": web_comment_id,
+                "commentText": comment_text,
                 "time": timestamp,
-                "chapter_id": chapter_id,
-                "user_id": user_id,
-                "reply_to_user_id": reply_to_user_id if reply_to_user_id else None,
-                "parent_id": parent_id if parent_id else None,
-                "is_root": is_root,
+                "chapterId": chapter_id,
+                "userId": user_id,
+                "replyToUserId": reply_to_user_id if reply_to_user_id else None,
+                "parentId": parent_id if parent_id else None,
+                "isRoot": is_root,
                 "react": react,
-                "website_id": website_id
+                "websiteId": website_id
             }
             
             self.mongo.save_comment(comment_data)

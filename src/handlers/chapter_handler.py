@@ -25,7 +25,7 @@ class ChapterHandler:
         self.comment_handler = comment_handler
         self.context = context  # Lưu context để dùng cho requests
     
-    def scrape_single_chapter_using_browser(self, page, url, index, story_id, order, published_time_from_table):
+    def scrape_single_chapter_using_browser(self, page, url, index, story_id, order, published_time_from_table, chapter_name_from_table=""):
         """
         ✅ CÁCH TỐI ƯU: Scrape chapter bằng browser chính đã mở (đã vượt Cloudflare)
         → Không bị 403 Forbidden (vì dùng browser đã verify)
@@ -39,6 +39,7 @@ class ChapterHandler:
             story_id: ID của story (FK)
             order: Số thứ tự của chapter (từ 1)
             published_time_from_table: published_time lấy từ table row
+            chapter_name_from_table: chapter_name lấy từ table of contents
         """
         try:
             safe_print(f"    🔄 Đang cào chương {index + 1} bằng Browser chính...")
@@ -62,20 +63,21 @@ class ChapterHandler:
             except:
                 safe_print(f"      ⚠️ Không tìm thấy #chp_raw/.chp_raw (Timeout), thử fallback...")
             
-            # Lấy chapter_name từ .chapter-title
-            # HTML: <div class="chapter-title">Chapter 77: Instant KO Salamence</div>
-            chapter_name = ""
-            try:
-                title_elem = page.locator(".chapter-title").first
-                if title_elem.count() > 0:
-                    chapter_name = title_elem.inner_text().strip()
-                else:
-                    # Fallback: thử h1
-                    title_elem = page.locator("h1").first
+            # Lấy chapter_name (ưu tiên từ table of contents, fallback từ page)
+            chapter_name = chapter_name_from_table
+            if not chapter_name:
+                try:
+                    # Thử lấy từ .chapter-title
+                    title_elem = page.locator(".chapter-title").first
                     if title_elem.count() > 0:
                         chapter_name = title_elem.inner_text().strip()
-            except Exception as e:
-                safe_print(f"      ⚠️ Lỗi lấy chapter_name: {e}")
+                    else:
+                        # Fallback: thử h1
+                        title_elem = page.locator("h1").first
+                        if title_elem.count() > 0:
+                            chapter_name = title_elem.inner_text().strip()
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi lấy chapter_name: {e}")
             
             content = ""
             try:
@@ -125,15 +127,26 @@ class ChapterHandler:
                 except Exception:
                     pass
             
-            # 5. Lấy published_time nếu chưa có
+            # 5. Lấy published_time (ưu tiên từ table, fallback từ page)
+            # HTML: <span class="fic_date_pub" title="Dec 12, 2025 04:12 PM">Dec 12, 2025</span>
             published_time = published_time_from_table
             if not published_time:
                 try:
-                    time_elem = page.locator("time[datetime]").first
+                    # Thử lấy từ span.fic_date_pub title attribute
+                    time_elem = page.locator("span.fic_date_pub").first
                     if time_elem.count() > 0:
-                        published_time = time_elem.get_attribute("datetime") or ""
-                except:
-                    pass
+                        title_attr = time_elem.get_attribute("title")
+                        if title_attr:
+                            published_time = title_attr
+                        else:
+                            published_time = time_elem.inner_text().strip()
+                    else:
+                        # Fallback: thử time[datetime]
+                        time_elem = page.locator("time[datetime]").first
+                        if time_elem.count() > 0:
+                            published_time = time_elem.get_attribute("datetime") or ""
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi lấy published_time: {e}")
             
             # 6. Lấy web_chapter_id từ URL
             web_chapter_id = ""
@@ -152,12 +165,12 @@ class ChapterHandler:
             existing_chapter = None
             if web_chapter_id and self.mongo.mongo_collection_chapters:
                 try:
-                    existing_chapter = self.mongo.mongo_collection_chapters.find_one({"web_chapter_id": web_chapter_id})
+                    existing_chapter = self.mongo.mongo_collection_chapters.find_one({"webChapterId": web_chapter_id})
                     if existing_chapter:
-                        chapter_id = existing_chapter.get("chapter_id")
+                        chapter_id = existing_chapter.get("chapterId")
                         # Kiểm tra xem đã có content chưa
                         if chapter_id and self.mongo.mongo_collection_chapter_contents:
-                            content_doc = self.mongo.mongo_collection_chapter_contents.find_one({"chapter_id": chapter_id})
+                            content_doc = self.mongo.mongo_collection_chapter_contents.find_one({"chapterId": chapter_id})
                             if content_doc and content_doc.get("content"):
                                 safe_print(f"      ⏭️  Bỏ qua (Đã có content): {web_chapter_id}")
                                 return None
@@ -174,71 +187,146 @@ class ChapterHandler:
                     content_id = generate_id()
                     self.mongo.save_chapter_content(content_id, content, chapter_id)
             
-            # 9. Lấy views và voted từ chapter page
+            # 9. Lấy views, total_comments, và voted từ chapter page
+            # HTML views: <span class="chp_stats_feature" title="Total Pageviews"><i class="fa fa-eye chp"></i> 335</span>
+            # HTML comments: <span class="chp_stats_feature" title="Total Comments"><i class="fa fa-comments-o chp"></i> <a href="#comments">7</a></span>
+            # HTML voted: <span class="chp_stats_feature" title="Favorite This Chapter"><i class="fa fa-heart chp"></i> <span id="heart_cnt">14</span></span>
             views = None
             voted = None
             
             try:
-                # Lấy views từ .fic_stats .st_item có fa fa-eye
-                fic_stats = page.locator(".fic_stats").first
-                if fic_stats.count() > 0:
-                    stats_items = fic_stats.locator(".st_item").all()
-                    for item in stats_items:
-                        try:
-                            icon = item.locator("i").first
-                            if icon.count() > 0:
-                                icon_classes = icon.get_attribute("class") or ""
-                                item_text = item.inner_text().strip()
-                                
-                                # Lấy views từ fa-eye
-                                if "fa-eye" in icon_classes:
-                                    # Parse: "27k Views" hoặc "27 Views" → "27k" hoặc "27"
-                                    # Lấy số và đơn vị (k, M, etc.)
-                                    view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
-                                    if view_match:
-                                        views = view_match.group(1).strip()
-                                    else:
-                                        # Fallback: lấy số đầu tiên
-                                        numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
-                                        if numbers:
-                                            views = numbers[0].strip()
-                        except:
-                            continue
+                # Lấy views từ .chp_stats_feature có fa-eye chp
+                stats_features = page.locator("span.chp_stats_feature").all()
+                for feature in stats_features:
+                    try:
+                        icon = feature.locator("i").first
+                        if icon.count() > 0:
+                            icon_classes = icon.get_attribute("class") or ""
+                            
+                            # Lấy views từ fa-eye chp
+                            if "fa-eye" in icon_classes and "chp" in icon_classes:
+                                # Lấy text sau icon (số views)
+                                feature_text = feature.inner_text().strip()
+                                # Parse số từ text (ví dụ: "335" từ "335" hoặc "1.2k" từ "1.2k")
+                                view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)', feature_text)
+                                if view_match:
+                                    views = view_match.group(1).strip()
+                            
+                            # Lấy voted từ fa-heart chp
+                            elif "fa-heart" in icon_classes and "chp" in icon_classes:
+                                # Lấy từ span#heart_cnt
+                                heart_cnt = feature.locator("span#heart_cnt").first
+                                if heart_cnt.count() > 0:
+                                    voted = heart_cnt.inner_text().strip()
+                                else:
+                                    # Fallback: lấy số từ text
+                                    feature_text = feature.inner_text().strip()
+                                    vote_match = re.search(r'(\d+)', feature_text)
+                                    if vote_match:
+                                        voted = vote_match.group(1).strip()
+                    except:
+                        continue
                 
-                # Lấy voted từ .rate_more
-                try:
-                    rate_more = page.locator(".rate_more").first
-                    if rate_more.count() > 0:
-                        rate_text = rate_more.inner_text().strip()
-                        # Parse: "42 ratings" hoặc "42" → "42"
-                        vote_match = re.search(r'(\d+)', rate_text)
-                        if vote_match:
-                            voted = vote_match.group(1).strip()
-                except:
-                    pass
+                # Fallback: Thử cách cũ nếu không tìm thấy
+                if not views or not voted:
+                    # Lấy views từ .fic_stats .st_item có fa fa-eye
+                    fic_stats = page.locator(".fic_stats").first
+                    if fic_stats.count() > 0:
+                        stats_items = fic_stats.locator(".st_item").all()
+                        for item in stats_items:
+                            try:
+                                icon = item.locator("i").first
+                                if icon.count() > 0:
+                                    icon_classes = icon.get_attribute("class") or ""
+                                    item_text = item.inner_text().strip()
+                                    
+                                    # Lấy views từ fa-eye
+                                    if "fa-eye" in icon_classes and not views:
+                                        view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
+                                        if view_match:
+                                            views = view_match.group(1).strip()
+                                        else:
+                                            numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
+                                            if numbers:
+                                                views = numbers[0].strip()
+                            except:
+                                continue
+                    
+                    # Lấy voted từ .rate_more
+                    if not voted:
+                        try:
+                            rate_more = page.locator(".rate_more").first
+                            if rate_more.count() > 0:
+                                rate_text = rate_more.inner_text().strip()
+                                vote_match = re.search(r'(\d+)', rate_text)
+                                if vote_match:
+                                    voted = vote_match.group(1).strip()
+                        except:
+                            pass
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi khi lấy views/voted: {e}")
             
-            # 10. Scrape comments (dùng page hiện tại)
+            # 10. Lấy total_comments từ page (ưu tiên) hoặc scrape comments
+            # HTML: <span class="chp_stats_feature" title="Total Comments"><i class="fa fa-comments-o chp"></i> <a href="#comments">7</a></span>
             total_comments = 0
             try:
-                comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
-                total_comments = len(comments_list) if comments_list else 0
+                # Thử lấy từ .chp_stats_feature có fa-comments-o chp
+                stats_features = page.locator("span.chp_stats_feature").all()
+                for feature in stats_features:
+                    try:
+                        icon = feature.locator("i").first
+                        if icon.count() > 0:
+                            icon_classes = icon.get_attribute("class") or ""
+                            
+                            # Lấy total_comments từ fa-comments-o chp
+                            if "fa-comments-o" in icon_classes and "chp" in icon_classes:
+                                # Lấy từ thẻ <a> bên trong
+                                link_elem = feature.locator("a").first
+                                if link_elem.count() > 0:
+                                    total_comments = link_elem.inner_text().strip()
+                                    # Parse số từ text
+                                    comment_match = re.search(r'(\d+)', total_comments)
+                                    if comment_match:
+                                        total_comments = int(comment_match.group(1))
+                                    else:
+                                        total_comments = 0
+                                else:
+                                    # Fallback: lấy số từ text
+                                    feature_text = feature.inner_text().strip()
+                                    comment_match = re.search(r'(\d+)', feature_text)
+                                    if comment_match:
+                                        total_comments = int(comment_match.group(1))
+                    except:
+                        continue
+                
+                # Nếu không lấy được từ stats, scrape comments
+                if total_comments == 0:
+                    try:
+                        comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
+                        total_comments = len(comments_list) if comments_list else 0
+                    except Exception as e:
+                        safe_print(f"      ⚠️ Lỗi khi scrape comments: {e}")
             except Exception as e:
-                safe_print(f"      ⚠️ Lỗi khi scrape comments: {e}")
+                safe_print(f"      ⚠️ Lỗi khi lấy total_comments: {e}")
+                # Fallback: scrape comments
+                try:
+                    comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
+                    total_comments = len(comments_list) if comments_list else 0
+                except:
+                    pass
             
             # 11. Lưu/Update Info (update nếu đã có metadata, insert nếu chưa có)
             chapter_data = {
-                "chapter_id": chapter_id,
-                "web_chapter_id": web_chapter_id,
+                "chapterId": chapter_id,
+                "webChapterId": web_chapter_id,
                 "order": order,
-                "chapter_name": chapter_name,
-                "chapter_url": url,
-                "published_time": published_time,
-                "story_id": story_id,
+                "chapterName": chapter_name,
+                "chapterUrl": url,
+                "publishedTime": published_time,
+                "storyId": story_id,
                 "voted": voted,
                 "views": views,
-                "total_comments": str(total_comments)
+                "totalComments": str(total_comments)
             }
             
             self.mongo.save_chapter(chapter_data)
@@ -309,7 +397,7 @@ class ChapterHandler:
             chapter_id = generate_id()
             title = chapter_data.get('title', '')
             content = chapter_data.get('content', '')
-            published_time = published_time_from_table or chapter_data.get('published_time', '')
+            published_time = published_time_from_table or chapter_data.get('publishedTime', '')
             
             # Lưu content
             if content and chapter_id:
@@ -363,16 +451,16 @@ class ChapterHandler:
                 safe_print(f"      ⚠️ Lỗi khi lấy views/voted bằng requests: {e}")
             
             chapter_data_dict = {
-                "chapter_id": chapter_id,  # Khóa chính (không phải "id")
-                "web_chapter_id": web_chapter_id,
+                "chapterId": chapter_id,  # Khóa chính (không phải "id")
+                "webChapterId": web_chapter_id,
                 "order": order,
-                "chapter_name": title,  # Không phải "name"
-                "chapter_url": url,  # Không phải "url"
-                "published_time": published_time,
-                "story_id": story_id,
+                "chapterName": title,  # Không phải "name"
+                "chapterUrl": url,  # Không phải "url"
+                "publishedTime": published_time,
+                "storyId": story_id,
                 "voted": voted,
                 "views": views,
-                "total_comments": str(total_comments)
+                "totalComments": str(total_comments)
             }
             
             self.mongo.save_chapter(chapter_data_dict)
@@ -524,16 +612,16 @@ class ChapterHandler:
                     self.mongo.save_chapter_content(content_id, content, chapter_id)
             
             chapter_data = {
-                "id": chapter_id,
-                "web_chapter_id": web_chapter_id,
+                "chapterId": chapter_id,
+                "webChapterId": web_chapter_id,
                 "order": order,
-                "name": title,
-                "url": url,
-                "published_time": published_time,
-                "story_id": story_id,
+                "chapterName": title,
+                "chapterUrl": url,
+                "publishedTime": published_time,
+                "storyId": story_id,
                 "voted": voted,
                 "views": views,
-                "total_comments": str(total_comments)
+                "totalComments": str(total_comments)
             }
             
             self.mongo.save_chapter(chapter_data)

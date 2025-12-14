@@ -108,7 +108,7 @@ class GlossaryHandler:
                                 
                                 glossary_data = {
                                     "glossary_id": glossary_id,
-                                    "story_id": story_id,
+                                    "storyId": story_id,
                                     "category": category_name,
                                     "title": title,
                                     "description": description,

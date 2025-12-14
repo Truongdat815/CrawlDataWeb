@@ -68,11 +68,11 @@ ENABLE_MANUAL_VERIFY = True  # Bật chế độ đợi verify thủ công
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
 
-# Connection string mới từ leader
-MONGODB_URI = "mongodb://user:56915001@103.90.224.232:27017/my_database"
+# Connection string MongoDB Atlas (cá nhân)
+MONGODB_URI = "mongodb+srv://bapdat2025:Conchocanconmeo123@project.uoeyhrh.mongodb.net/demo_crawl_data?retryWrites=true&w=majority"
 
-# Database name từ connection string
-MONGODB_DB_NAME = "my_database"
+# Database name
+MONGODB_DB_NAME = "demo_crawl_data"
 
 MONGODB_COLLECTION_STORIES = "stories"
 MONGODB_COLLECTION_STORY_INFO = "story_info"
@@ -100,3 +100,9 @@ def get_max_workers():
     if BASE_URL == "https://www.scribblehub.com":
         return SCRIBBLEHUB_MAX_WORKERS
     return MAX_WORKERS
+
+# --- CẤU HÌNH API UPLOAD ẢNH ---
+IMAGE_UPLOAD_API_URL = "https://api-image.techleaf.pro/api/upload"
+IMAGE_UPLOAD_API_KEY = "k8JdR4xP9uA2mQ7wF1zT0bVgN5yHcS3LrE8qWfU6pXjK2dM9sB4hY0vG7tC1n"
+# Base URL để tạo full URL nếu API trả về relative path
+IMAGE_SERVER_BASE_URL = "https://api-image.techleaf.pro"

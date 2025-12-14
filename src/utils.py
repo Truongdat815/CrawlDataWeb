@@ -3,7 +3,9 @@ import re
 import requests
 import uuid6
 import html as html_module
-from src.config import IMAGES_DIR
+import mimetypes
+from datetime import datetime
+from src.config import IMAGES_DIR, IMAGE_UPLOAD_API_URL, IMAGE_UPLOAD_API_KEY, IMAGE_SERVER_BASE_URL
 
 def clean_text(text):
     """Hàm làm sạch văn bản, xóa khoảng trắng thừa"""
@@ -11,10 +13,86 @@ def clean_text(text):
         return ""
     return text.strip()
 
+def upload_image(file_path):
+    """
+    Upload ảnh lên server qua API.
+    Args:
+        file_path: Đường dẫn đến file ảnh cần upload (ví dụ: "data/images/21220_cover.jpg")
+    Returns:
+        URL của ảnh trên server nếu thành công, None nếu thất bại
+    """
+    if not file_path or not os.path.exists(file_path):
+        safe_print(f"❌ File không tồn tại: {file_path}")
+        return None
+    
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'image': (os.path.basename(file_path), f, 'image/jpeg')}
+            headers = {'x-api-key': IMAGE_UPLOAD_API_KEY}
+            
+            response = requests.post(
+                IMAGE_UPLOAD_API_URL,
+                headers=headers,
+                files=files,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                # API trả về URL trực tiếp hoặc trong JSON
+                image_url = None
+                try:
+                    json_response = response.json()
+                    # Thử các field phổ biến
+                    image_url = json_response.get('url') or json_response.get('image_url')
+                    
+                    # Nếu có field 'data', lấy từ trong data
+                    if not image_url and 'data' in json_response:
+                        data = json_response.get('data')
+                        if isinstance(data, dict):
+                            # Thử lấy local_path hoặc url từ data
+                            image_url = data.get('local_path') or data.get('url') or data.get('image_url')
+                        elif isinstance(data, str):
+                            image_url = data
+                    
+                    # Nếu image_url là dict, thử lấy url từ trong dict
+                    if isinstance(image_url, dict):
+                        image_url = image_url.get('url') or image_url.get('local_path') or image_url.get('data') or image_url.get('image_url')
+                    
+                    # Nếu response là string URL
+                    if not image_url and isinstance(json_response, str):
+                        image_url = json_response
+                except (ValueError, AttributeError):
+                    # Nếu response không phải JSON, có thể là URL trực tiếp
+                    response_text = response.text.strip()
+                    if response_text:
+                        image_url = response_text
+                
+                # Đảm bảo image_url là string trước khi xử lý
+                if image_url and isinstance(image_url, str):
+                    # Nếu là relative path (bắt đầu bằng /), thêm base URL
+                    if image_url.startswith('/'):
+                        image_url = IMAGE_SERVER_BASE_URL + image_url
+                    safe_print(f"✅ Upload thành công: {image_url}")
+                    return image_url
+                elif image_url:
+                    # Nếu image_url không phải string, log và trả về None
+                    safe_print(f"⚠️ Upload thành công nhưng URL không phải string: {type(image_url)} - {image_url}")
+                    return None
+                else:
+                    safe_print(f"⚠️ Upload thành công nhưng không parse được URL: {response.text}")
+                    return None
+            else:
+                safe_print(f"❌ Lỗi upload: Status {response.status_code}, Response: {response.text}")
+                return None
+                
+    except Exception as e:
+        safe_print(f"❌ Lỗi upload ảnh: {e}")
+        return None
+
 def download_image(image_url, fiction_id):
     """
-    Tải ảnh từ URL và lưu vào folder local.
-    Trả về: Đường dẫn file (Path) để lưu vào JSON.
+    Tải ảnh từ URL, lưu vào folder local, và tự động upload lên server.
+    Trả về: URL của ảnh trên server (nếu upload thành công) hoặc đường dẫn local (nếu upload thất bại).
     """
     if not image_url or "http" not in image_url:
         return None
@@ -29,9 +107,20 @@ def download_image(image_url, fiction_id):
         if response.status_code == 200:
             with open(file_path, 'wb') as f:
                 f.write(response.content)
-            return file_path # Trả về đường dẫn để lưu DB
+            
+            # Tự động upload lên server
+            safe_print(f"📤 Đang upload ảnh lên server...")
+            uploaded_url = upload_image(file_path)
+            
+            if uploaded_url:
+                # Trả về URL từ server
+                return uploaded_url
+            else:
+                # Nếu upload thất bại, trả về đường dẫn local
+                safe_print(f"⚠️ Upload thất bại, sử dụng đường dẫn local: {file_path}")
+                return file_path
     except Exception as e:
-        print(f"❌ Lỗi tải ảnh: {e}")
+        safe_print(f"❌ Lỗi tải ảnh: {e}")
     
     return None
 
@@ -54,6 +143,41 @@ def generate_id():
     Returns: string với format "sh_{uuid}"
     """
     return f"sh_{uuid6.uuid7().hex}"
+
+def format_datetime(dt):
+    """
+    Format datetime theo định dạng: "28/10/2018, 1:22 PM"
+    Args:
+        dt: datetime object hoặc string
+    Returns:
+        string formatted datetime hoặc None nếu lỗi
+    """
+    if not dt:
+        return None
+    
+    try:
+        # Nếu là string, parse thành datetime
+        if isinstance(dt, str):
+            # Thử nhiều format khác nhau
+            for fmt in [
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+                "%d/%m/%Y, %I:%M %p",
+                "%m/%d/%Y, %I:%M %p"
+            ]:
+                try:
+                    dt = datetime.strptime(dt, fmt)
+                    break
+                except ValueError:
+                    continue
+        
+        # Format theo yêu cầu: "28/10/2018, 1:22 PM"
+        if isinstance(dt, datetime):
+            return dt.strftime("%d/%m/%Y, %-I:%M %p") if os.name != 'nt' else dt.strftime("%d/%m/%Y, %I:%M %p").replace(" 0", " ")
+        
+        return None
+    except Exception:
+        return None
 
 def convert_html_to_formatted_text(html_content):
     """

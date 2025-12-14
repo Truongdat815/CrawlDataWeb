@@ -152,3 +152,29 @@ def create_chapter_hash(content: str, words: int = 500) -> Optional[int]:
     
     return simhash
 
+
+def create_story_hash(content: str, words: int = 500) -> Optional[str]:
+    """
+    Tạo storyHash cho story (hash 500 từ đầu chapter 1, format hex string)
+    
+    Args:
+        content: Nội dung chapter 1
+        words: Số từ đầu tiên để hash (mặc định 500)
+    
+    Returns:
+        Hex string hash (ví dụ: "8e7ea9285d0d6eed") hoặc None nếu không có content
+    """
+    if not content:
+        return None
+    
+    # Lấy 500 từ đầu tiên
+    first_words = get_first_n_words(content, words)
+    
+    if not first_words:
+        return None
+    
+    # Tạo MD5 hash và lấy 16 ký tự đầu (hex string)
+    hash_obj = hashlib.md5(first_words.encode('utf-8'))
+    hex_hash = hash_obj.hexdigest()[:16]  # Lấy 16 ký tự đầu
+    
+    return hex_hash
