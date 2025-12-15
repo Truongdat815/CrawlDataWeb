@@ -30,8 +30,6 @@ class MongoHandler:
         self.mongo_collection_scores = None
         self.mongo_collection_chapter_contents = None
         self.mongo_collection_websites = None
-        self.mongo_collection_rankings = None
-        self.mongo_collection_glossaries = None
         self.scribblehub_website_id = None  # Lưu website_id của ScribbleHub
         
         if config.MONGODB_ENABLED and MONGODB_AVAILABLE:
@@ -47,15 +45,47 @@ class MongoHandler:
                 self.mongo_collection_scores = self.mongo_db["scores"]
                 self.mongo_collection_chapter_contents = self.mongo_db["chapterContents"]
                 self.mongo_collection_websites = self.mongo_db["websites"]
-                self.mongo_collection_rankings = self.mongo_db["rankings"]
-                self.mongo_collection_glossaries = self.mongo_db["glossaries"]
+                
+                # ✅ Tạo tất cả collections nếu chưa tồn tại (đảm bảo collections có sẵn)
+                try:
+                    existing_collections = self.mongo_db.list_collection_names()
+                    collections_to_create = [
+                        config.MONGODB_COLLECTION_STORIES,  # "stories"
+                        config.MONGODB_COLLECTION_STORY_INFO,  # "storyInfo"
+                        "chapters",
+                        "comments",
+                        "reviews",
+                        "users",
+                        "scores",
+                        "chapterContents",
+                        "websites"
+                    ]
+                    
+                    created_count = 0
+                    for coll_name in collections_to_create:
+                        if coll_name not in existing_collections:
+                            # Tạo collection bằng cách insert một document rỗng rồi xóa
+                            test_doc = {"_init": True}
+                            self.mongo_db[coll_name].insert_one(test_doc)
+                            self.mongo_db[coll_name].delete_one({"_init": True})
+                            created_count += 1
+                            safe_print(f"      ✅ Đã tạo collection: {coll_name}")
+                    
+                    if created_count > 0:
+                        safe_print(f"      ✅ Đã tạo {created_count} collections mới")
+                    else:
+                        safe_print(f"      ✅ Tất cả {len(collections_to_create)} collections đã tồn tại")
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi khi tạo collections: {e}")
+                    import traceback
+                    safe_print(f"      {traceback.format_exc()}")
                 
                 # Kiểm tra và tạo ScribbleHub website nếu chưa có
                 scribblehub_id = self.ensure_scribblehub_website()
                 if scribblehub_id:
                     self.scribblehub_website_id = scribblehub_id
                 
-                safe_print("✅ Đã kết nối MongoDB với 11 collections")
+                safe_print("✅ Đã kết nối MongoDB với 10 collections")
             except Exception as e:
                 safe_print(f"⚠️ Không thể kết nối MongoDB: {e}")
                 safe_print("   Tiếp tục lưu vào file JSON...")
@@ -161,10 +191,20 @@ class MongoHandler:
                 if chapter_1_content:
                     chapter_1_hash = create_chapter_hash(chapter_1_content)
                     story_data["chapter1Hash"] = chapter_1_hash
-                    # Tạo storyHash (hex string)
+                    # ✅ Tạo storyHash bằng SimHash (500 từ đầu chapter 1)
                     story_hash = create_story_hash(chapter_1_content)
                     if story_hash:
                         story_data["storyHash"] = story_hash
+                        safe_print(f"        ✅ Đã tạo storyHash (SimHash): {story_hash}")
+                # Nếu chưa có storyHash và có chapter 1 trong DB, lấy từ đó
+                elif not existing.get("storyHash") and existing.get("chapter1Hash"):
+                    # Lấy chapter 1 content từ DB để tạo storyHash
+                    chapter_1_content_from_db = self.get_chapter_1_content(existing.get("storyId"))
+                    if chapter_1_content_from_db:
+                        story_hash = create_story_hash(chapter_1_content_from_db)
+                        if story_hash:
+                            story_data["storyHash"] = story_hash
+                            safe_print(f"        ✅ Đã tạo storyHash từ chapter 1 trong DB (SimHash): {story_hash}")
                 self.mongo_collection_stories.update_one(
                     {"webStoryId": web_story_id},
                     {"$set": story_data}
@@ -225,16 +265,40 @@ class MongoHandler:
             return
         
         try:
-            existing = self.mongo_collection_story_info.find_one({"storyId": story_info_data.get("storyId")})
+            story_id = story_info_data.get("storyId")
+            existing = self.mongo_collection_story_info.find_one({"storyId": story_id})
+            
+            # Log các giá trị trước khi lưu để debug
+            safe_print(f"        🔍 DEBUG save_story_info - Giá trị TRƯỚC KHI lưu:")
+            safe_print(f"           - averageViews: '{story_info_data.get('averageViews')}'")
+            safe_print(f"           - totalWord: '{story_info_data.get('totalWord')}'")
+            safe_print(f"           - averageWords: '{story_info_data.get('averageWords')}'")
+            safe_print(f"           - pageViews: '{story_info_data.get('pageViews')}'")
+            
             if existing:
+                # ✅ Update: Sử dụng $set để ghi đè TẤT CẢ các field, kể cả giá trị rỗng
                 self.mongo_collection_story_info.update_one(
-                    {"storyId": story_info_data.get("storyId")},
+                    {"storyId": story_id},
                     {"$set": story_info_data}
                 )
+                safe_print(f"        ✅ Đã CẬP NHẬT story_info {story_id} vào MongoDB")
+                
+                # Log giá trị SAU KHI update để verify
+                updated = self.mongo_collection_story_info.find_one({"storyId": story_id})
+                if updated:
+                    safe_print(f"        🔍 DEBUG save_story_info - Giá trị SAU KHI lưu:")
+                    safe_print(f"           - averageViews: '{updated.get('averageViews')}'")
+                    safe_print(f"           - totalWord: '{updated.get('totalWord')}'")
+                    safe_print(f"           - averageWords: '{updated.get('averageWords')}'")
+                    safe_print(f"           - pageViews: '{updated.get('pageViews')}'")
             else:
+                # Insert mới
                 self.mongo_collection_story_info.insert_one(story_info_data)
+                safe_print(f"        ✅ Đã INSERT story_info {story_id} vào MongoDB")
         except Exception as e:
-            safe_print(f"⚠️ Lỗi khi lưu story info vào MongoDB: {e}")
+            safe_print(f"        ⚠️ Lỗi khi lưu story info vào MongoDB: {e}")
+            import traceback
+            safe_print(f"        {traceback.format_exc()}")
     
     def save_chapter(self, chapter_data):
         """
@@ -273,8 +337,8 @@ class MongoHandler:
     def save_comment(self, comment_data):
         """
         Lưu comment vào MongoDB ngay khi cào xong
-        ✅ Schema mới: comment_id (PK), web_comment_id, comment_text, time, chapter_id, user_id, 
-        reply_to_user_id, parent_id, is_root, react, website_id, isDeleted
+        ✅ Schema mới: commentId (PK), webCommentId, commentText, time, chapterId, userId, 
+        replyToUserId, parentId, isRoot, react, websiteId, isDeleted
         ✅ Chỉ lưu khi có comment_text (có comment thật sự)
         ✅ Set isDeleted = false khi comment được tìm thấy trên web
         """
@@ -291,12 +355,14 @@ class MongoHandler:
         comment_data["isDeleted"] = False
         
         try:
-            existing = self.mongo_collection_comments.find_one({"webCommentId": comment_data.get("webCommentId")})
+            web_comment_id = comment_data.get("webCommentId", "")
+            existing = self.mongo_collection_comments.find_one({"webCommentId": web_comment_id})
             if existing:
                 self.mongo_collection_comments.update_one(
-                    {"webCommentId": comment_data.get("webCommentId")},
+                    {"webCommentId": web_comment_id},
                     {"$set": comment_data}
                 )
+                # Không log để tránh spam log
                 safe_print(f"        🔄 Đã cập nhật comment {comment_data.get('webCommentId')} trong MongoDB")
             else:
                 self.mongo_collection_comments.insert_one(comment_data)
@@ -336,9 +402,27 @@ class MongoHandler:
         except Exception as e:
             safe_print(f"        ⚠️ Lỗi khi lưu review vào MongoDB: {e}")
     
+    def _to_number_or_none(self, value):
+        """Helper function để convert value thành number hoặc None"""
+        if value is None:
+            return None
+        try:
+            # Thử convert string thành int
+            if isinstance(value, str):
+                # Loại bỏ dấu phẩy và khoảng trắng
+                cleaned = value.replace(",", "").replace(" ", "").strip()
+                if cleaned.isdigit():
+                    return int(cleaned)
+                return None
+            elif isinstance(value, (int, float)):
+                return int(value)
+            return None
+        except:
+            return None
+    
     def save_user(self, web_user_id, username, user_url=None, created_date=None, gender=None, location=None, 
                   followers=None, following=None, comments=None, bio=None, favorites=None, ratings=None,
-                  series=None, total_words=None, reviews_received=None):
+                  reviews=None, series=None, total_words=None, reviews_received=None):
         """
         Lưu user vào MongoDB ngay khi gặp web_user_id và username
         ✅ Schema: userId, webUserId, username, userUrl, createdDate, gender, 
@@ -357,6 +441,7 @@ class MongoHandler:
             bio: Tiểu sử
             favorites: Số lượng favorites
             ratings: Số lượng ratings
+            reviews: Số reviews user đã viết (sẽ map thành reviews)
             series: Số series (sẽ map thành numberOfStories)
             total_words: Tổng số từ
             reviews_received: Số reviews nhận được (sẽ map thành totalReviewsReceived)
@@ -385,43 +470,27 @@ class MongoHandler:
             # Tìm user theo web_user_id
             existing = self.mongo_collection_users.find_one({"webUserId": web_user_id})
             if existing:
-                # Update nếu có thay đổi
-                update_data = {}
-                if existing.get("username") != username:
-                    update_data["username"] = username
-                if user_url is not None:
-                    update_data["userUrl"] = user_url
-                if created_date is not None:
-                    update_data["createdDate"] = created_date
-                # Update các field mới (có thể là None)
-                if gender is not None:
-                    update_data["gender"] = gender
-                if location is not None:
-                    update_data["location"] = location
-                if followers is not None:
-                    update_data["followers"] = followers
-                if following is not None:
-                    update_data["following"] = following
-                if comments is not None:
-                    update_data["comments"] = comments
-                if bio is not None:
-                    update_data["bio"] = bio
-                if favorites is not None:
-                    update_data["favorites"] = favorites
-                if ratings is not None:
-                    update_data["ratings"] = ratings
-                if series is not None:
-                    update_data["numberOfStories"] = series
-                if total_words is not None:
-                    update_data["totalWords"] = total_words
-                if reviews_received is not None:
-                    update_data["totalReviewsReceived"] = reviews_received
-                    update_data["reviews"] = reviews_received
-                # Map ratings và favorites thành totalRatingsReceived và totalFavoritesReceived
-                if ratings is not None:
-                    update_data["totalRatingsReceived"] = ratings
-                if favorites is not None:
-                    update_data["totalFavoritesReceived"] = favorites
+                # ✅ Update tất cả fields để đảm bảo schema nhất quán (theo MongoDB schema)
+                update_data = {
+                    "username": username,  # ✅ Luôn update username
+                    "webUserId": web_user_id if web_user_id else None,  # ✅ null hoặc string
+                    "userUrl": user_url if user_url is not None else None,  # ✅ string hoặc null
+                    "createdDate": created_date if created_date is not None else None,  # ✅ string hoặc null
+                    "gender": gender if gender is not None else None,  # ✅ string hoặc null
+                    "location": location if location is not None else None,  # ✅ string hoặc null
+                    "followers": self._to_number_or_none(followers),  # ✅ number hoặc null
+                    "following": self._to_number_or_none(following),  # ✅ number hoặc null
+                    "comments": self._to_number_or_none(comments),  # ✅ null hoặc number
+                    "bio": bio if bio is not None else None,  # ✅ string hoặc null
+                    "favorites": None,  # ✅ null (theo schema)
+                    "ratings": None,  # ✅ null (theo schema)
+                    "reviews": self._to_number_or_none(reviews),  # ✅ Số reviews user đã viết (number hoặc null)
+                    "numberOfStories": self._to_number_or_none(series),  # ✅ number hoặc null
+                    "totalWords": self._to_number_or_none(total_words),  # ✅ null hoặc number
+                    "totalReviewsReceived": self._to_number_or_none(reviews_received),  # ✅ null hoặc number
+                    "totalRatingsReceived": self._to_number_or_none(ratings),  # ✅ number hoặc null
+                    "totalFavoritesReceived": self._to_number_or_none(favorites),  # ✅ null hoặc number
+                }
                 
                 # Xóa các field cũ không cần thiết
                 unset_data = {}
@@ -432,7 +501,7 @@ class MongoHandler:
                 
                 if update_data or unset_data:
                     update_query = {}
-                if update_data:
+                    if update_data:
                         update_query["$set"] = update_data
                     if unset_data:
                         update_query["$unset"] = unset_data
@@ -444,42 +513,47 @@ class MongoHandler:
             else:
                 # Tạo id mới - chỉ lưu các field được yêu cầu
                 user_id = generate_id()
+                # ✅ Đảm bảo tất cả fields khớp với MongoDB schema (theo hình ảnh):
+                # userId: string (PK) ✅
+                # webUserId: null hoặc string ✅
+                # username: string ✅
+                # userUrl: string hoặc null ✅
+                # createdDate: string hoặc null ✅
+                # gender: string hoặc null ✅
+                # location: string hoặc null ✅
+                # followers: number hoặc null ✅
+                # following: number hoặc null ✅
+                # comments: null hoặc number ✅
+                # bio: string hoặc null ✅
+                # favorites: null ✅
+                # ratings: null ✅
+                # reviews: null ✅
+                # numberOfStories: number hoặc null ✅
+                # totalWords: null hoặc number ✅
+                # totalReviewsReceived: null hoặc number ✅
+                # totalRatingsReceived: number hoặc null ✅
+                # totalFavoritesReceived: null hoặc number ✅
                 user_data = {
-                    "userId": user_id,  # Khóa chính
-                    "webUserId": web_user_id,
-                    "username": username,
+                    "userId": user_id,  # ✅ string (PK)
+                    "webUserId": web_user_id if web_user_id else None,  # ✅ null hoặc string
+                    "username": username,  # ✅ string
+                    "userUrl": user_url if user_url is not None else None,  # ✅ string hoặc null
+                    "createdDate": created_date if created_date is not None else None,  # ✅ string hoặc null
+                    "gender": gender if gender is not None else None,  # ✅ string hoặc null
+                    "location": location if location is not None else None,  # ✅ string hoặc null
+                    "followers": self._to_number_or_none(followers),  # ✅ number hoặc null
+                    "following": self._to_number_or_none(following),  # ✅ number hoặc null
+                    "comments": self._to_number_or_none(comments),  # ✅ null hoặc number
+                    "bio": bio if bio is not None else None,  # ✅ string hoặc null
+                    "favorites": None,  # ✅ null (theo schema)
+                    "ratings": None,  # ✅ null (theo schema)
+                    "reviews": self._to_number_or_none(reviews),  # ✅ Số reviews user đã viết (number hoặc null)
+                    "numberOfStories": self._to_number_or_none(series),  # ✅ number hoặc null
+                    "totalWords": self._to_number_or_none(total_words),  # ✅ null hoặc number
+                    "totalReviewsReceived": self._to_number_or_none(reviews_received),  # ✅ null hoặc number
+                    "totalRatingsReceived": self._to_number_or_none(ratings),  # ✅ number hoặc null
+                    "totalFavoritesReceived": self._to_number_or_none(favorites),  # ✅ null hoặc number
                 }
-                
-                # Chỉ thêm các field nếu có giá trị (không None)
-                if user_url is not None:
-                    user_data["userUrl"] = user_url
-                if created_date is not None:
-                    user_data["createdDate"] = created_date
-                if gender is not None:
-                    user_data["gender"] = gender
-                if location is not None:
-                    user_data["location"] = location
-                if followers is not None:
-                    user_data["followers"] = followers
-                if following is not None:
-                    user_data["following"] = following
-                if comments is not None:
-                    user_data["comments"] = comments
-                if bio is not None:
-                    user_data["bio"] = bio
-                if favorites is not None:
-                    user_data["favorites"] = favorites
-                    user_data["totalFavoritesReceived"] = favorites
-                if ratings is not None:
-                    user_data["ratings"] = ratings
-                    user_data["totalRatingsReceived"] = ratings
-                if series is not None:
-                    user_data["numberOfStories"] = series
-                if total_words is not None:
-                    user_data["totalWords"] = total_words
-                if reviews_received is not None:
-                    user_data["reviews"] = reviews_received
-                    user_data["totalReviewsReceived"] = reviews_received
                 
                 self.mongo_collection_users.insert_one(user_data)
                 return user_id  # Trả về user_id mới để dùng làm FK
@@ -505,28 +579,17 @@ class MongoHandler:
         if not score_id or not self.mongo_collection_scores:
             return
         
-        # ✅ Kiểm tra xem có ít nhất 1 score không rỗng không
-        has_score = any([
-            overall_score and overall_score.strip(),
-            style_score and style_score.strip(),
-            story_score and story_score.strip(),
-            grammar_score and grammar_score.strip(),
-            character_score and character_score.strip()
-        ])
-        
-        if not has_score:
-            # Không có score nào, không lưu
-            return
-        
+        # ✅ Luôn lưu score nếu có review_id (để link score với review)
+        # Ngay cả khi không có score nào, vẫn lưu để có reviewId link
         try:
             score_data = {
-                "scoreId": score_id,  # Khóa chính (không phải "id")
-                "overallScore": overall_score if overall_score else None,
-                "styleScore": style_score if style_score else None,
-                "storyScore": story_score if story_score else None,
-                "grammarScore": grammar_score if grammar_score else None,
-                "characterScore": character_score if character_score else None,
-                "reviewId": review_id  # Link đến review (FK)
+                "scoreId": score_id,  # Khóa chính
+                "overallScore": overall_score if overall_score and overall_score.strip() else None,
+                "styleScore": style_score if style_score and style_score.strip() else None,
+                "storyScore": story_score if story_score and story_score.strip() else None,
+                "grammarScore": grammar_score if grammar_score and grammar_score.strip() else None,
+                "characterScore": character_score if character_score and character_score.strip() else None,
+                "reviewId": review_id  # Link đến review (FK) - luôn có khi lưu từ review
             }
             
             # Tìm score theo score_id
@@ -919,35 +982,3 @@ class MongoHandler:
         except:
             return None
     
-    def save_glossary(self, glossary_data):
-        """
-        Lưu glossary item vào MongoDB
-        ✅ Schema: glossary_id (PK), story_id (FK), category, title, description, order
-        """
-        if not glossary_data or not self.mongo_collection_glossaries:
-            return
-        
-        try:
-            # Tìm theo story_id + category + title để tránh trùng
-            existing = self.mongo_collection_glossaries.find_one({
-                "storyId": glossary_data.get("storyId"),
-                "category": glossary_data.get("category"),
-                "title": glossary_data.get("title")
-            })
-            
-            if existing:
-                # Update nếu đã có
-                self.mongo_collection_glossaries.update_one(
-                    {
-                        "storyId": glossary_data.get("storyId"),
-                        "category": glossary_data.get("category"),
-                        "title": glossary_data.get("title")
-                    },
-                    {"$set": glossary_data}
-                )
-            else:
-                # Insert mới
-                self.mongo_collection_glossaries.insert_one(glossary_data)
-        except Exception as e:
-            safe_print(f"        ⚠️ Lỗi khi lưu glossary vào MongoDB: {e}")
-

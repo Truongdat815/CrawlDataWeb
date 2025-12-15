@@ -12,7 +12,6 @@ from src.handlers.chapter_handler import ChapterHandler
 from src.handlers.comment_handler import CommentHandler
 from src.handlers.review_handler import ReviewHandler
 from src.handlers.user_handler import UserHandler
-from src.handlers.glossary_handler import GlossaryHandler
 from src import config
 from src.utils import safe_print, generate_id
 
@@ -33,7 +32,6 @@ class ScribbleHubScraper(BaseHandler):
         self.comment_handler = None
         self.review_handler = None
         self.user_handler = None
-        self.glossary_handler = None
 
     def start(self):
         """Khởi động trình duyệt và khởi tạo handlers"""
@@ -45,7 +43,6 @@ class ScribbleHubScraper(BaseHandler):
         self.review_handler = ReviewHandler(self.page, self.mongo)
         self.story_handler = StoryHandler(self.page, self.mongo)
         self.user_handler = UserHandler(self.page, self.mongo)
-        self.glossary_handler = GlossaryHandler(self.page, self.mongo)
         # Truyền context vào ChapterHandler để dùng cho requests
         self.chapter_handler = ChapterHandler(self.mongo, self.comment_handler, self.context)
 
@@ -256,47 +253,65 @@ class ScribbleHubScraper(BaseHandler):
             if saved_metadata_count > 0:
                 safe_print(f"   💡 Kiểm tra MongoDB collection 'chapters' để xem danh sách chapters")
 
-            # 3.5. Lấy reviews cho toàn bộ truyện (chỉ nếu có reviews)
-            # Kiểm tra total_reviews từ story_info_data trước
+            # 3.5. ✅ LUÔN scrape reviews cho toàn bộ truyện (để đảm bảo lưu vào DB)
+            # Kiểm tra total_reviews từ HTML: <div class="wi_novel_title tags pedit_body nreview">Reviews <span class="cnt_toc">22</span></div>
             total_reviews_str = ""
             try:
-                reviews_section = self.page.locator(".wi_novel_title.tags.pedit_body.nreview").first
+                # ✅ Tìm div.wi_novel_title.tags.pedit_body.nreview (class nreview = reviews)
+                reviews_section = self.page.locator("div.wi_novel_title.tags.pedit_body.nreview").first
                 if reviews_section.count() > 0:
-                    cnt_toc = reviews_section.locator(".cnt_toc").first
+                    # Lấy span.cnt_toc bên trong
+                    cnt_toc = reviews_section.locator("span.cnt_toc").first
                     if cnt_toc.count() > 0:
                         total_reviews_str = cnt_toc.inner_text().strip()
-            except:
-                pass
+                        safe_print(f"... ✅ Tìm thấy totalReviews từ div.wi_novel_title.tags.pedit_body.nreview span.cnt_toc: {total_reviews_str}")
+                    else:
+                        safe_print(f"... 🔍 DEBUG: Không tìm thấy span.cnt_toc trong div.nreview")
+                else:
+                    safe_print(f"... 🔍 DEBUG: Không tìm thấy div.wi_novel_title.tags.pedit_body.nreview")
+                    # Fallback: Thử tìm tất cả div có class nreview
+                    try:
+                        all_nreview = self.page.locator("div.nreview").all()
+                        for div in all_nreview:
+                            cnt_toc = div.locator("span.cnt_toc").first
+                            if cnt_toc.count() > 0:
+                                total_reviews_str = cnt_toc.inner_text().strip()
+                                safe_print(f"... ✅ Đã lấy totalReviews từ fallback div.nreview span.cnt_toc: {total_reviews_str}")
+                                break
+                    except Exception as e2:
+                        safe_print(f"... ⚠️ Lỗi khi lấy total_reviews từ fallback: {e2}")
+            except Exception as e:
+                safe_print(f"... ⚠️ Lỗi khi lấy total_reviews: {e}")
+                import traceback
+                safe_print(f"... {traceback.format_exc()}")
             
-            # Chỉ scrape reviews nếu có reviews (total_reviews > 0)
+            # ✅ LUÔN scrape reviews (không chỉ khi total_reviews > 0) để đảm bảo lưu vào DB
             reviews = []
             try:
                 total_reviews_num = int(total_reviews_str) if total_reviews_str and total_reviews_str.isdigit() else 0
                 if total_reviews_num > 0:
-                    safe_print(f"... Đang lấy reviews cho toàn bộ truyện (có {total_reviews_num} reviews)")
-                    reviews = self.review_handler.scrape_reviews(story_url, story_id)
-                    safe_print(f"✅ Đã lấy được {len(reviews)} reviews")
+                    safe_print(f"... Đang scrape reviews cho toàn bộ truyện (có {total_reviews_num} reviews theo stats)")
                 else:
-                    safe_print(f"... Bỏ qua reviews (không có reviews: {total_reviews_str})")
-            except Exception as e:
-                safe_print(f"⚠️ Lỗi khi kiểm tra/scrape reviews: {e}")
-                # Nếu lỗi, vẫn thử scrape (fallback)
+                    safe_print(f"... Đang scrape reviews cho toàn bộ truyện (total_reviews không tìm thấy hoặc = 0, vẫn sẽ thử scrape)")
+                
                 reviews = self.review_handler.scrape_reviews(story_url, story_id)
                 if reviews:
-                    safe_print(f"✅ Đã lấy được {len(reviews)} reviews (fallback)")
-
-            # 3.6. Lấy glossary cho toàn bộ truyện (nếu có)
-            glossary_items = []
-            try:
-                glossary_items = self.glossary_handler.scrape_glossary(story_url, story_id)
-                if glossary_items:
-                    safe_print(f"✅ Đã lấy được {len(glossary_items)} glossary items")
+                    safe_print(f"✅ Đã scrape và lưu {len(reviews)} reviews vào MongoDB")
+                else:
+                    safe_print(f"ℹ️ Không tìm thấy reviews hoặc không có reviews để lưu")
             except Exception as e:
-                safe_print(f"⚠️ Lỗi khi scrape glossary: {e}")
+                safe_print(f"⚠️ Lỗi khi scrape reviews: {e}")
+                import traceback
+                safe_print(f"{traceback.format_exc()}")
 
             # 4. Cào các chương song song với ThreadPoolExecutor (GIỮ ĐÚNG THỨ TỰ)
+            # ⚠️ CHỈ CÀO 10 CHAPTER ĐẦU TIÊN (theo yêu cầu)
             # Lọc ra các chapters chưa được cào content (để tránh cào trùng)
             chapters_to_scrape = []
+            # Chỉ lấy 10 chapter đầu tiên
+            chapter_info_list = chapter_info_list[:2] if chapter_info_list else []
+            safe_print(f"   ⚠️ CHỈ CÀO 10 CHAPTER ĐẦU TIÊN (theo yêu cầu)")
+            
             for index, chapter_info in enumerate(chapter_info_list):
                 # Dùng webChapterId từ chapter_info (đã lấy từ table of contents)
                 web_chapter_id = chapter_info.get("webChapterId", "") or chapter_info.get("web_chapter_id", "")
@@ -459,10 +474,10 @@ class ScribbleHubScraper(BaseHandler):
                 
                 # 6. Lưu JSON backup vào data/json/ (lưu cả MongoDB và JSON file)
                 try:
-                    # Lấy story_info từ MongoDB
+                    # Lấy storyInfo từ MongoDB
                     story_info_data = None
                     if self.mongo.mongo_collection_story_info and story_id:
-                        story_info_data = self.mongo.mongo_collection_story_info.find_one({"story_id": story_id})
+                        story_info_data = self.mongo.mongo_collection_story_info.find_one({"storyId": story_id})
                     
                     self.save_story_to_json(story_id, story_data, story_info_data)
                 except Exception as e:
@@ -573,7 +588,7 @@ class ScribbleHubScraper(BaseHandler):
             "totalWord": self._to_number(story_info_data_clean.get("total_word", "")),
             "averageWords": self._to_number(story_info_data_clean.get("average_words", "")),
             "lastUpdated": self._to_date(story_info_data_clean.get("last_updated", "")),
-            "totalReviews": self._to_number(story_info_data_clean.get("total_reviews", "")),
+            "totalReviews": self._to_number(story_info_data_clean.get("totalReviews", story_info_data_clean.get("total_reviews", ""))),
             "userReading": self._to_number(story_info_data_clean.get("user_reading", "")),
             "userPlanToRead": self._to_number(story_info_data_clean.get("user_plan_to_read", "")),
             "userCompleted": self._to_number(story_info_data_clean.get("user_completed", "")),
@@ -663,15 +678,6 @@ class ScribbleHubScraper(BaseHandler):
             "totalFavoritesReceived": user_clean.get("totalFavoritesReceived", user_clean.get("total_favorites_received", user_clean.get("favorites", "")))
         }
 
-    def _map_ranking_to_schema(self, ranking_clean):
-        """Map ranking data theo schema mới (camelCase)"""
-        return {
-            "rankId": ranking_clean.get("rank_id"),
-            "rankName": ranking_clean.get("rank_name", ""),
-            "rankNumber": self._to_number(ranking_clean.get("rank_number", "")),
-            "websiteId": ranking_clean.get("website_id"),
-            "storyId": ranking_clean.get("story_id")
-        }
 
     def _map_website_to_schema(self, website_clean):
         """Map website data theo schema mới (camelCase)"""
@@ -695,7 +701,7 @@ class ScribbleHubScraper(BaseHandler):
     def save_story_to_json(self, story_id, story_data, story_info_data):
         """
         Lưu toàn bộ dữ liệu story vào file JSON trong data/json/ (backup local)
-        Cấu trúc JSON theo schema mới (camelCase): stories, storyInfo, chapters, chapterContents, comments, reviews, rankings, users, websites, scores
+        Cấu trúc JSON theo schema mới (camelCase): stories, storyInfo, chapters, chapterContents, comments, reviews, users, websites, scores
         Args:
             story_id: ID của story
             story_data: Dict chứa story data
@@ -730,7 +736,6 @@ class ScribbleHubScraper(BaseHandler):
                 "chapterContents": [],  # camelCase
                 "comments": [],  # Array of comments
                 "reviews": [],  # Array of reviews
-                "rankings": [],  # Array of rankings
                 "users": [],  # Array of users
                 "websites": {},  # Website object
                 "scores": {}  # Scores object (tách riêng)
@@ -739,16 +744,17 @@ class ScribbleHubScraper(BaseHandler):
             # Lấy chapters từ MongoDB (chỉ metadata, không có content/comments)
             if self.mongo.mongo_collection_chapters and story_id:
                 try:
-                    safe_print(f"      🔍 Đang query chapters từ MongoDB với story_id: {story_id}")
-                    chapters = list(self.mongo.mongo_collection_chapters.find({"story_id": story_id}))
+                    safe_print(f"      🔍 Đang query chapters từ MongoDB với storyId: {story_id}")
+                    # ✅ Sửa: Dùng storyId (camelCase) thay vì story_id (snake_case)
+                    chapters = list(self.mongo.mongo_collection_chapters.find({"storyId": story_id}))
                     safe_print(f"      📚 Tìm thấy {len(chapters)} chapters trong MongoDB")
                     
                     if len(chapters) == 0:
-                        safe_print(f"      ⚠️ Không tìm thấy chapters nào với story_id: {story_id}")
-                        # Thử query bằng web_story_id
+                        safe_print(f"      ⚠️ Không tìm thấy chapters nào với storyId: {story_id}")
+                        # Thử query bằng webStoryId
                         if web_story_id:
-                            safe_print(f"      🔍 Thử query bằng web_story_id: {web_story_id}")
-                            story_doc = self.mongo.mongo_collection_stories.find_one({"web_story_id": web_story_id})
+                            safe_print(f"      🔍 Thử query bằng webStoryId: {web_story_id}")
+                            story_doc = self.mongo.mongo_collection_stories.find_one({"webStoryId": web_story_id})
                             if story_doc:
                                 story_id_from_db = story_doc.get("story_id")
                                 if story_id_from_db:
@@ -784,7 +790,8 @@ class ScribbleHubScraper(BaseHandler):
                         # Lấy comments riêng (tất cả comments ở root level)
                         if chapter_id and self.mongo.mongo_collection_comments:
                             try:
-                                comments = list(self.mongo.mongo_collection_comments.find({"chapter_id": chapter_id}))
+                                # ✅ Sửa: Dùng chapterId (camelCase) thay vì chapter_id (snake_case)
+                                comments = list(self.mongo.mongo_collection_comments.find({"chapterId": chapter_id}))
                                 for comment in comments:
                                     comment_clean = self._remove_mongo_id(comment)
                                     comment_mapped = self._map_comment_to_schema(comment_clean)
@@ -808,15 +815,6 @@ class ScribbleHubScraper(BaseHandler):
                     json_data["reviews"] = [self._map_review_to_schema(self._remove_mongo_id(r)) for r in reviews]
                 except Exception as e:
                     safe_print(f"      ⚠️ Lỗi khi lấy reviews từ MongoDB: {e}")
-            
-            # Lấy rankings từ MongoDB
-            if self.mongo.mongo_collection_rankings and story_id:
-                try:
-                    rankings = list(self.mongo.mongo_collection_rankings.find({"story_id": story_id}))
-                    safe_print(f"      🏆 Tìm thấy {len(rankings)} rankings trong MongoDB")
-                    json_data["rankings"] = [self._map_ranking_to_schema(self._remove_mongo_id(r)) for r in rankings]
-                except Exception as e:
-                    safe_print(f"      ⚠️ Lỗi khi lấy rankings từ MongoDB: {e}")
             
             # Lấy scores từ MongoDB (thông qua reviews của story)
             # Scores được link đến reviews, reviews được link đến story
@@ -912,7 +910,6 @@ class ScribbleHubScraper(BaseHandler):
                 safe_print(f"   - Chapter Contents: {len(json_data['chapterContents'])}")
                 safe_print(f"   - Comments: {len(json_data['comments'])}")
                 safe_print(f"   - Reviews: {len(json_data['reviews'])}")
-                safe_print(f"   - Rankings: {len(json_data['rankings'])}")
                 safe_print(f"   - Users: {len(json_data['users'])}")
                 safe_print(f"   - Websites: {'✅' if json_data['websites'] else '❌'}")
                 safe_print(f"   - Scores: {'✅' if json_data['scores'] else '❌'}")
@@ -936,7 +933,6 @@ class ScribbleHubScraper(BaseHandler):
                             "chapterContents": [],
                             "comments": [],
                             "reviews": [],
-                            "rankings": [],
                             "users": [],
                             "websites": {},
                             "scores": {},

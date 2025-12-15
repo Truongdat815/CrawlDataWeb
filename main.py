@@ -3,15 +3,9 @@ from src.utils import safe_print
 from src import config
 
 def main():
-    # ===== Cào 25 bộ truyện từ trang ranking page 37 =====
-    # URL ranking: https://www.scribblehub.com/series-ranking/?pg=37
-    ranking_url = "https://www.scribblehub.com/series-ranking/?pg=37"
-    
-    # Số lượng bộ truyện muốn cào
-    num_stories = 1  # Chỉ cào 1 bộ đầu tiên
-    
-    # Bắt đầu từ vị trí thứ mấy (0 = bộ đầu tiên)
-    start_from = 0
+    # ===== Cào story cụ thể =====
+    story_url = "https://www.scribblehub.com/series/1077902/conquest/"
+    # Chỉ cào 2 chapter đầu tiên (đã set trong scraper_engine.py)
     # ==================================================
     
     # Khởi tạo bot
@@ -21,35 +15,28 @@ def main():
         bot.start()
         
         safe_print("=" * 80)
-        safe_print(f"🚀 BẮT ĐẦU CÀO {num_stories} BỘ TRUYỆN")
+        safe_print("🚀 BẮT ĐẦU CÀO STORY")
         safe_print("=" * 80)
-        safe_print(f"📄 Ranking URL: {ranking_url}")
-        safe_print(f"📚 Số lượng: {num_stories} bộ truyện")
-        safe_print(f"📍 Bắt đầu từ: Vị trí {start_from + 1}")
+        safe_print(f"📄 Story URL: {story_url}")
+        safe_print(f"📚 Số lượng: 2 chapters đầu tiên")
         safe_print("=" * 80)
         safe_print("")
         
-        # Cào các bộ truyện từ ranking
+        # Cào story cụ thể
         # Hàm này sẽ:
-        # 1. Lấy danh sách URL từ ranking page
-        # 2. Cào từng bộ truyện với đầy đủ:
-        #    - Story metadata (title, author, description, tags, etc.)
-        #    - Tất cả chapters (toàn bộ, không giới hạn)
+        # 1. Cào story metadata (title, author, description, tags, etc.)
+        # 2. Cào 2 chapters đầu tiên
         #    - Chapter contents (full text)
         #    - Comments
         #    - Reviews
         #    - Rankings
         #    - User info
         #    - Glossary (nếu có)
-        bot.scrape_best_rated_stories(
-            ranking_url=ranking_url,
-            num_stories=num_stories,
-            start_from=start_from
-        )
+        bot.scrape_story(story_url)
         
         safe_print("")
         safe_print("=" * 80)
-        safe_print(f"✅ ĐÃ HOÀN THÀNH CÀO {num_stories} BỘ TRUYỆN!")
+        safe_print("✅ ĐÃ HOÀN THÀNH CÀO STORY!")
         safe_print("=" * 80)
         safe_print("📁 Dữ liệu đã được lưu vào:")
         safe_print(f"   - MongoDB: {config.MONGODB_DB_NAME}")

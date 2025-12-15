@@ -267,25 +267,76 @@ class ChapterHandler:
                 safe_print(f"      ⚠️ Lỗi khi lấy views/voted: {e}")
             
             # 10. Lấy total_comments từ page (ưu tiên) hoặc scrape comments
-            # HTML: <span class="chp_stats_feature" title="Total Comments"><i class="fa fa-comments-o chp"></i> <a href="#comments">7</a></span>
+            # HTML mới: <div class="cnt_counter">Comments (4)<div class="comments_options">...</div></div>
+            # HTML cũ: <span class="chp_stats_feature" title="Total Comments"><i class="fa fa-comments-o chp"></i> <a href="#comments">7</a></span>
             total_comments = 0
             try:
-                # Thử lấy từ .chp_stats_feature có fa-comments-o chp
-                stats_features = page.locator("span.chp_stats_feature").all()
-                for feature in stats_features:
+                # ✅ Ưu tiên: Thử lấy từ div.cnt_counter với text "Comments (4)"
+                # HTML: <div class="cnt_counter">Comments (4)<div class="comments_options">...</div></div>
+                cnt_counter = page.locator("div.cnt_counter").first
+                if cnt_counter.count() > 0:
                     try:
-                        icon = feature.locator("i").first
-                        if icon.count() > 0:
-                            icon_classes = icon.get_attribute("class") or ""
-                            
-                            # Lấy total_comments từ fa-comments-o chp
-                            if "fa-comments-o" in icon_classes and "chp" in icon_classes:
-                                # Lấy từ thẻ <a> bên trong
-                                link_elem = feature.locator("a").first
-                                if link_elem.count() > 0:
-                                    total_comments = link_elem.inner_text().strip()
-                                    # Parse số từ text
-                                    comment_match = re.search(r'(\d+)', total_comments)
+                        # Lấy text node đầu tiên (trước div.comments_options) để tránh lấy text từ select bên trong
+                        counter_text = cnt_counter.evaluate("""
+                            el => {
+                                // Lấy text node đầu tiên (trước div.comments_options)
+                                let text = '';
+                                for (let node of el.childNodes) {
+                                    if (node.nodeType === 3) { // Text node
+                                        text += node.textContent;
+                                    } else if (node.nodeType === 1 && !node.classList.contains('comments_options')) {
+                                        // Nếu là element nhưng không phải comments_options, lấy text
+                                        text += node.textContent;
+                                        break; // Dừng khi gặp comments_options
+                                    }
+                                    if (node.classList && node.classList.contains('comments_options')) {
+                                        break; // Dừng khi gặp comments_options
+                                    }
+                                }
+                                return text.trim();
+                            }
+                        """)
+                        
+                        # Fallback: Nếu không lấy được, dùng inner_text và lấy phần trước "Newest" hoặc "Most Liked"
+                        if not counter_text or not counter_text.strip():
+                            full_text = cnt_counter.inner_text().strip()
+                            # Lấy phần trước "Newest" hoặc "Most Liked" (text trong select)
+                            if "Newest" in full_text:
+                                counter_text = full_text.split("Newest")[0].strip()
+                            elif "Most Liked" in full_text:
+                                counter_text = full_text.split("Most Liked")[0].strip()
+                            else:
+                                counter_text = full_text
+                        
+                        # Parse: "Comments (4)" → 4
+                        comment_match = re.search(r'Comments\s*\((\d+)\)', counter_text, re.IGNORECASE)
+                        if comment_match:
+                            total_comments = int(comment_match.group(1))
+                            safe_print(f"      ✅ Đã lấy totalComments từ div.cnt_counter: {total_comments}")
+                        else:
+                            safe_print(f"      🔍 DEBUG: Không parse được từ text: '{counter_text}'")
+                    except Exception as e:
+                        safe_print(f"      ⚠️ Lỗi khi parse div.cnt_counter: {e}")
+                        import traceback
+                        safe_print(f"      {traceback.format_exc()}")
+                
+                # Fallback: Thử lấy từ .chp_stats_feature có fa-comments-o chp
+                if total_comments == 0:
+                    stats_features = page.locator("span.chp_stats_feature").all()
+                    for feature in stats_features:
+                        try:
+                            icon = feature.locator("i").first
+                            if icon.count() > 0:
+                                icon_classes = icon.get_attribute("class") or ""
+                                
+                                # Lấy total_comments từ fa-comments-o chp
+                                if "fa-comments-o" in icon_classes and "chp" in icon_classes:
+                                    # Lấy từ thẻ <a> bên trong
+                                    link_elem = feature.locator("a").first
+                                    if link_elem.count() > 0:
+                                        total_comments = link_elem.inner_text().strip()
+                                        # Parse số từ text
+                                        comment_match = re.search(r'(\d+)', total_comments)
                                     if comment_match:
                                         total_comments = int(comment_match.group(1))
                                     else:
@@ -296,24 +347,44 @@ class ChapterHandler:
                                     comment_match = re.search(r'(\d+)', feature_text)
                                     if comment_match:
                                         total_comments = int(comment_match.group(1))
-                    except:
-                        continue
+                                    else:
+                                        total_comments = 0
+                                break  # Tìm thấy rồi thì break
+                        except:
+                            pass
                 
-                # Nếu không lấy được từ stats, scrape comments
-                if total_comments == 0:
-                    try:
-                        comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
-                        total_comments = len(comments_list) if comments_list else 0
-                    except Exception as e:
-                        safe_print(f"      ⚠️ Lỗi khi scrape comments: {e}")
+                # ✅ LUÔN scrape comments để lưu vào DB (không chỉ khi total_comments == 0)
+                # Comments sẽ được lưu tự động trong scrape_comments_worker -> scrape_single_comment_recursive -> save_comment
+                try:
+                    safe_print(f"      💬 Đang scrape comments cho chapter...")
+                    comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
+                    # Nếu chưa có total_comments từ stats, dùng số lượng comments đã scrape
+                    if total_comments == 0 and comments_list:
+                        total_comments = len(comments_list)
+                        safe_print(f"      ✅ Đã scrape và lưu {len(comments_list)} comments vào MongoDB")
+                    elif comments_list:
+                        safe_print(f"      ✅ Đã scrape và lưu {len(comments_list)} comments vào MongoDB (total_comments từ stats: {total_comments})")
+                    elif not comments_list:
+                        safe_print(f"      ℹ️ Không tìm thấy comments cho chapter này")
+                except Exception as e:
+                    safe_print(f"      ⚠️ Lỗi khi scrape comments: {e}")
+                    import traceback
+                    safe_print(f"      {traceback.format_exc()}")
             except Exception as e:
                 safe_print(f"      ⚠️ Lỗi khi lấy total_comments: {e}")
-                # Fallback: scrape comments
+                # Fallback: LUÔN scrape comments
                 try:
+                    safe_print(f"      💬 Fallback: Đang scrape comments cho chapter...")
                     comments_list = self.comment_handler.scrape_comments_worker(page, url, "chapter", chapter_id)
-                    total_comments = len(comments_list) if comments_list else 0
-                except:
-                    pass
+                    if comments_list:
+                        total_comments = len(comments_list)
+                        safe_print(f"      ✅ Đã scrape và lưu {len(comments_list)} comments vào MongoDB (fallback)")
+                    else:
+                        safe_print(f"      ℹ️ Không tìm thấy comments cho chapter này (fallback)")
+                except Exception as e2:
+                    safe_print(f"      ⚠️ Lỗi khi scrape comments (fallback): {e2}")
+                    import traceback
+                    safe_print(f"      {traceback.format_exc()}")
             
             # 11. Lưu/Update Info (update nếu đã có metadata, insert nếu chưa có)
             chapter_data = {
@@ -405,17 +476,50 @@ class ChapterHandler:
                     content_id = generate_id()
                     self.mongo.save_chapter_content(content_id, content, chapter_id)
             
-            # Comments - vẫn cần Playwright cho comments (có thể cải thiện sau)
-            # Tạm thời bỏ qua comments khi dùng requests
+            # Lấy totalComments, views và voted từ requests (cần parse HTML)
             total_comments = 0
-            
-            # Lấy views và voted từ requests (cần parse HTML)
             views = None
             voted = None
             
             try:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(session.get(url).text, 'html.parser')
+                
+                # ✅ Lấy totalComments từ div.cnt_counter với text "Comments (4)"
+                # HTML: <div class="cnt_counter">Comments (4)<div class="comments_options">...</div></div>
+                cnt_counter = soup.select_one("div.cnt_counter")
+                if cnt_counter:
+                    try:
+                        # Lấy text node đầu tiên (trước div.comments_options)
+                        # BeautifulSoup: lấy text trực tiếp từ element, bỏ qua children
+                        counter_text = ""
+                        # Lấy text từ element chính (không bao gồm children)
+                        for child in cnt_counter.children:
+                            if hasattr(child, 'name') and child.name == 'div' and 'comments_options' in child.get('class', []):
+                                break  # Dừng khi gặp div.comments_options
+                            if isinstance(child, str):
+                                counter_text += child.strip()
+                        
+                        # Fallback: Nếu không lấy được, dùng get_text và split
+                        if not counter_text or not counter_text.strip():
+                            full_text = cnt_counter.get_text(strip=True)
+                            # Lấy phần trước "Newest" hoặc "Most Liked"
+                            if "Newest" in full_text:
+                                counter_text = full_text.split("Newest")[0].strip()
+                            elif "Most Liked" in full_text:
+                                counter_text = full_text.split("Most Liked")[0].strip()
+                            else:
+                                counter_text = full_text
+                        
+                        # Parse: "Comments (4)" → 4
+                        comment_match = re.search(r'Comments\s*\((\d+)\)', counter_text, re.IGNORECASE)
+                        if comment_match:
+                            total_comments = int(comment_match.group(1))
+                            safe_print(f"      ✅ Đã lấy totalComments từ div.cnt_counter: {total_comments}")
+                        else:
+                            safe_print(f"      🔍 DEBUG: Không parse được từ text: '{counter_text}'")
+                    except Exception as e:
+                        safe_print(f"      ⚠️ Lỗi khi parse div.cnt_counter: {e}")
                 
                 # Lấy views từ .fic_stats .st_item có fa-eye
                 fic_stats = soup.select_one(".fic_stats")
@@ -448,7 +552,7 @@ class ChapterHandler:
                     if vote_match:
                         voted = vote_match.group(1).strip()
             except Exception as e:
-                safe_print(f"      ⚠️ Lỗi khi lấy views/voted bằng requests: {e}")
+                safe_print(f"      ⚠️ Lỗi khi lấy views/voted/totalComments bằng requests: {e}")
             
             chapter_data_dict = {
                 "chapterId": chapter_id,  # Khóa chính (không phải "id")
@@ -559,52 +663,164 @@ class ChapterHandler:
             
             chapter_id = generate_id()
             
-            # Lấy views và voted từ chapter page
-            views = None
-            voted = None
+            # Lấy views và voted (favorites) từ chapter page
+            # HTML: 
+            # Views: <span class="st_item"><i class="fa fa-eye" aria-hidden="true"></i> 151k <span class="mb_stat">Views</span></span>
+            # Voted (Favorites): <span class="st_item"><i class="fa fa-heart" aria-hidden="true"></i> 5792 <span class="mb_stat">Favorites</span></span>
+            views = ""
+            voted = ""
             
             try:
-                # Lấy views từ .fic_stats .st_item có fa-eye
-                fic_stats = worker_page.locator(".fic_stats").first
-                if fic_stats.count() > 0:
-                    stats_items = fic_stats.locator(".st_item").all()
-                    for item in stats_items:
-                        try:
-                            icon = item.locator("i").first
-                            if icon.count() > 0:
-                                icon_classes = icon.get_attribute("class") or ""
-                                item_text = item.inner_text().strip()
-                                
-                                # Lấy views từ fa-eye
-                                if "fa-eye" in icon_classes:
-                                    # Parse: "27k Views" hoặc "27 Views" → "27k" hoặc "27"
-                                    view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
-                                    if view_match:
-                                        views = view_match.group(1).strip()
-                                    else:
-                                        # Fallback: lấy số đầu tiên
-                                        numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
-                                        if numbers:
-                                            views = numbers[0].strip()
-                        except:
-                            continue
-                
-                # Lấy voted từ .rate_more
-                try:
-                    rate_more = worker_page.locator(".rate_more").first
-                    if rate_more.count() > 0:
-                        rate_text = rate_more.inner_text().strip()
-                        # Parse: "42 ratings" hoặc "42" → "42"
-                        vote_match = re.search(r'(\d+)', rate_text)
-                        if vote_match:
-                            voted = vote_match.group(1).strip()
-                except:
-                    pass
+                # Tìm tất cả .st_item (có thể trong .fic_stats hoặc ở đâu đó trên page)
+                stats_items = worker_page.locator(".st_item").all()
+                for item in stats_items:
+                    try:
+                        icon = item.locator("i").first
+                        if icon.count() > 0:
+                            icon_classes = icon.get_attribute("class") or ""
+                            item_text = item.inner_text().strip()
+                            
+                            # Lấy views từ fa-eye
+                            if "fa-eye" in icon_classes:
+                                # Parse: "151k Views" hoặc "335 Views" → "151k" hoặc "335"
+                                view_match = re.search(r'([\d,]+\.?\d*[kKmM]?)\s*Views?', item_text, re.IGNORECASE)
+                                if view_match:
+                                    views = view_match.group(1).strip()
+                                else:
+                                    # Fallback: lấy số đầu tiên (có thể có dấu phẩy, k, M)
+                                    numbers = re.findall(r'[\d,]+\.?\d*[kKmM]?', item_text)
+                                    if numbers:
+                                        views = numbers[0].strip()
+                            
+                            # Lấy voted (favorites) từ fa-heart
+                            elif "fa-heart" in icon_classes:
+                                # Parse: "5792 Favorites" hoặc "14 Favorites" → "5792" hoặc "14"
+                                favorites_match = re.search(r'([\d,]+)\s+Favorites?', item_text, re.IGNORECASE)
+                                if favorites_match:
+                                    voted = favorites_match.group(1).replace(",", "").strip()
+                                else:
+                                    # Fallback: lấy số đầu tiên
+                                    numbers = re.findall(r'[\d,]+', item_text)
+                                    if numbers:
+                                        voted = numbers[0].replace(",", "").strip()
+                    except:
+                        continue
             except Exception as e:
                 safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy views/voted: {e}")
             
-            comments_list = self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
-            total_comments = len(comments_list) if comments_list else 0
+            # Lấy totalComments từ HTML
+            # HTML mới: <div class="cnt_counter">Comments (4)<div class="comments_options">...</div></div>
+            # HTML cũ: <div class="wi_novel_title tags pedit_body nreview">Comments <span class="cnt_toc">9</span></div>
+            # Hoặc: <div class="wi_novel_title tags pedit_body nreview">Reviews <span class="cnt_toc">9</span></div>
+            total_comments = 0
+            try:
+                # ✅ Ưu tiên: Thử lấy từ div.cnt_counter với text "Comments (4)"
+                # HTML: <div class="cnt_counter">Comments (4)<div class="comments_options">...</div></div>
+                cnt_counter = worker_page.locator("div.cnt_counter").first
+                if cnt_counter.count() > 0:
+                    try:
+                        # Lấy text node đầu tiên (trước div.comments_options) để tránh lấy text từ select bên trong
+                        counter_text = cnt_counter.evaluate("""
+                            el => {
+                                // Lấy text node đầu tiên (trước div.comments_options)
+                                let text = '';
+                                for (let node of el.childNodes) {
+                                    if (node.nodeType === 3) { // Text node
+                                        text += node.textContent;
+                                    } else if (node.nodeType === 1 && !node.classList.contains('comments_options')) {
+                                        // Nếu là element nhưng không phải comments_options, lấy text
+                                        text += node.textContent;
+                                        break; // Dừng khi gặp comments_options
+                                    }
+                                    if (node.classList && node.classList.contains('comments_options')) {
+                                        break; // Dừng khi gặp comments_options
+                                    }
+                                }
+                                return text.trim();
+                            }
+                        """)
+                        
+                        # Fallback: Nếu không lấy được, dùng inner_text và lấy phần trước "Newest" hoặc "Most Liked"
+                        if not counter_text or not counter_text.strip():
+                            full_text = cnt_counter.inner_text().strip()
+                            # Lấy phần trước "Newest" hoặc "Most Liked" (text trong select)
+                            if "Newest" in full_text:
+                                counter_text = full_text.split("Newest")[0].strip()
+                            elif "Most Liked" in full_text:
+                                counter_text = full_text.split("Most Liked")[0].strip()
+                            else:
+                                counter_text = full_text
+                        
+                        # Parse: "Comments (4)" → 4
+                        comment_match = re.search(r'Comments\s*\((\d+)\)', counter_text, re.IGNORECASE)
+                        if comment_match:
+                            total_comments = int(comment_match.group(1))
+                            safe_print(f"      ✅ Thread-{index}: Đã lấy totalComments từ div.cnt_counter: {total_comments}")
+                        else:
+                            safe_print(f"      🔍 DEBUG Thread-{index}: Không parse được từ text: '{counter_text}'")
+                    except Exception as e:
+                        safe_print(f"      ⚠️ Thread-{index}: Lỗi khi parse div.cnt_counter: {e}")
+                        import traceback
+                        safe_print(f"      {traceback.format_exc()}")
+                
+                # Fallback 1: Tìm trong .wi_novel_title có chứa "Comments" với .cnt_toc bên trong
+                if total_comments == 0:
+                    comment_sections = worker_page.locator(".wi_novel_title.tags.pedit_body").all()
+                    for section in comment_sections:
+                        try:
+                            section_text = section.inner_text().lower()
+                            # Tìm section có chứa "Comments" (không phải "Reviews")
+                            if "comment" in section_text and "review" not in section_text:
+                                # Tìm .cnt_toc trong section này
+                                cnt_toc = section.locator(".cnt_toc").first
+                                if cnt_toc.count() > 0:
+                                    comment_text = cnt_toc.inner_text().strip()
+                                    if comment_text and comment_text.isdigit():
+                                        total_comments = int(comment_text)
+                                        safe_print(f"      ✅ Thread-{index}: Đã lấy totalComments từ HTML: {total_comments}")
+                                        break
+                        except:
+                            continue
+                
+                # Fallback 2: Nếu chưa tìm thấy, thử tìm tất cả .cnt_toc và kiểm tra context
+                if total_comments == 0:
+                    all_cnt_toc = worker_page.locator(".wi_novel_title .cnt_toc").all()
+                    for elem in all_cnt_toc:
+                        try:
+                            # Lấy parent element
+                            parent_text = elem.evaluate("el => el.parentElement?.textContent || ''")
+                            # Nếu parent text có chứa "Comment" nhưng không phải "Chapter" hay "Review" trong context khác
+                            if "comment" in parent_text.lower() and "chapter" not in parent_text.lower() and "review" not in parent_text.lower():
+                                comment_text = elem.inner_text().strip()
+                                if comment_text and comment_text.isdigit():
+                                    total_comments = int(comment_text)
+                                    safe_print(f"      ✅ Thread-{index}: Đã lấy totalComments từ HTML (fallback): {total_comments}")
+                                    break
+                        except:
+                            continue
+            except Exception as e:
+                safe_print(f"      ⚠️ Thread-{index}: Lỗi khi lấy totalComments từ HTML: {e}")
+            
+            # Luôn scrape comments để lưu vào DB
+            # Nếu chưa có totalComments từ HTML, sẽ đếm từ scraping
+            comments_list = []
+            try:
+                safe_print(f"      💬 Thread-{index}: Đang scrape comments cho chapter {index + 1}...")
+                comments_list = self.comment_handler.scrape_comments_worker(worker_page, url, "chapter", chapter_id)
+                
+                if total_comments == 0:
+                    # Nếu chưa có từ HTML, dùng số lượng từ scraping
+                    total_comments = len(comments_list) if comments_list else 0
+                    if total_comments > 0:
+                        safe_print(f"      ✅ Thread-{index}: Đã lấy totalComments từ scraping: {total_comments}")
+                else:
+                    # Đã có từ HTML, nhưng vẫn scrape để lưu vào DB
+                    safe_print(f"      ✅ Thread-{index}: Đã scrape {len(comments_list) if comments_list else 0} comments (totalComments từ HTML: {total_comments})")
+            except Exception as e:
+                safe_print(f"      ⚠️ Thread-{index}: Lỗi khi scrape comments: {e}")
+                # Nếu lỗi, vẫn đếm số comments đã scrape được (nếu có)
+                if total_comments == 0:
+                    total_comments = len(comments_list) if comments_list else 0
             
             if content and chapter_id:
                 if not self.mongo.is_chapter_content_scraped(chapter_id):

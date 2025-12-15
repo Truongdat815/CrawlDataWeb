@@ -75,7 +75,7 @@ MONGODB_URI = "mongodb+srv://bapdat2025:Conchocanconmeo123@project.uoeyhrh.mongo
 MONGODB_DB_NAME = "demo_crawl_data"
 
 MONGODB_COLLECTION_STORIES = "stories"
-MONGODB_COLLECTION_STORY_INFO = "story_info"
+MONGODB_COLLECTION_STORY_INFO = "storyInfo"
 
 # Cho phép override bằng environment variable (ưu tiên)
 if os.getenv("MONGODB_URI"):
