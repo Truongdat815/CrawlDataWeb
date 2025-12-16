@@ -1,3 +1,126 @@
-2025/12/15-19:37:50.166 1234 Reusing MANIFEST D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Local Storage\leveldb/MANIFEST-000001
-2025/12/15-19:37:50.170 1234 Recovering log #1946
-2025/12/15-19:37:50.171 1234 Reusing old log D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Local Storage\leveldb/001946.log 
+2025/12/16-01:11:35.290 7b00 Reusing MANIFEST D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Local Storage\leveldb/MANIFEST-000001
+2025/12/16-01:11:35.293 7b00 Recovering log #1946
+2025/12/16-01:11:35.294 7b00 Reusing old log D:\CÔNG VIỆC\A-Truongdat2\CrawlDataWeb\user-data\Default\Local Storage\leveldb/001946.log 
+2025/12/16-06:26:55.711 3d68 Level-0 table #1950: started
+2025/12/16-06:26:55.718 3d68 Level-0 table #1950: 132995 bytes OK
+2025/12/16-06:26:55.722 3d68 Delete type=0 #1946
+2025/12/16-06:26:55.722 3d68 Compacting 4@0 + 1@1 files
+2025/12/16-06:26:55.733 3d68 Generated table #1951@0: 548 keys, 161801 bytes
+2025/12/16-06:26:55.733 3d68 Compacted 4@0 + 1@1 files => 161801 bytes
+2025/12/16-06:26:55.735 3d68 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/16-06:26:55.736 3d68 Delete type=2 #1941
+2025/12/16-06:26:55.736 3d68 Delete type=2 #1943
+2025/12/16-06:26:55.736 3d68 Delete type=2 #1945
+2025/12/16-06:26:55.736 3d68 Delete type=2 #1947
+2025/12/16-06:26:55.736 3d68 Delete type=2 #1950
+2025/12/16-06:27:02.374 3d68 Level-0 table #1953: started
+2025/12/16-06:27:02.384 3d68 Level-0 table #1953: 129628 bytes OK
+2025/12/16-06:27:02.386 3d68 Delete type=0 #1949
+2025/12/16-06:27:34.566 3d68 Level-0 table #1955: started
+2025/12/16-06:27:34.576 3d68 Level-0 table #1955: 152378 bytes OK
+2025/12/16-06:27:34.578 3d68 Delete type=0 #1952
+2025/12/16-06:29:23.882 3d68 Level-0 table #1957: started
+2025/12/16-06:29:23.887 3d68 Level-0 table #1957: 28239 bytes OK
+2025/12/16-06:29:23.890 3d68 Delete type=0 #1954
+2025/12/16-06:29:24.494 3d68 Level-0 table #1959: started
+2025/12/16-06:29:24.499 3d68 Level-0 table #1959: 128504 bytes OK
+2025/12/16-06:29:24.502 3d68 Delete type=0 #1956
+2025/12/16-06:29:24.502 3d68 Compacting 4@0 + 1@1 files
+2025/12/16-06:29:24.513 3d68 Generated table #1960@0: 548 keys, 163265 bytes
+2025/12/16-06:29:24.513 3d68 Compacted 4@0 + 1@1 files => 163265 bytes
+2025/12/16-06:29:24.514 3d68 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/16-06:29:24.515 3d68 Delete type=2 #1951
+2025/12/16-06:29:24.515 3d68 Delete type=2 #1953
+2025/12/16-06:29:24.515 3d68 Delete type=2 #1955
+2025/12/16-06:29:24.515 3d68 Delete type=2 #1957
+2025/12/16-06:29:24.515 3d68 Delete type=2 #1959
+2025/12/16-06:30:00.076 3d68 Level-0 table #1962: started
+2025/12/16-06:30:00.082 3d68 Level-0 table #1962: 152563 bytes OK
+2025/12/16-06:30:00.084 3d68 Delete type=0 #1958
+2025/12/16-06:30:29.034 3d68 Level-0 table #1964: started
+2025/12/16-06:30:29.046 3d68 Level-0 table #1964: 152716 bytes OK
+2025/12/16-06:30:29.048 3d68 Delete type=0 #1961
+2025/12/16-06:31:01.235 3d68 Level-0 table #1966: started
+2025/12/16-06:31:01.240 3d68 Level-0 table #1966: 152293 bytes OK
+2025/12/16-06:31:01.244 3d68 Delete type=0 #1963
+2025/12/16-06:31:31.387 3d68 Level-0 table #1968: started
+2025/12/16-06:31:31.393 3d68 Level-0 table #1968: 152554 bytes OK
+2025/12/16-06:31:31.395 3d68 Delete type=0 #1965
+2025/12/16-06:31:31.395 3d68 Compacting 4@0 + 1@1 files
+2025/12/16-06:31:31.404 3d68 Generated table #1969@0: 551 keys, 163793 bytes
+2025/12/16-06:31:31.404 3d68 Compacted 4@0 + 1@1 files => 163793 bytes
+2025/12/16-06:31:31.405 3d68 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/16-06:31:31.406 3d68 Delete type=2 #1960
+2025/12/16-06:31:31.406 3d68 Delete type=2 #1962
+2025/12/16-06:31:31.406 3d68 Delete type=2 #1964
+2025/12/16-06:31:31.406 3d68 Delete type=2 #1966
+2025/12/16-06:31:31.406 3d68 Delete type=2 #1968
+2025/12/16-06:31:59.852 3d68 Level-0 table #1971: started
+2025/12/16-06:31:59.858 3d68 Level-0 table #1971: 152593 bytes OK
+2025/12/16-06:31:59.860 3d68 Delete type=0 #1967
+2025/12/16-06:32:24.494 3d68 Level-0 table #1973: started
+2025/12/16-06:32:24.501 3d68 Level-0 table #1973: 153192 bytes OK
+2025/12/16-06:32:24.504 3d68 Delete type=0 #1970
+2025/12/16-06:33:02.388 3d68 Level-0 table #1975: started
+2025/12/16-06:33:02.398 3d68 Level-0 table #1975: 153332 bytes OK
+2025/12/16-06:33:02.400 3d68 Delete type=0 #1972
+2025/12/16-06:33:32.194 3d68 Level-0 table #1977: started
+2025/12/16-06:33:32.200 3d68 Level-0 table #1977: 152907 bytes OK
+2025/12/16-06:33:32.202 3d68 Delete type=0 #1974
+2025/12/16-06:33:32.203 3d68 Compacting 4@0 + 1@1 files
+2025/12/16-06:33:32.214 3d68 Generated table #1978@0: 551 keys, 164065 bytes
+2025/12/16-06:33:32.214 3d68 Compacted 4@0 + 1@1 files => 164065 bytes
+2025/12/16-06:33:32.215 3d68 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/16-06:33:32.216 3d68 Delete type=2 #1969
+2025/12/16-06:33:32.216 3d68 Delete type=2 #1971
+2025/12/16-06:33:32.216 3d68 Delete type=2 #1973
+2025/12/16-06:33:32.216 3d68 Delete type=2 #1975
+2025/12/16-06:33:32.216 3d68 Delete type=2 #1977
+2025/12/16-06:34:03.435 3d68 Level-0 table #1980: started
+2025/12/16-06:34:03.441 3d68 Level-0 table #1980: 129673 bytes OK
+2025/12/16-06:34:03.443 3d68 Delete type=0 #1976
+2025/12/16-06:34:05.160 3d68 Level-0 table #1982: started
+2025/12/16-06:34:05.174 3d68 Level-0 table #1982: 126533 bytes OK
+2025/12/16-06:34:05.176 3d68 Delete type=0 #1979
+2025/12/16-06:34:34.125 3d68 Level-0 table #1984: started
+2025/12/16-06:34:34.132 3d68 Level-0 table #1984: 153313 bytes OK
+2025/12/16-06:34:34.134 3d68 Delete type=0 #1981
+2025/12/16-06:35:32.218 3d68 Level-0 table #1986: started
+2025/12/16-06:35:32.224 3d68 Level-0 table #1986: 153560 bytes OK
+2025/12/16-06:35:32.226 3d68 Delete type=0 #1983
+2025/12/16-06:35:32.227 3d68 Compacting 4@0 + 1@1 files
+2025/12/16-06:35:32.235 3d68 Generated table #1987@0: 551 keys, 164421 bytes
+2025/12/16-06:35:32.235 3d68 Compacted 4@0 + 1@1 files => 164421 bytes
+2025/12/16-06:35:32.236 3d68 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/16-06:35:32.237 3d68 Delete type=2 #1978
+2025/12/16-06:35:32.237 3d68 Delete type=2 #1980
+2025/12/16-06:35:32.237 3d68 Delete type=2 #1982
+2025/12/16-06:35:32.237 3d68 Delete type=2 #1984
+2025/12/16-06:35:32.237 3d68 Delete type=2 #1986
+2025/12/16-06:36:00.057 3d68 Level-0 table #1989: started
+2025/12/16-06:36:00.062 3d68 Level-0 table #1989: 153545 bytes OK
+2025/12/16-06:36:00.064 3d68 Delete type=0 #1985
+2025/12/16-06:36:29.552 3d68 Level-0 table #1991: started
+2025/12/16-06:36:29.558 3d68 Level-0 table #1991: 153978 bytes OK
+2025/12/16-06:36:29.560 3d68 Delete type=0 #1988
+2025/12/16-06:36:58.393 3d68 Level-0 table #1993: started
+2025/12/16-06:36:58.399 3d68 Level-0 table #1993: 154016 bytes OK
+2025/12/16-06:36:58.401 3d68 Delete type=0 #1990
+2025/12/16-06:37:59.168 3d68 Level-0 table #1995: started
+2025/12/16-06:37:59.179 3d68 Level-0 table #1995: 153859 bytes OK
+2025/12/16-06:37:59.182 3d68 Delete type=0 #1992
+2025/12/16-06:37:59.183 3d68 Compacting 4@0 + 1@1 files
+2025/12/16-06:37:59.194 3d68 Generated table #1996@0: 551 keys, 164644 bytes
+2025/12/16-06:37:59.194 3d68 Compacted 4@0 + 1@1 files => 164644 bytes
+2025/12/16-06:37:59.196 3d68 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/16-06:37:59.197 3d68 Delete type=2 #1987
+2025/12/16-06:37:59.197 3d68 Delete type=2 #1989
+2025/12/16-06:37:59.197 3d68 Delete type=2 #1991
+2025/12/16-06:37:59.197 3d68 Delete type=2 #1993
+2025/12/16-06:37:59.197 3d68 Delete type=2 #1995
+2025/12/16-06:38:28.852 3d68 Level-0 table #1998: started
+2025/12/16-06:38:28.859 3d68 Level-0 table #1998: 153993 bytes OK
+2025/12/16-06:38:28.861 3d68 Delete type=0 #1994
+2025/12/16-06:39:00.113 3d68 Level-0 table #2000: started
+2025/12/16-06:39:00.119 3d68 Level-0 table #2000: 153596 bytes OK
+2025/12/16-06:39:00.121 3d68 Delete type=0 #1997

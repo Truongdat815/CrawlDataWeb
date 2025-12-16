@@ -68,8 +68,8 @@ ENABLE_MANUAL_VERIFY = True  # Bật chế độ đợi verify thủ công
 # --- CẤU HÌNH MONGODB ---
 MONGODB_ENABLED = True
 
-# Connection string MongoDB Atlas (cá nhân)
-MONGODB_URI = "mongodb+srv://bapdat2025:Conchocanconmeo123@project.uoeyhrh.mongodb.net/demo_crawl_data?retryWrites=true&w=majority"
+# Connection string MongoDB (DB của bạn - MongoDB Atlas)
+MONGODB_URI = "mongodb+srv://ngohoangtruongdat2_db_user:DatMongo2025!@project.uoeyhrh.mongodb.net/demo_crawl_data?retryWrites=true&w=majority"
 
 # Database name
 MONGODB_DB_NAME = "demo_crawl_data"

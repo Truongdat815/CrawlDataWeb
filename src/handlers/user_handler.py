@@ -35,6 +35,15 @@ class UserHandler:
             self.page.goto(profile_url, timeout=config.TIMEOUT, wait_until="domcontentloaded")
             time.sleep(2)
             
+            # ✅ Đợi phần tử quan trọng xuất hiện (khắc phục lỗi NULL)
+            safe_print(f"      ⏳ Đang đợi .sb_box.pro_stat xuất hiện...")
+            try:
+                self.page.wait_for_selector(".sb_box.pro_stat", timeout=30000)  # Đợi tối đa 30 giây
+                safe_print(f"      ✅ Đã tìm thấy .sb_box.pro_stat, trang đã load xong")
+            except Exception as e:
+                safe_print(f"      ⚠️ Không tìm thấy .sb_box.pro_stat sau 30 giây: {e}")
+                # Vẫn tiếp tục, có thể trang có cấu trúc khác
+            
             # Lấy web_user_id từ URL (ví dụ: từ https://www.scribblehub.com/profile/237813/ngodat05/ lấy 237813)
             web_user_id = ""
             try:
@@ -80,150 +89,104 @@ class UserHandler:
                 safe_print(f"      🔍 DEBUG: Đang tìm .sb_box.pro_stat...")
                 if pro_stat_box.count() > 0:
                     safe_print(f"      ✅ Tìm thấy .sb_box.pro_stat")
-                    # Lấy các stat items theo thứ tự
-                    stat_items = pro_stat_box.locator(".pro_stat_item").all()
-                    safe_print(f"      📊 Tìm thấy {len(stat_items)} pro_stat_item")
                     
-                    for idx, item in enumerate(stat_items):
-                        try:
-                            # Lấy label để xác định field
-                            label_elem = item.locator(".pro_left, .pro_label, span").first
-                            label_text = ""
-                            if label_elem.count() > 0:
-                                label_text = label_elem.inner_text().strip().lower()
-                            safe_print(f"        🔍 DEBUG: Item[{idx}] label: '{label_text}'")
-                            
-                            # Item 0: Joined (createdDate) - tìm theo label "joined" hoặc index 0
-                            if idx == 0 or "joined" in label_text or "member since" in label_text:
-                                # Lấy từ <span class="pro_right">Mar 8, 2020</span>
-                                pro_right = item.locator("span.pro_right").first
-                                if pro_right.count() > 0:
-                                    date_str = pro_right.inner_text().strip()
-                                    safe_print(f"        🔍 DEBUG: Date string raw: '{date_str}'")
-                                    if date_str:
-                                        # Convert từ "Mar 8, 2020" sang "8/3/2020, 12:00 AM"
-                                        created_date = self._convert_date_to_custom_format(date_str)
-                                        safe_print(f"        ✅ Đã lấy createdDate: {date_str} → {created_date}")
+                    # ✅ createdDate: Tìm bằng :has-text("Joined:")
+                    try:
+                        joined_item = pro_stat_box.locator('.pro_stat_item:has-text("Joined:")').first
+                        if joined_item.count() > 0:
+                            pro_right = joined_item.locator("span.pro_right").first
+                            if pro_right.count() > 0:
+                                date_str = pro_right.inner_text().strip()
+                                if date_str:
+                                    created_date = self._convert_date_to_custom_format(date_str)
+                                    safe_print(f"        ✅ Đã lấy createdDate: {date_str} → {created_date}")
+                    except Exception as e:
+                        safe_print(f"        ⚠️ Lỗi khi lấy createdDate: {e}")
+                    
+                    # ✅ followers: Tìm bằng :has-text("Followers:")
+                    try:
+                        followers_item = pro_stat_box.locator('.pro_stat_item:has-text("Followers:")').first
+                        if followers_item.count() > 0:
+                            pro_right = followers_item.locator("span.pro_right").first
+                            if pro_right.count() > 0:
+                                # Thử lấy từ .sw_follow trước
+                                sw_follow = pro_right.locator("span.sw_follow").first
+                                if sw_follow.count() > 0:
+                                    followers_text = sw_follow.inner_text().strip()
                                 else:
-                                    safe_print(f"        ⚠️ DEBUG: Không tìm thấy span.pro_right trong item[{idx}]")
-                            
-                            # Item 1: Followers - tìm theo label "followers" hoặc index 1
-                            elif idx == 1 or "followers" in label_text:
-                                # Lấy từ <span class="pro_right"><span class="sw_follow">48</span></span> hoặc <span class="pro_right">48</span>
-                                pro_right = item.locator("span.pro_right").first
-                                if pro_right.count() > 0:
-                                    # Thử lấy từ .sw_follow trước
-                                    sw_follow = pro_right.locator("span.sw_follow").first
-                                    if sw_follow.count() > 0:
-                                        followers = sw_follow.inner_text().strip()
-                                    else:
-                                        # Nếu không có .sw_follow, lấy trực tiếp từ pro_right
-                                        followers = pro_right.inner_text().strip()
-                                    
-                                    # Parse số và convert sang int
-                                    if followers:
-                                        match = re.search(r'(\d+)', followers)
-                                        if match:
-                                            try:
-                                                followers = int(match.group(1))
-                                                safe_print(f"        ✅ Đã lấy followers: {followers}")
-                                            except:
-                                                followers = None
-                                        else:
-                                            followers = None
-                                    else:
-                                        followers = None
-                            
-                            # Item 2: Following - tìm theo label "following" hoặc index 2
-                            elif idx == 2 or "following" in label_text:
-                                # Lấy từ <span class="pro_right"><span class="sw_follow">1</span></span> hoặc <span class="pro_right">1</span>
-                                pro_right = item.locator("span.pro_right").first
-                                if pro_right.count() > 0:
-                                    # Thử lấy từ .sw_follow trước
-                                    sw_follow = pro_right.locator("span.sw_follow").first
-                                    if sw_follow.count() > 0:
-                                        following = sw_follow.inner_text().strip()
-                                    else:
-                                        # Nếu không có .sw_follow, lấy trực tiếp từ pro_right
-                                        following = pro_right.inner_text().strip()
-                                    
-                                    # Parse số và convert sang int
-                                    if following:
-                                        match = re.search(r'(\d+)', following)
-                                        if match:
-                                            try:
-                                                following = int(match.group(1))
-                                                safe_print(f"        ✅ Đã lấy following: {following}")
-                                            except:
-                                                following = None
-                                        else:
-                                            following = None
-                                    else:
-                                        following = None
-                            
-                            # Item 3: Comments - tìm theo label "comments" hoặc index 3
-                            elif idx == 3 or "comments" in label_text:
-                                # Lấy từ <span class="pro_right">386</span>
-                                pro_right = item.locator("span.pro_right").first
-                                if pro_right.count() > 0:
-                                    comments = pro_right.inner_text().strip()
-                                    # Parse số và convert sang int
-                                    if comments:
-                                        match = re.search(r'(\d+)', comments)
-                                        if match:
-                                            try:
-                                                comments = int(match.group(1))
-                                                safe_print(f"        ✅ Đã lấy comments: {comments}")
-                                            except:
-                                                comments = None
-                                        else:
-                                            comments = None
-                                    else:
-                                        comments = None
-                        except Exception as e:
-                            safe_print(f"        ⚠️ Lỗi khi parse pro_stat_item[{idx}]: {e}")
-                            continue
+                                    followers_text = pro_right.inner_text().strip()
+                                
+                                if followers_text:
+                                    match = re.search(r'(\d+)', followers_text)
+                                    if match:
+                                        followers = int(match.group(1))
+                                        safe_print(f"        ✅ Đã lấy followers: {followers}")
+                    except Exception as e:
+                        safe_print(f"        ⚠️ Lỗi khi lấy followers: {e}")
+                    
+                    # ✅ following: Tìm bằng :has-text("Following:")
+                    try:
+                        following_item = pro_stat_box.locator('.pro_stat_item:has-text("Following:")').first
+                        if following_item.count() > 0:
+                            pro_right = following_item.locator("span.pro_right").first
+                            if pro_right.count() > 0:
+                                sw_follow = pro_right.locator("span.sw_follow").first
+                                if sw_follow.count() > 0:
+                                    following_text = sw_follow.inner_text().strip()
+                                else:
+                                    following_text = pro_right.inner_text().strip()
+                                
+                                if following_text:
+                                    match = re.search(r'(\d+)', following_text)
+                                    if match:
+                                        following = int(match.group(1))
+                                        safe_print(f"        ✅ Đã lấy following: {following}")
+                    except Exception as e:
+                        safe_print(f"        ⚠️ Lỗi khi lấy following: {e}")
+                    
+                    # ✅ comments: Tìm bằng :has-text("Comments:")
+                    try:
+                        comments_item = pro_stat_box.locator('.pro_stat_item:has-text("Comments:")').first
+                        if comments_item.count() > 0:
+                            pro_right = comments_item.locator("span.pro_right").first
+                            if pro_right.count() > 0:
+                                comments_text = pro_right.inner_text().strip()
+                                if comments_text:
+                                    match = re.search(r'(\d+)', comments_text)
+                                    if match:
+                                        comments = int(match.group(1))
+                                        safe_print(f"        ✅ Đã lấy comments: {comments}")
+                    except Exception as e:
+                        safe_print(f"        ⚠️ Lỗi khi lấy comments: {e}")
                 else:
                     safe_print(f"      ⚠️ Không tìm thấy .sb_box.pro_stat")
-                    # Thử fallback selectors
-                    safe_print(f"      🔍 DEBUG: Thử fallback selectors...")
-                    fallback_selectors = [
-                        ".sb_box",
-                        ".pro_stat",
-                        ".wi-fic_profile_content.left .sb_box",
-                        ".profile_stats",
-                        ".user_stats"
-                    ]
-                    for selector in fallback_selectors:
-                        try:
-                            fallback_elem = self.page.locator(selector).first
-                            if fallback_elem.count() > 0:
-                                safe_print(f"      ✅ Tìm thấy fallback selector: {selector}")
-                                # Thử lấy stats từ đây
-                                break
-                        except:
-                            continue
                 
-                # ✅ Lấy bio từ .sb_box.pro_stat thứ 2 (trong sidebar bên trái)
-                # Không cần click tab Overview, bio nằm ngay trong sidebar
+                # ✅ Lấy bio từ .sb_box.pro_stat có chứa <p> (selector ổn định)
                 try:
-                    left_sidebar = self.page.locator(".wi-fic_profile_content.left").first
-                    if left_sidebar.count() > 0:
-                        pro_stat_boxes = left_sidebar.locator(".sb_box.pro_stat").all()
-                        safe_print(f"      📝 Tìm thấy {len(pro_stat_boxes)} .sb_box.pro_stat trong sidebar")
-                        
-                        # Lấy cái thứ 2 (index 1) - đây là bio
-                        if len(pro_stat_boxes) >= 2:
-                            bio_box = pro_stat_boxes[1]  # Index 1 = thứ 2
-                            html_content = bio_box.inner_html()
-                            bio_text = convert_html_to_formatted_text(html_content)
-                            bio = bio_text if bio_text and bio_text.strip() else None
-                            if bio:
-                                safe_print(f"      ✅ Đã lấy bio từ .sb_box.pro_stat thứ 2: {bio[:50]}..." if len(bio) > 50 else f"      ✅ Đã lấy bio: {bio}")
-                        else:
-                            safe_print(f"      ⚠️ Không tìm thấy .sb_box.pro_stat thứ 2 (chỉ có {len(pro_stat_boxes)} cái)")
+                    # Tìm .sb_box.pro_stat có chứa thẻ <p> (đây là bio box)
+                    bio_box = self.page.locator('.sb_box.pro_stat:has(p)').first
+                    if bio_box.count() > 0:
+                        html_content = bio_box.inner_html()
+                        bio_text = convert_html_to_formatted_text(html_content)
+                        bio = bio_text if bio_text and bio_text.strip() else None
+                        if bio:
+                            safe_print(f"      ✅ Đã lấy bio từ .sb_box.pro_stat:has(p): {bio[:50]}..." if len(bio) > 50 else f"      ✅ Đã lấy bio: {bio}")
+                    else:
+                        safe_print(f"      ⚠️ Không tìm thấy .sb_box.pro_stat:has(p)")
+                        # Fallback: thử tìm .sb_box.pro_stat cuối cùng
+                        try:
+                            all_pro_stat = self.page.locator(".sb_box.pro_stat").all()
+                            if len(all_pro_stat) >= 2:
+                                bio_box = all_pro_stat[-1]  # Lấy cái cuối cùng
+                                html_content = bio_box.inner_html()
+                                bio_text = convert_html_to_formatted_text(html_content)
+                                bio = bio_text if bio_text and bio_text.strip() else None
+                                if bio:
+                                    safe_print(f"      ✅ Đã lấy bio từ .sb_box.pro_stat cuối cùng (fallback)")
+                        except:
+                            pass
                 except Exception as e:
-                    safe_print(f"      ⚠️ Lỗi khi lấy bio từ .sb_box.pro_stat: {e}")
+                    safe_print(f"      ⚠️ Lỗi khi lấy bio: {e}")
                     import traceback
                     safe_print(f"      {traceback.format_exc()}")
             except Exception as e:
@@ -268,7 +231,7 @@ class UserHandler:
                                 raise click_error
                         except:
                             safe_print(f"      ⚠️ Không thể click tab Overview bằng cả 2 cách, bỏ qua phần này")
-                            raise
+                            # Không raise, chỉ bỏ qua phần này và tiếp tục
                 else:
                     safe_print(f"      ⚠️ Không tìm thấy tab Overview (profile_tab_6)")
                     # Thử fallback
@@ -278,9 +241,9 @@ class UserHandler:
                         try:
                             overview_tab_alt.click(timeout=5000)
                             time.sleep(2)
-                        except:
-                            safe_print(f"      ⚠️ Không thể click tab Overview (fallback), bỏ qua")
-                            raise
+                        except Exception as e:
+                            safe_print(f"      ⚠️ Không thể click tab Overview (fallback): {e}, bỏ qua phần này")
+                            # Không raise, chỉ bỏ qua phần này và tiếp tục
                     
                     # ✅ Lấy Author Information từ table_pro_overview theo index của TR
                     # TR 1: numberOfStories (Series)
@@ -405,6 +368,7 @@ class UserHandler:
                 # Click vào tab Series
                 safe_print(f"      🔍 DEBUG: Đang tìm tab Series...")
                 series_tab = self.page.locator('input[type="radio"][id="profile_tab_2"]').first
+                series_tab_clicked = False
                 if series_tab.count() > 0:
                     safe_print(f"      ✅ Tìm thấy tab Series, đang click...")
                     try:
@@ -412,6 +376,7 @@ class UserHandler:
                         series_tab.click(timeout=5000)  # 5 giây thay vì 30 giây
                         time.sleep(2)  # Đợi tab load và AJAX load stories
                         safe_print(f"      ✅ Đã click tab Series")
+                        series_tab_clicked = True
                     except Exception as click_error:
                         safe_print(f"      ⚠️ Không thể click tab Series: {click_error}")
                         # Thử fallback: click vào label
@@ -421,16 +386,16 @@ class UserHandler:
                                 series_label.click(timeout=5000)
                                 time.sleep(2)
                                 safe_print(f"      ✅ Đã click tab Series (fallback label)")
+                                series_tab_clicked = True
                             else:
                                 safe_print(f"      ⚠️ Không tìm thấy label cho tab Series, bỏ qua")
-                                raise click_error
-                        except:
-                            safe_print(f"      ⚠️ Không thể click tab Series bằng cả 2 cách, bỏ qua phần này")
-                            raise
+                        except Exception as e2:
+                            safe_print(f"      ⚠️ Không thể click tab Series bằng cả 2 cách: {e2}")
                 else:
-                    safe_print(f"      ⚠️ Không tìm thấy tab Series (profile_tab_2), bỏ qua")
-                    raise Exception("Tab Series not found")
-                    
+                    safe_print(f"      ⚠️ Không tìm thấy tab Series (profile_tab_2), bỏ qua phần này")
+                
+                # Chỉ scrape stories nếu đã click được tab Series
+                if series_tab_clicked:
                     # Lấy tất cả stories từ .p_load_series .search_main_box
                     story_boxes = self.page.locator(".p_load_series .search_main_box").all()
                     safe_print(f"      📚 Tìm thấy {len(story_boxes)} stories trong tab Series")
@@ -580,11 +545,23 @@ class UserHandler:
                                 raise click_error
                         except:
                             safe_print(f"      ⚠️ Không thể click tab Reviews bằng cả 2 cách, bỏ qua phần này")
-                            raise
+                            # Không raise, chỉ bỏ qua phần này và tiếp tục
                 else:
-                    safe_print(f"      ⚠️ Không tìm thấy tab Reviews (profile_tab_3), bỏ qua")
-                    raise Exception("Tab Reviews not found")
-                    
+                    safe_print(f"      ⚠️ Không tìm thấy tab Reviews (profile_tab_3), bỏ qua phần này")
+                    # Không raise, chỉ bỏ qua phần này và tiếp tục
+                
+                # Chỉ scrape reviews nếu đã click được tab Reviews
+                reviews_tab_clicked = False
+                if reviews_tab.count() > 0:
+                    # Kiểm tra xem tab đã được click chưa bằng cách check xem có reviews không
+                    try:
+                        review_items_check = self.page.locator(".p_load_reviews .w-comments-item").all()
+                        if len(review_items_check) > 0 or self.page.locator(".p_load_reviews").count() > 0:
+                            reviews_tab_clicked = True
+                    except:
+                        pass
+                
+                if reviews_tab_clicked or reviews_tab.count() > 0:
                     # Đếm số reviews từ .p_load_reviews .w-comments-item
                     review_items = self.page.locator(".p_load_reviews .w-comments-item").all()
                     reviews_written = len(review_items)
@@ -709,88 +686,34 @@ class UserHandler:
                 safe_print(f"      {traceback.format_exc()}")
                 total_ratings_received = 0
             
-            # ✅ Lấy userUrl từ HTML (nhiều nguồn fallback)
+            # ✅ Lấy userUrl từ HTML (ưu tiên selector ổn định)
             user_url_final = None
             safe_print(f"      🔍 DEBUG: Đang tìm userUrl...")
             try:
-                # ✅ Ưu tiên: Lấy từ link trong .sb_content.author hoặc .author_extra
-                # HTML: <a href="https://www.scribblehub.com/profile/24108/ayato_kanzaki/"><span class="auth_name_fic">Ayato_kanzaki</span></a>
-                try:
-                    # Thử lấy từ .sb_content.author a[href*="/profile/"]
-                    author_link = self.page.locator('.sb_content.author a[href*="/profile/"]').first
-                    safe_print(f"      🔍 DEBUG: Tìm .sb_content.author a[href*='/profile/']: {author_link.count()}")
-                    if author_link.count() > 0:
-                        user_url_final = author_link.get_attribute("href")
-                        if user_url_final:
-                            safe_print(f"      ✅ Đã lấy userUrl từ .sb_content.author a: {user_url_final}")
-                    
-                    # Fallback: lấy từ .author_extra a[href*="/profile/"]
-                    if not user_url_final:
-                        author_extra_link = self.page.locator('.author_extra a[href*="/profile/"]').first
-                        if author_extra_link.count() > 0:
-                            user_url_final = author_extra_link.get_attribute("href")
-                            if user_url_final:
-                                safe_print(f"      ✅ Đã lấy userUrl từ .author_extra a: {user_url_final}")
-                    
-                    # Fallback: lấy từ bất kỳ a nào có .auth_name_fic bên trong
-                    if not user_url_final:
-                        auth_name_link = self.page.locator('a:has(span.auth_name_fic)').first
-                        if auth_name_link.count() > 0:
-                            user_url_final = auth_name_link.get_attribute("href")
-                            if user_url_final and "/profile/" in user_url_final:
-                                safe_print(f"      ✅ Đã lấy userUrl từ a:has(span.auth_name_fic): {user_url_final}")
-                except Exception as e:
-                    safe_print(f"      ⚠️ Lỗi khi lấy userUrl từ author link: {e}")
+                # ✅ Ưu tiên: Lấy từ .sb_content.author a (selector ổn định nhất)
+                author_link = self.page.locator('.sb_content.author a').first
+                if author_link.count() > 0:
+                    user_url_final = author_link.get_attribute("href")
+                    if user_url_final:
+                        safe_print(f"      ✅ Đã lấy userUrl từ .sb_content.author a: {user_url_final}")
                 
-                # Fallback: lấy từ meta og:url
-                if not user_url_final:
-                    og_url_elem = self.page.locator('meta[property="og:url"]').first
-                    if og_url_elem.count() > 0:
-                        user_url_final = og_url_elem.get_attribute("content")
-                        if user_url_final:
-                            safe_print(f"      ✅ Đã lấy userUrl từ meta og:url: {user_url_final}")
-                
-                # Fallback: lấy từ canonical link
-                if not user_url_final:
-                    canonical_elem = self.page.locator('link[rel="canonical"]').first
-                    if canonical_elem.count() > 0:
-                        user_url_final = canonical_elem.get_attribute("href")
-                        if user_url_final:
-                            safe_print(f"      ✅ Đã lấy userUrl từ canonical link: {user_url_final}")
-                
-                # Fallback: lấy từ input#profileurl
-                if not user_url_final:
-                    profileurl_elem = self.page.locator('input#profileurl').first
-                    if profileurl_elem.count() > 0:
-                        user_url_final = profileurl_elem.get_attribute("value")
-                        if user_url_final:
-                            safe_print(f"      ✅ Đã lấy userUrl từ input#profileurl: {user_url_final}")
-                
-                # Fallback: lấy từ input#sh_authorurl
-                if not user_url_final:
-                    authorurl_elem = self.page.locator('input#sh_authorurl').first
-                    if authorurl_elem.count() > 0:
-                        user_url_final = authorurl_elem.get_attribute("value")
-                        if user_url_final:
-                            safe_print(f"      ✅ Đã lấy userUrl từ input#sh_authorurl: {user_url_final}")
-                
-                # Fallback cuối cùng: dùng profile_url parameter
+                # Fallback: dùng profile_url parameter nếu không tìm thấy
                 if not user_url_final:
                     user_url_final = profile_url
-                    if user_url_final:
-                        safe_print(f"      ✅ Đã lấy userUrl từ parameter: {user_url_final}")
+                    safe_print(f"      ✅ Đã lấy userUrl từ parameter: {user_url_final}")
             except Exception as e:
-                safe_print(f"      ⚠️ Lỗi khi lấy userUrl từ HTML: {e}")
-                # Fallback: dùng profile_url parameter
+                safe_print(f"      ⚠️ Lỗi khi lấy userUrl: {e}")
                 user_url_final = profile_url
             
             # Convert empty strings thành None trước khi lưu
             user_url_final = to_none_if_empty(user_url_final) if user_url_final else None
             created_date_final = to_none_if_empty(created_date) if created_date else None
-            # followers, following, comments đã là int hoặc None, không cần convert
-            followers_final = followers if followers is not None else None
-            following_final = following if following is not None else None
-            comments_final = comments if comments is not None else None
+            # followers, following, comments đã là int hoặc None từ code scrape, giữ nguyên
+            followers_final = followers  # Có thể là int hoặc None
+            following_final = following  # Có thể là int hoặc None
+            comments_final = comments  # Có thể là int hoặc None
+            # bio có thể là string hoặc None
+            bio_final = to_none_if_empty(bio) if bio else None
             
             # Debug: In tất cả giá trị trước khi lưu
             safe_print(f"      📋 DEBUG: Giá trị trước khi lưu vào MongoDB:")
@@ -801,7 +724,7 @@ class UserHandler:
             safe_print(f"         - comments: {comments_final} (type: {type(comments_final).__name__})")
             safe_print(f"         - gender: {gender}")
             safe_print(f"         - location: {location}")
-            safe_print(f"         - bio: {bio[:50] + '...' if bio and len(bio) > 50 else bio}")
+            safe_print(f"         - bio: {bio_final[:50] + '...' if bio_final and len(bio_final) > 50 else bio_final} (type: {type(bio_final).__name__})")
             safe_print(f"         - numberOfStories: {series}")
             safe_print(f"         - totalWords: {total_words}")
             safe_print(f"         - totalReviewsReceived: {reviews_received}")
@@ -820,7 +743,7 @@ class UserHandler:
                 followers=followers_final,
                 following=following_final,
                 comments=comments_final,
-                bio=bio,
+                bio=bio_final,
                 favorites=total_favorites_received if total_favorites_received > 0 else None,  # ✅ Tổng favorites từ tất cả stories
                 ratings=total_ratings_received if total_ratings_received > 0 else None,  # ✅ Tổng ratings từ tất cả reviews (số sao được tô màu)
                 reviews=reviews_written if reviews_written > 0 else None,  # ✅ Số reviews user đã viết (từ tab Reviews)

@@ -196,15 +196,17 @@ class MongoHandler:
                     if story_hash:
                         story_data["storyHash"] = story_hash
                         safe_print(f"        ✅ Đã tạo storyHash (SimHash): {story_hash}")
-                # Nếu chưa có storyHash và có chapter 1 trong DB, lấy từ đó
-                elif not existing.get("storyHash") and existing.get("chapter1Hash"):
-                    # Lấy chapter 1 content từ DB để tạo storyHash
+                # ✅ Nếu chưa có storyHash, tự động lấy chapter 1 content từ DB và tạo
+                elif not existing.get("storyHash"):
+                    safe_print(f"        🔍 Story chưa có storyHash, đang lấy chapter 1 content từ DB...")
                     chapter_1_content_from_db = self.get_chapter_1_content(existing.get("storyId"))
                     if chapter_1_content_from_db:
                         story_hash = create_story_hash(chapter_1_content_from_db)
                         if story_hash:
                             story_data["storyHash"] = story_hash
                             safe_print(f"        ✅ Đã tạo storyHash từ chapter 1 trong DB (SimHash): {story_hash}")
+                    else:
+                        safe_print(f"        ⚠️ Không tìm thấy chapter 1 content trong DB, storyHash sẽ được tạo sau khi scrape chapter 1")
                 self.mongo_collection_stories.update_one(
                     {"webStoryId": web_story_id},
                     {"$set": story_data}
@@ -461,14 +463,23 @@ class MongoHandler:
         
         try:
             # Convert empty strings thành None
-            user_url = to_none_if_empty(user_url)
-            created_date = to_none_if_empty(created_date)
-            followers = to_none_if_empty(followers)
-            following = to_none_if_empty(following)
-            comments = to_none_if_empty(comments)
+            user_url = to_none_if_empty(user_url) if user_url else None
+            created_date = to_none_if_empty(created_date) if created_date else None
+            # followers, following, comments đã là int hoặc None từ user_handler, giữ nguyên
+            # bio đã được xử lý trong user_handler, giữ nguyên
             
             # Tìm user theo web_user_id
             existing = self.mongo_collection_users.find_one({"webUserId": web_user_id})
+            
+            # Debug: In giá trị nhận được
+            safe_print(f"        🔍 DEBUG save_user: Nhận được giá trị:")
+            safe_print(f"           - user_url: {user_url} (type: {type(user_url).__name__})")
+            safe_print(f"           - created_date: {created_date} (type: {type(created_date).__name__})")
+            safe_print(f"           - followers: {followers} (type: {type(followers).__name__})")
+            safe_print(f"           - following: {following} (type: {type(following).__name__})")
+            safe_print(f"           - comments: {comments} (type: {type(comments).__name__})")
+            safe_print(f"           - bio: {bio[:50] + '...' if bio and len(bio) > 50 else bio} (type: {type(bio).__name__})")
+            
             if existing:
                 # ✅ Update tất cả fields để đảm bảo schema nhất quán (theo MongoDB schema)
                 update_data = {

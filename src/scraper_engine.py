@@ -305,12 +305,11 @@ class ScribbleHubScraper(BaseHandler):
                 safe_print(f"{traceback.format_exc()}")
 
             # 4. Cào các chương song song với ThreadPoolExecutor (GIỮ ĐÚNG THỨ TỰ)
-            # ⚠️ CHỈ CÀO 10 CHAPTER ĐẦU TIÊN (theo yêu cầu)
+            # ✅ CÀO TOÀN BỘ CHAPTERS (không giới hạn)
             # Lọc ra các chapters chưa được cào content (để tránh cào trùng)
             chapters_to_scrape = []
-            # Chỉ lấy 10 chapter đầu tiên
-            chapter_info_list = chapter_info_list[:2] if chapter_info_list else []
-            safe_print(f"   ⚠️ CHỈ CÀO 10 CHAPTER ĐẦU TIÊN (theo yêu cầu)")
+            # Lấy tất cả chapters (không giới hạn)
+            safe_print(f"   ✅ CÀO TOÀN BỘ {len(chapter_info_list)} CHAPTERS")
             
             for index, chapter_info in enumerate(chapter_info_list):
                 # Dùng webChapterId từ chapter_info (đã lấy từ table of contents)
@@ -373,10 +372,10 @@ class ScribbleHubScraper(BaseHandler):
             chapter_results = [None] * len(chapter_info_list)
             completed = 0
             
-            for index, chapter_info in chapters_to_scrape:
+            for idx_in_list, chapter_info in chapters_to_scrape:
                 order = chapter_info.get("order", "")
                 if not order:
-                    order = str(index + 1)
+                    order = str(idx_in_list + 1)
                 chap_url = chapter_info["url"]
                 published_time_from_table = chapter_info.get("publishedTime", "") or chapter_info.get("published_time", "")
                 chapter_name_from_table = chapter_info.get("chapterName", "") or chapter_info.get("chapter_name", "")
@@ -386,20 +385,75 @@ class ScribbleHubScraper(BaseHandler):
                     chapter_data = self.chapter_handler.scrape_single_chapter_using_browser(
                         self.page,  # <--- QUAN TRỌNG: Dùng lại page đã mở (đã vượt Cloudflare)
                         chap_url, 
-                        index, 
+                        idx_in_list, 
                         story_id, 
                         order, 
                         published_time_from_table,
                         chapter_name_from_table
                     )
                     
-                    chapter_results[index] = chapter_data
+                    chapter_results[idx_in_list] = chapter_data
                     if chapter_data:
                         completed += 1
                         status = "✅"
+                        
+                        # ✅ Nếu đây là chapter 1 (order = "1" hoặc idx_in_list = 0), update storyHash ngay lập tức
+                        is_chapter_1 = (order == "1" or str(order) == "1" or idx_in_list == 0)
+                        safe_print(f"        🔍 DEBUG: Chapter {idx_in_list + 1} - order='{order}', is_chapter_1={is_chapter_1}")
+                        
+                        if is_chapter_1:
+                            # ✅ Lấy content từ chapterContents trong DB (vì content được lưu riêng)
+                            chapter_1_content_for_hash = None
+                            try:
+                                chapter_id_from_data = chapter_data.get("chapterId")
+                                if chapter_id_from_data:
+                                    # Đợi một chút để đảm bảo content đã được lưu vào DB
+                                    time.sleep(0.5)
+                                    chapter_content_doc = self.mongo.mongo_collection_chapter_contents.find_one({"chapterId": chapter_id_from_data})
+                                    if chapter_content_doc and chapter_content_doc.get("content"):
+                                        chapter_1_content_for_hash = chapter_content_doc.get("content", "")
+                                        safe_print(f"        🔍 DEBUG: Đã lấy content từ DB ({len(chapter_1_content_for_hash)} ký tự)")
+                                    else:
+                                        safe_print(f"        ⚠️ DEBUG: Không tìm thấy content trong DB cho chapterId: {chapter_id_from_data}")
+                            except Exception as e:
+                                safe_print(f"        ⚠️ Không thể lấy content từ DB: {e}")
+                                import traceback
+                                safe_print(f"        {traceback.format_exc()}")
+                            
+                            # Tạo và lưu storyHash
+                            if chapter_1_content_for_hash and len(chapter_1_content_for_hash.strip()) > 0:
+                                try:
+                                    from src.utils.hash_utils import create_story_hash
+                                    story_hash = create_story_hash(chapter_1_content_for_hash)
+                                    if story_hash and story_id:
+                                        # Update storyHash trong MongoDB (dùng cả storyId và webStoryId để đảm bảo)
+                                        update_result = self.mongo.mongo_collection_stories.update_one(
+                                            {"storyId": story_id},
+                                            {"$set": {"storyHash": story_hash}}
+                                        )
+                                        if update_result.modified_count > 0:
+                                            safe_print(f"        ✅ Đã tạo và lưu storyHash từ chapter 1: {story_hash}")
+                                        else:
+                                            # Thử update bằng webStoryId
+                                            web_story_id = story_data.get("webStoryId") if story_data else None
+                                            if web_story_id:
+                                                update_result2 = self.mongo.mongo_collection_stories.update_one(
+                                                    {"webStoryId": web_story_id},
+                                                    {"$set": {"storyHash": story_hash}}
+                                                )
+                                                if update_result2.modified_count > 0:
+                                                    safe_print(f"        ✅ Đã tạo và lưu storyHash (bằng webStoryId): {story_hash}")
+                                                else:
+                                                    safe_print(f"        ⚠️ Không thể update storyHash (cả storyId và webStoryId đều không match)")
+                                except Exception as e:
+                                    safe_print(f"        ⚠️ Không thể tạo storyHash: {e}")
+                                    import traceback
+                                    safe_print(f"        {traceback.format_exc()}")
+                            else:
+                                safe_print(f"        ⚠️ Không có content để tạo storyHash (content rỗng hoặc None)")
                     else:
                         status = "⚠️"
-                    safe_print(f"    {status} Hoàn thành chương {index + 1}/{len(chapter_info_list)} (đã xong {completed}/{len(chapters_to_scrape)})")
+                    safe_print(f"    {status} Hoàn thành chương {idx_in_list + 1}/{len(chapter_info_list)} (đã xong {completed}/{len(chapters_to_scrape)})")
                     
                     # Delay nhẹ giữa các chương để không bị ban
                     import random
@@ -470,7 +524,37 @@ class ScribbleHubScraper(BaseHandler):
                             safe_print(f"        ⚠️ Không thể scrape chapter 1 để check duplicate: {e}")
             
             if story_data:
+                # ✅ Đảm bảo storyHash được lưu (nếu chưa có, thử lấy từ chapter 1 trong DB)
+                if not story_data.get("storyHash"):
+                    safe_print(f"        🔍 Story chưa có storyHash, đang kiểm tra chapter 1 trong DB...")
+                    try:
+                        chapter_1_from_db = self.mongo.get_chapter_1_content(story_id)
+                        if chapter_1_from_db:
+                            from src.utils.hash_utils import create_story_hash
+                            story_hash = create_story_hash(chapter_1_from_db)
+                            if story_hash:
+                                story_data["storyHash"] = story_hash
+                                safe_print(f"        ✅ Đã tạo storyHash từ chapter 1 trong DB: {story_hash}")
+                        else:
+                            safe_print(f"        ⚠️ Không tìm thấy chapter 1 content trong DB, storyHash sẽ được tạo sau khi scrape chapter 1")
+                    except Exception as e:
+                        safe_print(f"        ⚠️ Không thể lấy chapter 1 từ DB để tạo storyHash: {e}")
+                        import traceback
+                        safe_print(f"        {traceback.format_exc()}")
+                
                 self.mongo.save_story(story_data, chapter_1_content, chapter_1_url)
+                
+                # ✅ SAU KHI SAVE: Kiểm tra lại xem storyHash đã được lưu chưa
+                if story_id:
+                    try:
+                        story_after_save = self.mongo.mongo_collection_stories.find_one({"storyId": story_id})
+                        if story_after_save:
+                            if story_after_save.get("storyHash"):
+                                safe_print(f"        ✅ Đã xác nhận storyHash trong DB: {story_after_save.get('storyHash')}")
+                            else:
+                                safe_print(f"        ⚠️ StoryHash vẫn chưa có trong DB sau khi save_story")
+                    except Exception as e:
+                        safe_print(f"        ⚠️ Không thể kiểm tra storyHash sau khi save: {e}")
                 
                 # 6. Lưu JSON backup vào data/json/ (lưu cả MongoDB và JSON file)
                 try:
