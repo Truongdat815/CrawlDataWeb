@@ -17,6 +17,7 @@ from .. import config
 from ..utils.validation import validate_against_schema
 from ..schemas.comment_schema import COMMENT_SCHEMA
 from .website import WebsiteScraper
+from .user import UserScraper
 import uuid
 import requests
 from ..utils.date_utils import format_for_db
@@ -28,6 +29,8 @@ class CommentScraper(BaseScraper):
     def __init__(self, page=None, mongo_db=None):
         super().__init__(page, mongo_db, config)
         self.init_collections({"comments": "comments", "users": "users"})
+        # Per-run cache to avoid duplicate user fetches/inserts
+        self._seen_usernames = set()
     
     def fetch_and_map_user(self, username):
         """
@@ -51,14 +54,10 @@ class CommentScraper(BaseScraper):
             if response.status_code == 200:
                 api_data = response.json()
                 username = api_data.get("username")
-                
-                # Generate userId từ username (UUID v7)
-                from .website import WebsiteScraper
-                user_id = WebsiteScraper.generate_user_id(username)
-                
-                # Map theo USER_SCHEMA
+
+                # Do not generate internal userId or webUserId here; keep them null
                 user_data = {
-                    "userId": user_id,
+                    "userId": None,
                     "webUserId": None,
                     "username": username,
                     "userUrl": api_data.get("deeplink"),
@@ -322,22 +321,32 @@ class CommentScraper(BaseScraper):
                 # Insert new
                 collection.insert_one(comment_data)
             
-            # Save user info dựa vào userName (để tìm user đã tồn tại hay chưa)
+            # Save user info based on userName using canonical UserScraper
             if not user_name:
                 user_name = comment_data.get("userName")
-            
+
             if user_name and user_name != "Anonymous" and self.collection_exists("users"):
                 try:
+                    # Deduplicate within this run to avoid repeated API calls
+                    if user_name in self._seen_usernames:
+                        return
+
                     users_collection = self.get_collection("users")
                     if users_collection is not None:
-                        # Check if user already exists (dùng username để tìm)
+                        # Pre-check if user already exists in DB
                         existing_user = users_collection.find_one({"username": user_name})
-                        if not existing_user:
-                            # Fetch full user info from API v3/users
-                            user_data = self.fetch_and_map_user(user_name)
-                            if user_data:
-                                users_collection.insert_one(user_data)
-                                safe_print(f"      ✅ Lưu user mới: {user_name}")
+                        if existing_user:
+                            self._seen_usernames.add(user_name)
+                            return
+
+                        # Use UserScraper.save_user_to_mongo to centralize logic and throttling
+                        try:
+                            user_scraper = UserScraper(self.page, self.mongo_db)
+                            avatar = comment_data.get("_userAvatar")
+                            user_scraper.save_user_to_mongo(user_name, user_name, avatar=avatar)
+                            self._seen_usernames.add(user_name)
+                        except Exception as e:
+                            safe_print(f"      ⚠️ Lỗi khi gọi UserScraper.save_user_to_mongo: {e}")
                 except Exception as e:
                     safe_print(f"      ⚠️ Lỗi khi lưu user: {e}")
         

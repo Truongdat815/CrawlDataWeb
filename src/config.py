@@ -105,7 +105,7 @@ SKIP_LOGIN_IF_COOKIE_EXISTS = True  # Nếu cookie file tồn tại, bỏ qua lo
 # ========== MONGODB CONFIGURATION ==========
 MONGODB_ENABLED = True
 
-
+"""
 # ========== MONGODB SELF-HOSTED (CURRENT) ==========
 MONGODB_USERNAME = "user"
 MONGODB_PASSWORD = "56915001"
@@ -122,10 +122,10 @@ MONGODB_URI = f"mongodb://{MONGODB_USERNAME}:{MONGODB_PASSWORD}@{MONGODB_HOST}:{
 if os.getenv("MONGODB_URI"):
     MONGODB_URI = os.getenv("MONGODB_URI")
 
-    
 
 
 """
+
 # ========== MONGODB ATLAS (OLD - COMMENTED FOR REFERENCE) ==========
 MONGODB_USERNAME = "xuannguyentruong15"
 MONGODB_PASSWORD = "grXsKiSEOf3APbRD"
@@ -135,4 +135,4 @@ MONGODB_URI = "mongodb+srv://xuannguyentruong15:grXsKiSEOf3APbRD@crawl.ujyutza.m
 MONGODB_COLLECTION_STORIES = "stories"
 MONGODB_COLLECTION_CHAPTERS = "chapters"
 MONGODB_COLLECTION_COMMENTS = "comments"
-"""
+

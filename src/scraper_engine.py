@@ -286,23 +286,9 @@ class WattpadScraper:
             except Exception:
                 pass
 
-    def fetch_story_links_from_page(self, page_url):
-        """
-        Stub method to fetch story links from a page URL.
-        Args:
-            page_url (str): The URL of the page to scrape.
-        Returns:
-            list: List of story URLs (empty for now).
-        """
-        # Deprecated stub: HTML index scraping is disabled by default.
-        # The HTTP/session/proxy/login initialization belongs in `__init__` and
-        # is already performed there. Keep this method as a small stub so it
-        # can be safely re-enabled later behind a config flag without
-        # reintroducing duplicated initialization logic.
-        safe_print(f"[DEPRECATED] fetch_story_links_from_page called for: {page_url}")
-        if getattr(config, "ENABLE_HTML_INDEX_SCRAPING", False):
-            safe_print("ℹ️ ENABLE_HTML_INDEX_SCRAPING=True but no implementation provided; returning []")
-        return []
+    # NOTE: `fetch_story_links_from_page` is implemented later as a static
+    # method. The previous instance-stub declaration was removed to avoid
+    # redeclaration warnings from static analyzers (Pylance).
 
     def check_update_chapters(self, story_id):
         """
@@ -341,10 +327,11 @@ class WattpadScraper:
             "user_service": self.user_service,
         }
         # Nếu DB báo thiếu chương, tự động gọi ChapterCrawler.finish_story
+        web_story_id = None
         try:
             web_story_id = str(api_story_data.get("webStoryId"))
-            dup = services["duplicate_checker"]
-            dup_status = dup.check_story(web_story_id)
+            dup = services.get("duplicate_checker")
+            dup_status = dup.check_story(web_story_id) if dup is not None else None
             if dup_status and dup_status.get("exists") and (dup_status.get("chapters_count", 0) == 0):
                 safe_print(f"[SCRAPER_ENGINE] ℹ️ Story {web_story_id} has 0 chapters in DB — running finish_story to populate metadata")
                 chapter_crawler = ChapterCrawler(self)
@@ -376,7 +363,8 @@ class WattpadScraper:
                 # Use duplicate checker if it has cached counts
                 dup_status = None
                 try:
-                    dup_status = self.duplicate_checker.check_story(web_id_for_count)
+                    dup = getattr(self, 'duplicate_checker', None)
+                    dup_status = dup.check_story(web_id_for_count) if dup is not None else None
                 except Exception:
                     dup_status = None
 
@@ -405,6 +393,16 @@ class WattpadScraper:
         except Exception:
             web_story_id = story_id
 
+        # Compute internal storyId (wp_uuid_v7) to use as `storyId` in chapters
+        try:
+            # Prefer generating from web_story_id when available
+            if web_story_id:
+                internal_story_id = WebsiteScraper.generate_story_id(str(web_story_id), prefix="wp")
+            else:
+                internal_story_id = str(story_id)
+        except Exception:
+            internal_story_id = str(story_id)
+
         # Process chapters in batches to avoid mapping/processing thousands at once.
         # Batch size and sleep interval can be configured via config.CHAPTER_PROCESS_BATCH_SIZE
         # and config.CHAPTER_BATCH_SLEEP_SECONDS. Also respect MAX_CHAPTERS_PER_STORY.
@@ -421,7 +419,7 @@ class WattpadScraper:
                 try:
                     mapped = None
                     try:
-                        mapped = scrapers["chapter"].map_api_part_to_chapter(part, web_story_id, order=rel-1)
+                        mapped = scrapers["chapter"].map_api_part_to_chapter(part, internal_story_id, order=rel-1)
                     except Exception as e:
                         safe_print(f"[SCRAPER_ENGINE] ⚠️ map_api_part_to_chapter failed for part index {rel}: {e}")
 
@@ -1267,9 +1265,11 @@ class WattpadScraper:
         # Checkpoint: if we have cached parts for this story, return them
         try:
             cached = load_checkpoint(str(story_id), kind='chapters')
-            if cached and isinstance(cached.get('payload'), list):
-                safe_print(f"   🔁 Loaded chapters from checkpoint for {story_id} ({len(cached.get('payload'))} parts)")
-                return cached.get('payload')
+            if cached:
+                payload = cached.get('payload')
+                if isinstance(payload, list):
+                    safe_print(f"   🔁 Loaded chapters from checkpoint for {story_id} ({len(payload)} parts)")
+                    return payload
         except Exception:
             pass
 
@@ -1288,10 +1288,12 @@ class WattpadScraper:
                     compact = []
                     for p in parts:
                         try:
-                            compact.append({'webChapterId': str(p.get('id') or p.get('webChapterId') or p.get('chapterId')), 'commentCount': int(p.get('commentCount', 0))})
+                            # Prefer original web `id`; do NOT fallback to internal `chapterId` here
+                            compact.append({'webChapterId': str(p.get('id') or p.get('webChapterId') or ''), 'commentCount': int(p.get('commentCount', 0))})
                         except Exception:
                             try:
-                                compact.append({'webChapterId': str(p.get('id') or p.get('webChapterId') or p.get('chapterId'))})
+                                # Ensure webChapterId refers to the web-origin ID only
+                                compact.append({'webChapterId': str(p.get('id') or p.get('webChapterId') or '')})
                             except Exception:
                                 continue
                     save_checkpoint(str(story_id), kind='chapters', payload={'parts': compact}, finished=True)
@@ -1339,7 +1341,8 @@ class WattpadScraper:
             if source == 'web':
                 # Fetch parts from API (this will prefer cached checkpoint if available)
                 parts = self.fetch_chapters_from_api(story_id)
-                parts_map = {str(p.get('id') or p.get('webChapterId') or p.get('chapterId')): int(p.get('commentCount', 0) or 0) for p in parts}
+                # Map parts by their original web ID (don't mix with internal chapterId)
+                parts_map = {str(p.get('id') or p.get('webChapterId') or ''): int(p.get('commentCount', 0) or 0) for p in parts}
                 for k in processed_keys:
                     current_totals[k] = parts_map.get(k, 0)
             else:
@@ -1349,7 +1352,10 @@ class WattpadScraper:
                     for k in processed_keys:
                         doc = None
                         try:
-                            doc = col.find_one({'webChapterId': str(k)})
+                            if col is not None:
+                                doc = col.find_one({'webChapterId': str(k)})
+                            else:
+                                doc = None
                         except Exception:
                             doc = None
                         current_totals[k] = int(doc.get('totalComments', 0) if doc else 0)
@@ -1387,7 +1393,8 @@ class WattpadScraper:
                 refreshed = {}
                 if source == 'web':
                     parts = self.fetch_chapters_from_api(story_id)
-                    parts_map = {str(p.get('id') or p.get('webChapterId') or p.get('chapterId')): int(p.get('commentCount', 0) or 0) for p in parts}
+                    # Map parts by original web ID only
+                    parts_map = {str(p.get('id') or p.get('webChapterId') or ''): int(p.get('commentCount', 0) or 0) for p in parts}
                     for k in processed_keys:
                         refreshed[k] = parts_map.get(k, 0)
                 else:
@@ -1403,7 +1410,7 @@ class WattpadScraper:
                     new_payload = payload
                     new_payload['chapters_totals'] = refreshed
                     new_payload['overall_comments_total'] = sum(int(v or 0) for v in refreshed.values())
-                    save_checkpoint(str(story_id), kind='chapters', payload=new_payload, finished=ckp.get('finished') if isinstance(ckp, dict) else False)
+                    save_checkpoint(str(story_id), kind='chapters', payload=new_payload, finished=bool(ckp.get('finished')) if isinstance(ckp, dict) else False)
                 except Exception:
                     pass
 
@@ -1803,7 +1810,8 @@ class WattpadScraper:
                     safe_print("   🔧 Normalizing raw API parts into chapter objects...")
                     normalized = []
                     for idx_p, p in enumerate(chapters, 1):
-                        web_chapter_id = str(p.get('id') or p.get('webChapterId') or p.get('chapterId') or '')
+                        # Use the web-origin chapter ID; do NOT use internal chapterId as webChapterId
+                        web_chapter_id = str(p.get('id') or p.get('webChapterId') or '')
                         chapter_id = WebsiteScraper.generate_chapter_id(web_chapter_id, prefix="wp") if web_chapter_id else None
                         chapter_obj = {
                             "chapterId": chapter_id,

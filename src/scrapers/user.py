@@ -32,13 +32,18 @@ class UserScraper(BaseScraper):
             dict formatted theo Wattpad user schema, or None if invalid
         """
         try:
+            # Prefer explicit username fields from API; fall back to name
+            username = api_response.get("username") or api_response.get("name")
+
+            # Do not generate or map internal `userId` here — keep it null
             mapped = {
-                "userId": api_response.get("name"),
-                "userName": api_response.get("name"),
+                "userId": None,
+                "webUserId": None,
+                "userName": username,
                 "avatar": api_response.get("avatar"),
                 "isFollowing": api_response.get("isFollowing", False)
             }
-            
+
             # ✅ Validate before return
             validated = validate_against_schema(mapped, USER_SCHEMA, strict=False)
             return validated
@@ -69,11 +74,12 @@ class UserScraper(BaseScraper):
                 # Case 1: user.metadata (user profile page)
                 if key == "user.metadata" and "data" in value:
                     user_data = value["data"]
-                    
-                    user_info["userId"] = user_data.get("name") or user_data.get("username")
-                    user_info["userName"] = user_data.get("name") or user_data.get("username")
+
+                    username = user_data.get("username") or user_data.get("name")
+                    user_info["userId"] = None
+                    user_info["userName"] = username
                     user_info["avatar"] = user_data.get("avatar")
-                    
+
                     if user_info["userName"]:
                         safe_print(f"      📌 User từ user.metadata: {user_info['userName']}")
                         return user_info
@@ -88,11 +94,12 @@ class UserScraper(BaseScraper):
                         
                         if "user" in group_data and isinstance(group_data["user"], dict):
                             user_data = group_data["user"]
-                            
-                            user_info["userId"] = user_data.get("username") or user_data.get("name")
-                            user_info["userName"] = user_data.get("username") or user_data.get("name")
+
+                            username = user_data.get("username") or user_data.get("name")
+                            user_info["userId"] = None
+                            user_info["userName"] = username
                             user_info["avatar"] = user_data.get("avatar")
-                            
+
                             if user_info["userName"]:
                                 safe_print(f"      📌 User từ part.group.user: {user_info['userName']}")
                                 return user_info
@@ -124,14 +131,10 @@ class UserScraper(BaseScraper):
             if response.status_code == 200:
                 api_data = response.json()
                 username = api_data.get("username")
-                
-                # Generate userId từ username (UUID v7)
-                from .website import WebsiteScraper
-                user_id = WebsiteScraper.generate_user_id(username)
-                
-                # Map theo USER_SCHEMA
+
+                # Do not generate internal userId or webUserId here; keep them null
                 user_data = {
-                    "userId": user_id,
+                    "userId": None,
                     "webUserId": None,
                     "username": username,
                     "userUrl": api_data.get("deeplink"),
@@ -189,10 +192,8 @@ class UserScraper(BaseScraper):
                     safe_print(f"✅ Lưu user mới từ API: {username}")
                 else:
                     # Fallback: lưu thông tin cơ bản nếu API fail
-                    from .website import WebsiteScraper
-                    user_id = WebsiteScraper.generate_user_id(username)
                     user_data = {
-                        "userId": user_id,
+                        "userId": None,
                         "webUserId": None,
                         "username": username,
                         "userUrl": None,

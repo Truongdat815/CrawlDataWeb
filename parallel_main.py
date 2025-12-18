@@ -7,6 +7,7 @@ Sử dụng multi-threading để cào nhiều stories đồng thời
 import sys
 import os
 import traceback
+from pathlib import Path
 from src import config
 from src.parallel_crawler import ParallelCrawler
 from src.scrapers import safe_print
@@ -18,13 +19,14 @@ def main():
     
     # ========== ĐỌC STORY URLs TỪ FILE ==========
     # Có thể dùng story_urls.txt hoặc test_category_urls.txt
-    url_file = 'story_urls.txt'
+    BASE_DIR = Path(__file__).resolve().parent
+    url_file = BASE_DIR / 'story_urls.txt'
     
     # Uncomment để test category crawling
     # url_file = 'test_category_urls.txt'
     
     try:
-        with open(url_file, 'r', encoding='utf-8') as f:
+        with url_file.open('r', encoding='utf-8') as f:
             lines = f.readlines()
     except FileNotFoundError:
         safe_print(f"❌ Lỗi: Không tìm thấy file {url_file}")

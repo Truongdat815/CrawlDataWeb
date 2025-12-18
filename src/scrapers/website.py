@@ -12,7 +12,7 @@ class WebsiteScraper(BaseScraper):
     """Scraper for website management (multi-source support)"""
     
     # Wattpad website UUID (fixed, sử dụng UUID v7)
-    WATTPAD_WEBSITE_ID = "wp_019376f0-0000-7000-8000-000000000001"
+    WATTPAD_WEBSITE_ID = "wp_019376f0000070008000000000000001"
     WATTPAD_WEBSITE_NAME = "wattpad"
     
     @staticmethod
@@ -77,15 +77,8 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        # Info id can remain deterministic or be generated; keep deterministic
-        # to ensure one-to-one mapping with story_id
-        try:
-            import uuid
-            namespace = uuid.NAMESPACE_DNS
-            uid = uuid.uuid5(namespace, f"{prefix}_info_{story_id}")
-            return f"{prefix}_{uid}"
-        except Exception:
-            return uuid_v7.prefixed(prefix)
+        # Use UUID v7 (non-deterministic, timestamp-first) without hyphens
+        return uuid_v7.prefixed(prefix)
     
     @staticmethod
     def generate_comment_id(web_comment_id, prefix="wp"):
@@ -116,14 +109,8 @@ class WebsiteScraper(BaseScraper):
         Returns:
             String: {prefix}_{uuid_v5}
         """
-        # Keep user ids deterministic based on username to avoid merging users
-        try:
-            import uuid
-            namespace = uuid.NAMESPACE_DNS
-            uid = uuid.uuid5(namespace, f"{prefix}_user_{username}")
-            return f"{prefix}_{uid}"
-        except Exception:
-            return uuid_v7.prefixed(prefix)
+        # Use UUID v7 (non-deterministic, timestamp-first) without hyphens
+        return uuid_v7.prefixed(prefix)
 
     @staticmethod
     def generate_chapter_content_id(chapter_id, prefix="wp"):

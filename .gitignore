@@ -39,3 +39,6 @@ debug/*.json
 .idea/
 *.swp
 *.swo
+
+
+data/
