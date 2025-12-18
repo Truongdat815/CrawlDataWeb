@@ -313,12 +313,22 @@ class CommentScraper(BaseScraper):
             if existing:
                 # Update existing document
                 # Preserve existing fields unless overridden by incoming data
-                collection.update_one(
-                    {"_id": existing.get("_id")},
-                    {"$set": comment_data}
-                )
+                try:
+                    # Normalize text and remove legacy `content`
+                    text = comment_data.get('commentText') or comment_data.get('text') or comment_data.get('content') or ""
+                    comment_data['commentText'] = text
+                    comment_data.pop('content', None)
+                except Exception:
+                    pass
+                collection.update_one({"_id": existing.get("_id")}, {"$set": comment_data})
             else:
                 # Insert new
+                try:
+                    text = comment_data.get('commentText') or comment_data.get('text') or comment_data.get('content') or ""
+                    comment_data['commentText'] = text
+                    comment_data.pop('content', None)
+                except Exception:
+                    pass
                 collection.insert_one(comment_data)
             
             # Save user info based on userName using canonical UserScraper

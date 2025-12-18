@@ -50,5 +50,13 @@ class UserSyncService:
                 for c in api_comments:
                     cid = c.get('webCommentId')
                     if cid and cid not in db_comment_ids:
+                        try:
+                            # Normalize: prefer `commentText`, remove legacy `content`
+                            text = c.get('commentText') or c.get('text') or c.get('content') or ""
+                            c['commentText'] = text
+                            if 'content' in c:
+                                c.pop('content', None)
+                        except Exception:
+                            pass
                         self.db["comments"].insert_one(c)
                         safe_print(f"[UserSyncService] Đã thêm comment mới: {cid}")

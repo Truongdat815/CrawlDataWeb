@@ -1102,10 +1102,11 @@ class WattpadScraper:
                         from .services.comment_sync_service import CommentSyncService
                         comment_sync = CommentSyncService(self.mongo_db, self.comment_scraper)
 
-                        # Ensure each mapped comment includes `content` and `webChapterId`
+                        # Ensure each mapped comment includes canonical `commentText` and `webChapterId`
                         for m in mapped_list:
-                            if 'content' not in m and 'commentText' in m:
-                                m['content'] = m.get('commentText')
+                            if 'commentText' not in m:
+                                # Prefer existing fields but do not create legacy `content`
+                                m['commentText'] = m.get('text') or ""
                             m.setdefault('webChapterId', resource_id)
 
                         if full_sync_collected is not None:
